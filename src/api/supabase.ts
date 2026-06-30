@@ -1,0 +1,92 @@
+import type { AuthSession } from "../types/domain";
+
+export const SUPABASE_URL = "https://jdxbxsufqjiinkfvvbda.supabase.co";
+export const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpkeGJ4c3VmcWppaW5rZnZ2YmRhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2NzM3OTAsImV4cCI6MjA5NzI0OTc5MH0.g40V1rpJ8_0URRcdxVC9EzRFrJzyKK1lFL7yh3HNeHY";
+
+export const CONFIG_STORAGE_KEY = "briland-admin-config";
+
+function requestHeaders(token?: string) {
+  return {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${token || SUPABASE_ANON_KEY}`
+  };
+}
+
+export async function supabaseGet<T>(table: string, query = "select=*", token?: string) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${query}`, {
+    headers: requestHeaders(token)
+  });
+  if (!response.ok) throw new Error(`${table}: ${await response.text()}`);
+  return (await response.json()) as T[];
+}
+
+export async function supabaseRpc<T>(name: string, payload: Record<string, unknown> = {}, token?: string) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
+    method: "POST",
+    headers: {
+      ...requestHeaders(token),
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) throw new Error(`${name}: ${await response.text()}`);
+  return (await response.json()) as T;
+}
+
+export async function supabasePost<T>(table: string, payload: Record<string, unknown>, token?: string) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+    method: "POST",
+    headers: {
+      ...requestHeaders(token),
+      "Content-Type": "application/json",
+      Prefer: "return=representation"
+    },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return (await response.json()) as T[];
+}
+
+export async function supabasePatch<T>(table: string, id: string, payload: Record<string, unknown>, token?: string) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: {
+      ...requestHeaders(token),
+      "Content-Type": "application/json",
+      Prefer: "return=representation"
+    },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return (await response.json()) as T[];
+}
+
+export async function uploadStorageObject(uri: string, path: string, contentType: string, token?: string) {
+  const file = await fetch(uri);
+  const blob = await file.blob();
+  const response = await fetch(`${SUPABASE_URL}/storage/v1/object/catalog-media/${path}`, {
+    method: "POST",
+    headers: {
+      ...requestHeaders(token),
+      "Content-Type": contentType,
+      "x-upsert": "true"
+    },
+    body: blob
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return `${SUPABASE_URL}/storage/v1/object/public/catalog-media/${path}`;
+}
+
+export async function signInWithPassword(email: string, password: string) {
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ email, password })
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return (await response.json()) as AuthSession;
+}

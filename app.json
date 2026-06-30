@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "Briland",
+    "slug": "briland-native-premium",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/briland-logo.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/briland-logo.png",
+        "backgroundColor": "#021126"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-asset",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/briland-logo.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#021126"
+        }
+      ]
+    ]
+  }
+}
