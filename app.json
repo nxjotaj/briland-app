@@ -7,9 +7,11 @@
     "icon": "./assets/briland-logo.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.briland.app"
     },
     "android": {
+      "package": "com.briland.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/briland-logo.png",
         "backgroundColor": "#021126"
