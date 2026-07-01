@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BlurView } from "expo-blur";
+import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
@@ -26,7 +27,7 @@ import {
 import { CONFIG_STORAGE_KEY, signInWithPassword, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabaseRpc, uploadStorageObject } from "./src/api/supabase";
 import { colors, defaultAbout, defaultSocialLinks } from "./src/config/brand";
 import type { AboutSettings, Aplicacao, AppData, Categoria, Lead, Marca, MediaSettings, Permission, Produto, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
-import { createId, loginErrorMessage, money, slugify } from "./src/utils/helpers";
+import { createId, csvEscape, loginErrorMessage, money, parseCsv, slugify } from "./src/utils/helpers";
 
 type IconName = keyof typeof Ionicons.glyphMap;
 
@@ -243,7 +244,7 @@ export default function App() {
         <AdminScreen data={data} active={adminTab} setActive={setAdminTab} onBack={() => go("home")} onLogout={logout} reload={() => reload(role, authToken)} authToken={authToken} socialLinks={socialLinks} setSocialLinks={(links) => void saveAdminConfig(links, mediaSettings, aboutSettings)} mediaSettings={mediaSettings} setMediaSettings={(settings) => void saveAdminConfig(socialLinks, settings, aboutSettings)} aboutSettings={aboutSettings} setAboutSettings={(settings) => void saveAdminConfig(socialLinks, mediaSettings, settings)} onAction={(text) => notify("Painel admin", text)} />
       ) : (
         <>
-          <Header back={["detail", "about", "signup"].includes(route)} onBack={() => go("home")} onMenu={() => setMenuOpen(true)} whatsappUrl={socialLinks.whatsapp} />
+          <Header back={route !== "home"} onBack={() => go("home")} onMenu={() => setMenuOpen(true)} whatsappUrl={socialLinks.whatsapp} />
           {error && <ErrorBanner message={error} onRetry={reload} />}
           {route === "home" && <HomeScreen go={go} products={activeProducts} categories={data.categorias} media={mediaSettings} />}
           {route === "categories" && <CategoriesScreen categories={data.categorias} onPick={(id) => { setCategoryFilter(id); go("products"); }} />}
@@ -394,8 +395,6 @@ function LogoPlate({ compact = false }: { compact?: boolean }) {
 function InitialScreen({ media, onCatalog, onLogin }: { media: MediaSettings; onCatalog: () => void; onLogin: () => void }) {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.initialContent}>
-      <LogoPlate />
-      <Text style={styles.tagline}>Qualidade que <Text style={styles.bold}>te move.</Text></Text>
       <View style={styles.initialMediaFrame}>
         {media.initialImage ? <Image source={{ uri: media.initialImage }} style={styles.initialImage} resizeMode="cover" /> : <BrandedMedia title="Imagem inicial" subtitle="Recomendado 1080 x 1440 px" />}
       </View>
@@ -415,38 +414,48 @@ function InitialScreen({ media, onCatalog, onLogin }: { media: MediaSettings; on
 
 function SlideToEnter({ onComplete }: { onComplete: () => void }) {
   const translateX = useRef(new Animated.Value(0)).current;
+  const [trackWidth, setTrackWidth] = useState(0);
   const completed = useRef(false);
-  const maxDrag = 218;
-  const panResponder = useRef(PanResponder.create({
+  const thumbSize = 51;
+  const maxDrag = Math.max(0, trackWidth - thumbSize - 14);
+  const fillWidth = translateX.interpolate({
+    inputRange: [0, Math.max(maxDrag, 1)],
+    outputRange: [thumbSize + 14, Math.max(trackWidth, thumbSize + 14)],
+    extrapolate: "clamp"
+  });
+  const panResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 6,
+    onPanResponderTerminationRequest: () => false,
     onPanResponderMove: (_, gesture) => {
-      const next = Math.max(0, Math.min(maxDrag, gesture.dx));
-      translateX.setValue(next);
+      const currentMax = Math.max(0, trackWidth - thumbSize - 14);
+      translateX.setValue(Math.max(0, Math.min(currentMax, gesture.dx)));
     },
     onPanResponderRelease: (_, gesture) => {
-      if (gesture.dx > maxDrag * 0.72 && !completed.current) {
+      const currentMax = Math.max(0, trackWidth - thumbSize - 14);
+      if (currentMax > 0 && gesture.dx >= currentMax * 0.96 && !completed.current) {
         completed.current = true;
-        Animated.timing(translateX, { toValue: maxDrag, duration: 140, useNativeDriver: true }).start(() => onComplete());
+        Animated.timing(translateX, { toValue: currentMax, duration: 160, useNativeDriver: false }).start(() => onComplete());
         return;
       }
-      Animated.spring(translateX, { toValue: 0, useNativeDriver: true }).start();
+      Animated.spring(translateX, { toValue: 0, useNativeDriver: false }).start();
     }
-  })).current;
+  }), [onComplete, trackWidth, translateX]);
   return (
-    <Pressable style={styles.slideTrack} onPress={onComplete}>
+    <View style={styles.slideTrack} onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)} {...panResponder.panHandlers}>
+      <Animated.View style={[styles.slideFill, { width: fillWidth }]} />
       <Text style={styles.slideText}>Deslize para entrar no catálogo</Text>
-      <Animated.View style={[styles.slideThumb, { transform: [{ translateX }] }]} {...panResponder.panHandlers}>
+      <Animated.View style={[styles.slideThumb, { transform: [{ translateX }] }]}>
         <Ionicons name="arrow-forward" size={27} color={colors.navy} />
       </Animated.View>
-    </Pressable>
+    </View>
   );
 }
-
 function HomeScreen({ go, products, categories, media }: { go: (route: Route) => void; products: Produto[]; categories: Categoria[]; media: MediaSettings }) {
   const items: [Route, string, string, IconName][] = [
     ["categories", "Categorias", `${categories.length} categorias ativas`, "grid-outline"],
     ["products", "Produtos", `${products.length} produtos no catálogo`, "cube-outline"],
-    ["launches", "Lançamentos", "Últimos cadastros do Supabase", "star-outline"],
+    ["launches", "Lançamentos", "Lançamentos Briland", "star-outline"],
     ["promotions", "Promoções", "Produtos em destaque", "pricetag-outline"],
     ["contact", "Contatos", "Fale com nossa equipe", "headset-outline"]
   ];
@@ -482,7 +491,6 @@ function CategoriesScreen({ categories, onPick }: { categories: Categoria[]; onP
               {item.imagem ? <Image source={{ uri: item.imagem }} style={styles.categoryImage} resizeMode="cover" /> : <BrandedMedia title={item.nome} subtitle="Imagem da categoria" />}
               <LinearGradient colors={["transparent", "rgba(252,185,0,0.35)"]} style={StyleSheet.absoluteFill} />
               <View style={styles.categoryFooter}>
-                <Ionicons name="grid-outline" size={20} color={colors.yellow} />
                 <Text style={styles.categoryName}>{item.nome}</Text>
               </View>
             </Pressable>
@@ -572,7 +580,7 @@ function ProductList({
               </View>
               <View style={styles.productBody}>
                 <Text style={styles.productCode}>{product.codigoInterno || "Sem código"}</Text>
-                <Text style={styles.productName} numberOfLines={2}>{product.nome}</Text>
+                <Text style={styles.productName} numberOfLines={3}>{product.nome}</Text>
                 <Text style={styles.mutedSmall}>{categoryById.get(product.categoriaId ?? "")?.nome || "Sem categoria"} • {brandById.get(product.marcaId ?? "")?.nome || "Sem marca"}</Text>
                 <View style={styles.cardLine} />
                 <Meta icon="cube-outline" label="Caixa master" value={product.caixaMaster || "A cadastrar"} />
@@ -719,28 +727,28 @@ function BrandedMedia({ title, subtitle, tall, compact }: { title: string; subti
 
 function ContactScreen({ onSubmit }: { onSubmit: (lead: Partial<Lead>) => void }) {
   const [form, setForm] = useState({ nome: "", empresa: "", telefone: "", email: "", mensagem: "" });
+  const [department, setDepartment] = useState<"Comercial" | "Suporte">("Comercial");
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <PageTitle title="Contato" subtitle="Estamos aqui para te ajudar. Envie sua mensagem direto para o painel." />
       <View style={styles.formCard}>
         <Text style={styles.label}>Com quem você quer falar? *</Text>
         <View style={styles.choiceRow}>
-          <Choice title="Comercial" subtitle="Dúvidas, orçamentos e parcerias" selected icon="briefcase-outline" />
-          <Choice title="Suporte" subtitle="Atendimento técnico e suporte" icon="headset-outline" />
+          <Choice title="Comercial" subtitle="Dúvidas, orçamentos e parcerias" selected={department === "Comercial"} icon="briefcase-outline" onPress={() => setDepartment("Comercial")} />
+          <Choice title="Suporte" subtitle="Atendimento técnico e suporte" selected={department === "Suporte"} icon="headset-outline" onPress={() => setDepartment("Suporte")} />
         </View>
         <Input label="Nome completo" value={form.nome} onChangeText={(nome) => setForm({ ...form, nome })} />
         <Input label="Empresa" value={form.empresa} onChangeText={(empresa) => setForm({ ...form, empresa })} />
-        <Input label="Numero de telefone / WhatsApp" value={form.telefone} onChangeText={(telefone) => setForm({ ...form, telefone })} />
+        <Input label="Número de telefone / WhatsApp" value={form.telefone} onChangeText={(telefone) => setForm({ ...form, telefone })} />
         <Input label="E-mail" value={form.email} onChangeText={(email) => setForm({ ...form, email })} />
         <Text style={styles.label}>Mensagem *</Text>
         <TextInput value={form.mensagem} onChangeText={(mensagem) => setForm({ ...form, mensagem })} placeholder="Digite sua mensagem aqui..." style={styles.textArea} multiline placeholderTextColor="#9BA0AA" />
-        <View style={styles.securityBox}><Ionicons name="shield-checkmark-outline" size={32} color={colors.yellow} /><View><Text style={styles.bold}>Seus dados estao protegidos</Text><Text style={styles.mutedSmall}>A mensagem sera registrada em LeadOrcamento.</Text></View></View>
-        <Pressable style={styles.yellowButton} onPress={() => onSubmit({ ...form, origem: "contato" })}><Ionicons name="paper-plane-outline" size={22} color={colors.navy} /><Text style={styles.yellowButtonText}>Enviar mensagem</Text></Pressable>
+        <View style={styles.securityBox}><Ionicons name="shield-checkmark-outline" size={32} color={colors.yellow} /><View style={styles.flex}><Text style={styles.bold}>Seus dados estão protegidos</Text></View></View>
+        <Pressable style={styles.yellowButton} onPress={() => onSubmit({ ...form, origem: "contato", mensagem: "[" + department + "] " + form.mensagem })}><Ionicons name="paper-plane-outline" size={22} color={colors.navy} /><Text style={styles.yellowButtonText}>Enviar mensagem</Text></Pressable>
       </View>
     </ScrollView>
   );
 }
-
 function LoginScreen({ onLogin, onSignup, onCatalog, links, error }: { onLogin: (email: string, password: string) => void | Promise<void>; onSignup: () => void; onCatalog: () => void; links: SocialLinks; error?: string }) {
   const [email, setEmail] = useState("faturamento@briland.com.br");
   const [password, setPassword] = useState("");
@@ -828,20 +836,20 @@ function AdminScreen({ data, active, setActive, onBack, onLogout, reload, authTo
   );
 }
 function AdminDashboard({ data, onAction, setActive }: { data: AppData; onAction: (message: string) => void; setActive: (tab: string) => void }) {
-  const metrics: [string, string, IconName][] = [
-    [String(data.produtos.length), "Total de produtos", "cube-outline"],
-    [String(data.produtos.filter((p) => p.ativo !== false).length), "Produtos ativos", "checkmark-circle-outline"],
-    [String(data.produtos.filter((p) => !p.imagemPrincipal).length), "Sem foto", "image-outline"],
-    [String(data.leads.length), "Leads recebidos", "chatbubbles-outline"],
-    [String(data.usuarios.filter((u) => u.status === "ACTIVE").length), "Usuários ativos", "people-outline"],
-    [String(data.permissoes.length), "Campos permissionados", "lock-closed-outline"]
+  const metrics: [string, string, IconName, string][] = [
+    [String(data.produtos.length), "Total de produtos", "cube-outline", "Produtos"],
+    [String(data.produtos.filter((p) => p.ativo !== false).length), "Produtos ativos", "checkmark-circle-outline", "Produtos"],
+    [String(data.produtos.filter((p) => !p.imagemPrincipal).length), "Sem foto", "image-outline", "Mídia"],
+    [String(data.leads.length), "Leads recebidos", "chatbubbles-outline", "Leads"],
+    [String(data.usuarios.filter((u) => u.status === "ACTIVE").length), "Usuários ativos", "people-outline", "Usuários"],
+    [String(data.permissoes.length), "Campos permissionados", "lock-closed-outline", "Permissões"]
   ];
   const shortcuts: [string, string][] = [["Produtos", "Criar/editar produtos"], ["Categorias", "Categorias"], ["Marcas", "Marcas"], ["Permissões", "Permissões"], ["Leads", "Leads"], ["Mídia", "Mídia"]];
   return (
     <>
       <Text style={styles.adminTitle}>Dashboard</Text>
       <Text style={styles.adminSubtitle}>Métricas em tempo real das tabelas Supabase.</Text>
-      <View style={styles.adminMetricGrid}>{metrics.map(([value, label, icon]) => <View key={label} style={styles.adminMetric}><Ionicons name={icon} size={23} color={colors.yellow} /><Text style={styles.adminMetricValue}>{value}</Text><Text style={styles.adminMetricLabel}>{label}</Text></View>)}</View>
+      <View style={styles.adminMetricGrid}>{metrics.map(([value, label, icon, tab]) => <Pressable key={label} style={styles.adminMetric} onPress={() => setActive(tab)}><Ionicons name={icon} size={23} color={colors.yellow} /><Text style={styles.adminMetricValue}>{value}</Text><Text style={styles.adminMetricLabel}>{label}</Text></Pressable>)}</View>
       <AdminPanel title="Atalhos rápidos">
         <View style={styles.shortcutGrid}>{shortcuts.map(([tab, label]) => <Pressable key={tab} style={styles.shortcut} onPress={() => setActive(tab)}><Ionicons name="arrow-forward" size={18} color={colors.navy} /><Text style={styles.shortcutText}>{label}</Text></Pressable>)}</View>
       </AdminPanel>
@@ -850,6 +858,8 @@ function AdminDashboard({ data, onAction, setActive }: { data: AppData; onAction
 }
 function AdminProducts({ products, categories, brands, reload, authToken, onAction }: { products: Produto[]; categories: Categoria[]; brands: Marca[]; reload: () => void; authToken?: string; onAction: (message: string) => void }) {
   const [editing, setEditing] = useState<Produto | null>(null);
+  const categoryByName = new Map(categories.map((item) => [item.nome.toLowerCase(), item.id]));
+  const brandByName = new Map(brands.map((item) => [item.nome.toLowerCase(), item.id]));
   const newProduct = () => {
     const id = createId("prod");
     setEditing({
@@ -867,10 +877,66 @@ function AdminProducts({ products, categories, brands, reload, authToken, onActi
       ordem: 0
     });
   };
+  const exportProducts = () => {
+    const headers = ["codigoInterno", "nome", "categoria", "marca", "descricaoCurta", "descricaoCompleta", "ean", "ncm", "caixaMaster", "preco", "estoque", "condicaoComercial", "prazoEntrega", "fichaTecnica", "observacaoComercial", "ca", "ativo", "destaque", "ordem"];
+    const lines = products.map((product) => headers.map((key) => {
+      if (key === "categoria") return csvEscape(categories.find((item) => item.id === product.categoriaId)?.nome || product.categoriaId || "");
+      if (key === "marca") return csvEscape(brands.find((item) => item.id === product.marcaId)?.nome || product.marcaId || "");
+      return csvEscape((product as Record<string, unknown>)[key]);
+    }).join(","));
+    const csv = [headers.join(","), ...lines].join("\n");
+    void Linking.openURL(`data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`);
+  };
+  const importProducts = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({ type: ["text/csv", "text/comma-separated-values", "application/vnd.ms-excel"], copyToCacheDirectory: true });
+      if (result.canceled || !result.assets[0]) return;
+      const text = await (await fetch(result.assets[0].uri)).text();
+      const rows = parseCsv(text);
+      let saved = 0;
+      for (const row of rows) {
+        const codigoInterno = row.codigoInterno || row.codigo || row.Codigo || row.Código;
+        const nome = row.nome || row.Nome;
+        if (!codigoInterno || !nome) continue;
+        const current = products.find((item) => item.codigoInterno === codigoInterno);
+        const categoriaId = row.categoriaId || row.categoria || row.Categoria;
+        const marcaId = row.marcaId || row.marca || row.Marca;
+        const payload = {
+          nome,
+          slug: row.slug || slugify(`${codigoInterno}-${nome}`),
+          codigoInterno,
+          categoriaId: categories.some((item) => item.id === categoriaId) ? categoriaId : categoryByName.get(String(categoriaId || "").toLowerCase()) || categories[0]?.id || "",
+          marcaId: brands.some((item) => item.id === marcaId) ? marcaId : brandByName.get(String(marcaId || "").toLowerCase()) || brands[0]?.id || "",
+          descricaoCurta: row.descricaoCurta || null,
+          descricaoCompleta: row.descricaoCompleta || null,
+          ean: row.ean || null,
+          ncm: row.ncm || null,
+          caixaMaster: row.caixaMaster || null,
+          preco: row.preco ? Number(String(row.preco).replace(",", ".")) : null,
+          estoque: row.estoque ? Number(row.estoque) : null,
+          condicaoComercial: row.condicaoComercial || null,
+          prazoEntrega: row.prazoEntrega || null,
+          fichaTecnica: row.fichaTecnica || null,
+          observacaoComercial: row.observacaoComercial || null,
+          ca: row.ca || null,
+          ativo: row.ativo ? row.ativo !== "false" && row.ativo !== "0" : true,
+          destaque: row.destaque === "true" || row.destaque === "1",
+          ordem: row.ordem ? Number(row.ordem) : 0
+        };
+        if (current) await supabasePatch<Produto>("Produto", current.id, payload, authToken);
+        else await supabasePost<Produto>("Produto", { id: createId("prod"), ...payload, updatedAt: new Date().toISOString() }, authToken);
+        saved += 1;
+      }
+      await reload();
+      onAction(`${saved} produtos importados/atualizados.`);
+    } catch (err) {
+      onAction(err instanceof Error ? err.message : "Falha ao importar planilha CSV.");
+    }
+  };
   return (
     <>
       <Text style={styles.adminTitle}>Produtos</Text>
-      <View style={styles.adminActions}><Pressable style={styles.adminYellowButton} onPress={newProduct}><Ionicons name="add" size={20} color={colors.navy} /><Text style={styles.adminYellowText}>Criar produto</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={reload}><Ionicons name="refresh" size={20} color={colors.navy} /><Text>Atualizar</Text></Pressable></View>
+      <View style={styles.adminActions}><Pressable style={styles.adminYellowButton} onPress={newProduct}><Ionicons name="add" size={20} color={colors.navy} /><Text style={styles.adminYellowText}>Criar produto</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={importProducts}><Ionicons name="cloud-upload-outline" size={20} color={colors.navy} /><Text>Importar CSV</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={exportProducts}><Ionicons name="download-outline" size={20} color={colors.navy} /><Text>Exportar</Text></Pressable></View>
       {products.map((product) => <Pressable key={product.id} style={styles.adminListItem} onPress={() => setEditing(product)}>{product.imagemPrincipal ? <Image source={{ uri: product.imagemPrincipal }} style={styles.adminThumb} /> : <View style={styles.adminThumbPlaceholder}><Ionicons name="image-outline" size={24} color={colors.yellow} /></View>}<View style={styles.flex}><Text style={styles.productCode}>{product.codigoInterno || "Sem código"}</Text><Text style={styles.adminItemTitle}>{product.nome}</Text><Text style={styles.mutedSmall}>{product.ativo ? "Ativo" : "Inativo"} • Ordem {product.ordem ?? 0} • {money(product.preco)}</Text></View><Switch value={product.ativo !== false} onValueChange={async (value) => { try { await supabasePatch<Produto>("Produto", product.id, { ativo: value }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar status."); } }} trackColor={{ true: colors.yellow, false: "#D7DAE1" }} /></Pressable>)}
       <ProductEditor product={editing} categories={categories} brands={brands} authToken={authToken} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(); }} />
     </>
@@ -986,7 +1052,7 @@ function AdminCrud({ title, items, icon, table, imageField, reload, authToken, o
     <>
       <Text style={styles.adminTitle}>{title}</Text>
       <View style={styles.adminActions}><Pressable style={styles.adminYellowButton} onPress={create}><Ionicons name="add" size={20} color={colors.navy} /><Text style={styles.adminYellowText}>Criar</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={reload}><Ionicons name="refresh" size={20} color={colors.navy} /><Text>Atualizar</Text></Pressable></View>
-      {items.length === 0 ? <EmptyState text={"Nenhum item em " + title + "."} /> : items.map((item) => <Pressable key={item.id} style={styles.adminListItem} onPress={() => setEditing(item)}>{item[imageField] ? <Image source={{ uri: String(item[imageField]) }} style={styles.adminThumb} resizeMode="contain" /> : <View style={styles.adminIconBox}><Ionicons name={icon} size={24} color={colors.yellow} /></View>}<View style={styles.flex}><Text style={styles.adminItemTitle}>{item.nome}</Text><Text style={styles.mutedSmall}>Toque para editar nome, slug, status e imagem</Text></View><Switch value={item.ativo !== false} onValueChange={async (value) => { try { await supabasePatch(table, item.id, { ativo: value, updatedAt: new Date().toISOString() }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar status."); } }} trackColor={{ true: colors.yellow, false: "#D7DAE1" }} /></Pressable>)}
+      {items.length === 0 ? <EmptyState text={"Nenhum item em " + title + "."} /> : items.map((item) => <Pressable key={item.id} style={styles.adminListItem} onPress={() => setEditing(item)}>{item[imageField] ? <Image source={{ uri: String(item[imageField]) }} style={styles.adminThumb} resizeMode="contain" /> : <View style={styles.adminIconBox}><Ionicons name={icon} size={24} color={colors.yellow} /></View>}<View style={styles.flex}><Text style={styles.adminItemTitle}>{item.nome}</Text><Text style={styles.mutedSmall}>Toque para editar nome, slug, status e imagem</Text></View><Switch value={item.ativo !== false} onValueChange={async (value) => { try { await supabasePatch(table, item.id, { ativo: value }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar status."); } }} trackColor={{ true: colors.yellow, false: "#D7DAE1" }} /></Pressable>)}
       {editing && <CategoryBrandEditor title={title} table={table} imageField={imageField} item={editing} authToken={authToken} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(); }} />}
     </>
   );
@@ -1001,8 +1067,8 @@ function CategoryBrandEditor({ title, table, imageField, item, authToken, onClos
     try {
       if (!draft.nome.trim()) { notify("Campo obrigatório", "Preencha o nome."); return; }
       const payload = table === "Categoria"
-        ? { nome: draft.nome, slug: draft.slug || slugify(draft.nome), descricao: draft.descricao || null, imagem: draft.imagem || null, ordem: Number(draft.ordem || 0), ativo: draft.ativo !== false, updatedAt: new Date().toISOString() }
-        : { nome: draft.nome, slug: draft.slug || slugify(draft.nome), logo: draft.logo || null, ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
+        ? { nome: draft.nome, slug: draft.slug || slugify(draft.nome), descricao: draft.descricao || null, imagem: draft.imagem || null, ordem: Number(draft.ordem || 0), ativo: draft.ativo !== false }
+        : { nome: draft.nome, slug: draft.slug || slugify(draft.nome), logo: draft.logo || null, ativo: draft.ativo !== false };
       if (isNew) await supabasePost(table, { id: draft.id, ...payload }, authToken);
       else await supabasePatch(table, item.id, payload, authToken);
       await onSaved();
@@ -1041,7 +1107,7 @@ function AdminApplications({ items, reload, authToken, onAction }: { items: Apli
     <>
       <Text style={styles.adminTitle}>Aplicações</Text>
       <View style={styles.adminActions}><Pressable style={styles.adminYellowButton} onPress={create}><Ionicons name="add" size={20} color={colors.navy} /><Text style={styles.adminYellowText}>Criar</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={reload}><Ionicons name="refresh" size={20} color={colors.navy} /><Text>Atualizar</Text></Pressable></View>
-      {items.map((item) => <Pressable key={item.id} style={styles.adminListItem} onPress={() => setEditing(item)}><View style={styles.adminIconBox}><Ionicons name="git-branch-outline" size={24} color={colors.yellow} /></View><View style={styles.flex}><Text style={styles.adminItemTitle}>{item.nome}</Text><Text style={styles.mutedSmall}>{item.tipo || "Tipo não informado"} • {item.ativo === false ? "Inativa" : "Ativa"}</Text></View><Switch value={item.ativo !== false} onValueChange={async (value) => { try { await supabasePatch("Aplicacao", item.id, { ativo: value, updatedAt: new Date().toISOString() }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar aplicação."); } }} /></Pressable>)}
+      {items.map((item) => <Pressable key={item.id} style={styles.adminListItem} onPress={() => setEditing(item)}><View style={styles.adminIconBox}><Ionicons name="git-branch-outline" size={24} color={colors.yellow} /></View><View style={styles.flex}><Text style={styles.adminItemTitle}>{item.nome}</Text><Text style={styles.mutedSmall}>{item.tipo || "Tipo não informado"} • {item.ativo === false ? "Inativa" : "Ativa"}</Text></View><Switch value={item.ativo !== false} onValueChange={async (value) => { try { await supabasePatch("Aplicacao", item.id, { ativo: value }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar aplicação."); } }} /></Pressable>)}
       {editing && <ApplicationEditor item={editing} authToken={authToken} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(); }} />}
     </>
   );
@@ -1053,7 +1119,7 @@ function ApplicationEditor({ item, authToken, onClose, onSaved }: { item: Aplica
   const set = (key: keyof Aplicacao, value: string | boolean | null) => setDraft({ ...draft, [key]: value });
   const save = async () => {
     try {
-      const payload = { nome: draft.nome, slug: draft.slug || slugify(draft.nome), tipo: draft.tipo || null, ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
+      const payload = { nome: draft.nome, slug: draft.slug || slugify(draft.nome), tipo: draft.tipo || null, ativo: draft.ativo !== false };
       if (isNew) await supabasePost("Aplicacao", { id: draft.id, ...payload }, authToken);
       else await supabasePatch("Aplicacao", item.id, payload, authToken);
       await onSaved();
@@ -1081,7 +1147,7 @@ function UserEditor({ user, reload, authToken, onClose, onAction }: { user: Usua
   const set = (key: keyof Usuario, value: string) => setDraft({ ...draft, [key]: value });
   const save = async () => {
     try {
-      await supabasePatch("User", user.id, { name: draft.name, company: draft.company || null, email: draft.email, role: draft.role, status: draft.status, notes: draft.notes || null, updatedAt: new Date().toISOString() }, authToken);
+      await supabasePatch("User", user.id, { name: draft.name, company: draft.company || null, email: draft.email, role: draft.role, status: draft.status, notes: draft.notes || null }, authToken);
       await reload();
       onClose();
       onAction("Usuário atualizado.");
@@ -1115,15 +1181,17 @@ function AdminPermissions({ permissions, reload, authToken, onAction }: { permis
 }
 
 function AdminLeads({ leads, products }: { leads: Lead[]; products: Produto[] }) {
+  const [selected, setSelected] = useState<Lead | null>(null);
   const productById = new Map(products.map((item) => [item.id, item]));
+  const openWhatsLead = (lead: Lead) => Linking.openURL("https://wa.me/" + (lead.telefone || "5521973636891") + "?text=" + encodeURIComponent("Olá " + lead.nome + ", recebemos seu contato pela Briland."));
   return (
     <>
       <Text style={styles.adminTitle}>Leads e orçamentos</Text>
-      {leads.length === 0 ? <EmptyState text="Nenhum lead encontrado." /> : leads.map((lead) => <View key={lead.id} style={styles.leadCard}><View style={styles.leadTop}><Text style={styles.adminItemTitle}>{lead.nome}</Text><Text style={styles.leadStatus}>{lead.status || "NOVO"}</Text></View><Text style={styles.mutedSmall}>{lead.empresa || "Sem empresa"} • {lead.cidade || "Cidade"}/{lead.estado || "UF"} • {productById.get(lead.produtoId ?? "")?.codigoInterno || "Sem produto"}</Text><Text style={styles.detailText}>{lead.mensagem}</Text><Pressable style={styles.whatsLead} onPress={() => Linking.openURL(`https://wa.me/${lead.telefone || "5521973636891"}?text=${encodeURIComponent(`Olá ${lead.nome}, recebemos seu contato pela Briland.`)}`)}><Ionicons name="logo-whatsapp" size={18} color={colors.green} /><Text style={styles.whatsLeadText}>Abrir WhatsApp</Text></Pressable></View>)}
+      {leads.length === 0 ? <EmptyState text="Nenhum lead encontrado." /> : leads.map((lead) => <Pressable key={lead.id} style={styles.leadCard} onPress={() => setSelected(lead)}><View style={styles.leadTop}><Text style={styles.adminItemTitle}>{lead.nome}</Text><Text style={styles.leadStatus}>{lead.status || "NOVO"}</Text></View><Text style={styles.mutedSmall}>{lead.empresa || "Sem empresa"} • {lead.cidade || "Cidade"}/{lead.estado || "UF"} • {productById.get(lead.produtoId ?? "")?.codigoInterno || "Sem produto"}</Text><Text style={styles.detailText} numberOfLines={3}>{lead.mensagem}</Text><Text style={styles.openLeadText}>Toque para ler completo</Text></Pressable>)}
+      {selected && <Modal visible transparent animationType="slide" onRequestClose={() => setSelected(null)}><Pressable style={styles.sheetOverlay} onPress={() => setSelected(null)} /><ScrollView style={styles.editorSheet} contentContainerStyle={styles.editorContent}><View style={styles.sheetHeader}><Text style={styles.sheetTitle}>Lead recebido</Text><Pressable onPress={() => setSelected(null)}><Ionicons name="close" size={26} color={colors.navy} /></Pressable></View><DetailItem label="Nome" value={selected.nome || "Não informado"} /><DetailItem label="Empresa" value={selected.empresa || "Não informado"} /><DetailItem label="Telefone" value={selected.telefone || "Não informado"} /><DetailItem label="E-mail" value={selected.email || "Não informado"} /><DetailItem label="Produto" value={productById.get(selected.produtoId ?? "")?.nome || "Sem produto"} /><Text style={styles.sheetLabel}>Mensagem</Text><Text style={styles.leadMessageFull}>{selected.mensagem || "Sem mensagem"}</Text><Pressable style={styles.whatsLead} onPress={() => openWhatsLead(selected)}><Ionicons name="logo-whatsapp" size={18} color={colors.green} /><Text style={styles.whatsLeadText}>Abrir WhatsApp</Text></Pressable></ScrollView></Modal>}
     </>
   );
 }
-
 function AdminMedia({ media, setMedia, authToken }: { media: MediaSettings; setMedia: (settings: MediaSettings) => void; authToken?: string }) {
   const [draft, setDraft] = useState(media);
   return (
@@ -1243,7 +1311,7 @@ function SideMenu({ visible, onClose, go, role, user, setRole, setCurrentUser }:
         {items.map(([target, label, icon]) => <Pressable key={label} style={styles.sideItem} onPress={() => go(target)}><Ionicons name={icon} size={25} color={label === "Início" ? colors.yellow : colors.navy} /><Text style={[styles.sideLabel, label === "Início" && styles.yellowText]}>{label}</Text></Pressable>)}
         {role === "ADMIN" && <Pressable style={styles.sideItem} onPress={() => go("admin")}><Ionicons name="speedometer-outline" size={25} color={colors.navy} /><Text style={styles.sideLabel}>Painel admin</Text></Pressable>}
         <Pressable style={styles.sideItem} onPress={() => { setRole("VISITANTE"); setCurrentUser(null); go(role === "VISITANTE" ? "login" : "initial"); }}><Ionicons name="log-in-outline" size={25} color={colors.navy} /><Text style={styles.sideLabel}>{role === "VISITANTE" ? "Login" : "Sair"}</Text></Pressable>
-        <View style={styles.sidePromo}><Text style={styles.sidePromoText}>Qualidade e confiança que te levam mais longe.</Text></View>
+        <View style={styles.sidePromo}><Text style={styles.sidePromoText}>Copyright Briland 2026. Todos os direitos reservados.</Text></View>
       </View>
     </Modal>
   );
@@ -1270,7 +1338,7 @@ function Meta({ icon, label, value }: { icon: IconName; label: string; value: st
 }
 
 function InfoCard({ icon, label, value, green, small }: { icon: IconName; label: string; value: string; green?: boolean; small?: string }) {
-  return <View style={styles.infoCard}><Ionicons name={icon} size={30} color={colors.yellow} /><View><Text style={styles.metaLabel}>{label}</Text><Text style={[styles.infoValue, green && styles.greenText]}>{value}</Text>{small && <Text style={styles.mutedSmall}>{small}</Text>}</View></View>;
+  return <View style={styles.infoCard}><Ionicons name={icon} size={30} color={colors.yellow} /><View style={styles.infoCardContent}><Text style={styles.metaLabel}>{label}</Text><Text style={[styles.infoValue, green && styles.greenText]} numberOfLines={2}>{value}</Text>{small && <Text style={styles.mutedSmall}>{small}</Text>}</View></View>;
 }
 
 function Accordion({ title, children, open }: { title: string; children?: React.ReactNode; open?: boolean }) {
@@ -1282,8 +1350,8 @@ function DetailItem({ label, value }: { label: string; value: string }) {
   return <View style={styles.detailItem}><Text style={styles.detailSub}>{label}</Text><Text style={styles.detailText}>{value}</Text></View>;
 }
 
-function Choice({ title, subtitle, selected, icon }: { title: string; subtitle: string; selected?: boolean; icon: IconName }) {
-  return <View style={[styles.choice, selected && styles.choiceSelected]}>{selected && <View style={styles.choiceCheck}><Ionicons name="checkmark" size={15} color={colors.white} /></View>}<Ionicons name={icon} size={32} color={colors.navy} /><Text style={styles.choiceTitle}>{title}</Text><Text style={styles.choiceSub}>{subtitle}</Text></View>;
+function Choice({ title, subtitle, selected, icon, onPress }: { title: string; subtitle: string; selected?: boolean; icon: IconName; onPress?: () => void }) {
+  return <Pressable onPress={onPress} style={[styles.choice, selected && styles.choiceSelected]}>{selected && <View style={styles.choiceCheck}><Ionicons name="checkmark" size={15} color={colors.white} /></View>}<Ionicons name={icon} size={32} color={colors.navy} /><Text style={styles.choiceTitle}>{title}</Text><Text style={styles.choiceSub}>{subtitle}</Text></Pressable>;
 }
 
 function Input({ label, value, onChangeText }: { label: string; value: string; onChangeText: (text: string) => void }) {
@@ -1328,7 +1396,7 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.soft },
   screen: { flex: 1, backgroundColor: colors.soft },
   contentWithDock: { paddingHorizontal: 20, paddingBottom: 122 },
-  initialContent: { padding: 20, paddingBottom: 38, alignItems: "center" },
+  initialContent: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 38, alignItems: "center" },
   loadingOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 30, backgroundColor: "rgba(2,17,38,0.82)", alignItems: "center", justifyContent: "center" },
   loadingText: { color: colors.white, fontWeight: "800", marginTop: 14 },
   routeSplash: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 26, backgroundColor: colors.navy, alignItems: "center", justifyContent: "center", gap: 18 },
@@ -1343,14 +1411,15 @@ const styles = StyleSheet.create({
   tagline: { marginVertical: 22, fontSize: 21, color: colors.ink },
   bold: { fontWeight: "800", color: colors.navy },
   yellowText: { color: colors.yellow, fontWeight: "800" },
-  initialMediaFrame: { width: "100%", height: 312, borderRadius: 18, overflow: "hidden", backgroundColor: colors.white },
+  initialMediaFrame: { width: "100%", height: 470, borderRadius: 18, overflow: "hidden", backgroundColor: colors.white },
   initialImage: { width: "100%", height: "100%", backgroundColor: colors.white },
   welcomeSheet: { width: "100%", marginTop: -34, borderTopLeftRadius: 38, borderTopRightRadius: 38, backgroundColor: colors.white, padding: 28, alignItems: "center", ...shadow },
   welcomeTitle: { fontSize: 25, fontWeight: "900", color: colors.navy },
   centerMuted: { color: colors.muted, textAlign: "center", fontSize: 17, lineHeight: 25, marginVertical: 16 },
   slideTrack: { width: "100%", height: 64, borderRadius: 34, backgroundColor: colors.navy, justifyContent: "center", overflow: "hidden", paddingHorizontal: 8, marginTop: 4 },
-  slideText: { color: colors.white, fontWeight: "800", fontSize: 15, textAlign: "center", paddingLeft: 50 },
-  slideThumb: { position: "absolute", left: 7, width: 51, height: 51, borderRadius: 26, backgroundColor: colors.yellow, alignItems: "center", justifyContent: "center" },
+  slideFill: { position: "absolute", left: 0, top: 0, bottom: 0, backgroundColor: colors.yellow, borderRadius: 34 },
+  slideText: { color: colors.white, fontWeight: "800", fontSize: 15, textAlign: "center", paddingLeft: 50, zIndex: 1 },
+  slideThumb: { position: "absolute", zIndex: 2, left: 7, width: 51, height: 51, borderRadius: 26, backgroundColor: colors.yellow, alignItems: "center", justifyContent: "center" },
   primaryDarkButton: { width: "100%", height: 64, borderRadius: 34, backgroundColor: colors.navy, paddingLeft: 26, paddingRight: 9, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   primaryDarkText: { color: colors.white, fontWeight: "800", fontSize: 18 },
   roundYellow: { width: 53, height: 53, borderRadius: 27, backgroundColor: colors.yellow, alignItems: "center", justifyContent: "center" },
@@ -1381,7 +1450,7 @@ const styles = StyleSheet.create({
   list: { gap: 12 },
   categoryCard: { width: "47.4%", height: 166, borderRadius: 12, backgroundColor: colors.white, overflow: "hidden", ...shadow },
   categoryImage: { width: "100%", height: "100%" },
-  categoryFooter: { position: "absolute", left: 0, right: 0, bottom: 0, minHeight: 50, backgroundColor: colors.white, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 8 },
+  categoryFooter: { position: "absolute", left: 0, right: 0, bottom: 0, minHeight: 50, backgroundColor: colors.white, paddingHorizontal: 14, flexDirection: "row", alignItems: "center" },
   categoryName: { fontSize: 17, color: colors.navy, fontWeight: "900" },
   searchRow: { flexDirection: "row", gap: 12 },
   searchBox: { flex: 1, height: 58, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 15, flexDirection: "row", alignItems: "center", gap: 10, ...shadow },
@@ -1395,7 +1464,7 @@ const styles = StyleSheet.create({
   segment: { flexDirection: "row", borderRadius: 22, backgroundColor: colors.white, padding: 4, ...shadow },
   segmentActive: { width: 42, height: 36, borderRadius: 18, backgroundColor: colors.navy, alignItems: "center", justifyContent: "center" },
   segmentLight: { width: 42, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
-  productCard: { width: "47.4%", minHeight: 292, borderRadius: 12, backgroundColor: colors.white, overflow: "hidden", borderWidth: 1, borderColor: colors.line, ...shadow },
+  productCard: { width: "47.4%", minHeight: 324, borderRadius: 12, backgroundColor: colors.white, overflow: "hidden", borderWidth: 1, borderColor: colors.line, ...shadow },
   productListCard: { width: "100%", borderRadius: 14, backgroundColor: colors.white, overflow: "hidden", borderWidth: 1, borderColor: colors.line, flexDirection: "row", ...shadow },
   promoCard: { borderColor: "#F4A7B1" },
   launchCard: { borderColor: colors.yellow },
@@ -1406,11 +1475,11 @@ const styles = StyleSheet.create({
   ribbonText: { color: colors.white, fontWeight: "900", fontSize: 11 },
   productBody: { flex: 1, padding: 13 },
   productCode: { color: colors.navy, fontSize: 16, fontWeight: "900" },
-  productName: { color: colors.muted, fontSize: 13, minHeight: 34, marginTop: 2 },
+  productName: { color: colors.muted, fontSize: 13, minHeight: 52, lineHeight: 17, marginTop: 2 },
   cardLine: { height: 1, backgroundColor: colors.line, marginVertical: 10 },
   meta: { flexDirection: "row", gap: 8, marginBottom: 8 },
   metaLabel: { color: colors.navy, fontSize: 12, fontWeight: "800" },
-  metaValue: { color: colors.navy, fontSize: 12 },
+  metaValue: { color: colors.navy, fontSize: 12, flexShrink: 1 },
   price: { color: colors.red, fontWeight: "900", fontSize: 16 },
   loginHint: { color: colors.yellow, fontWeight: "900", marginTop: 4 },
   detailMedia: { height: 390, borderRadius: 22, overflow: "hidden", backgroundColor: colors.white, marginBottom: 20, ...shadow },
@@ -1419,8 +1488,9 @@ const styles = StyleSheet.create({
   smallYellow: { color: colors.yellow, fontWeight: "900", marginBottom: 6 },
   detailTitle: { color: colors.navy, fontSize: 27, fontWeight: "900", lineHeight: 34 },
   statRow: { flexDirection: "row", gap: 12, marginVertical: 20 },
-  infoCard: { flex: 1, minHeight: 78, borderRadius: 14, backgroundColor: colors.white, padding: 14, flexDirection: "row", alignItems: "center", gap: 12, ...shadow },
-  infoValue: { color: colors.navy, fontSize: 18, fontWeight: "900" },
+  infoCard: { flex: 1, minHeight: 88, borderRadius: 14, backgroundColor: colors.white, padding: 14, flexDirection: "row", alignItems: "center", gap: 12, ...shadow },
+  infoCardContent: { flex: 1, minWidth: 0 },
+  infoValue: { color: colors.navy, fontSize: 16, lineHeight: 20, fontWeight: "900", flexShrink: 1 },
   greenText: { color: colors.green },
   accordion: { backgroundColor: colors.white, borderRadius: 15, padding: 16, marginBottom: 10, ...shadow },
   accordionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
@@ -1441,11 +1511,11 @@ const styles = StyleSheet.create({
   choiceCheck: { position: "absolute", top: 10, right: 10, width: 24, height: 24, borderRadius: 12, backgroundColor: colors.yellow, alignItems: "center", justifyContent: "center" },
   choiceTitle: { color: colors.navy, fontWeight: "900", marginTop: 12 },
   choiceSub: { color: colors.muted, textAlign: "center", fontSize: 12, lineHeight: 17, marginTop: 4 },
-  inputGroup: { marginBottom: 14 },
+  inputGroup: { width: "100%", marginBottom: 16 },
   input: { height: 58, borderWidth: 1, borderColor: colors.line, borderRadius: 11, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 10 },
-  inputMultiline: { minHeight: 112, alignItems: "flex-start", paddingVertical: 12 },
+  inputMultiline: { height: 132, alignItems: "flex-start", paddingVertical: 12, flexDirection: "column" },
   inputText: { flex: 1, color: colors.navy, fontSize: 15 },
-  inputTextMultiline: { minHeight: 88, width: "100%" },
+  inputTextMultiline: { flex: 0, height: 104, width: "100%", lineHeight: 20 },
   textArea: { minHeight: 128, borderWidth: 1, borderColor: colors.line, borderRadius: 12, padding: 14, color: colors.navy, textAlignVertical: "top" },
   securityBox: { borderRadius: 13, backgroundColor: colors.soft, padding: 14, flexDirection: "row", gap: 12, alignItems: "center", marginVertical: 18 },
   mutedSmall: { color: colors.muted, fontSize: 12, lineHeight: 17 },
@@ -1481,7 +1551,7 @@ const styles = StyleSheet.create({
   aboutCard: { minHeight: 520, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, padding: 22, ...shadow },
   aboutText: { color: colors.muted, fontSize: 18, lineHeight: 27 },
   aboutBody: { color: colors.navy, fontSize: 16, lineHeight: 25, marginTop: 28 },
-  socialDock: { position: "absolute", left: 32, right: 32, bottom: 22, height: 78, borderRadius: 38, backgroundColor: colors.white, flexDirection: "row", alignItems: "center", justifyContent: "space-around", ...shadow },
+  socialDock: { position: "absolute", left: 32, right: 32, bottom: 22, height: 78, borderRadius: 38, backgroundColor: "rgba(255,255,255,0.72)", borderWidth: 1, borderColor: "rgba(255,255,255,0.68)", flexDirection: "row", alignItems: "center", justifyContent: "space-around", ...shadow },
   socialItem: { alignItems: "center", gap: 4 },
   socialLabel: { color: colors.navy, fontSize: 12 },
   adminSafe: { flex: 1, backgroundColor: colors.navy },
@@ -1511,7 +1581,7 @@ const styles = StyleSheet.create({
   shortcutGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   shortcut: { width: "48%", minHeight: 54, borderRadius: 12, backgroundColor: colors.soft, padding: 12, flexDirection: "row", alignItems: "center", gap: 8 },
   shortcutText: { color: colors.navy, fontWeight: "800" },
-  adminActions: { flexDirection: "row", gap: 10, marginVertical: 16 },
+  adminActions: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginVertical: 16 },
   adminYellowButton: { height: 48, borderRadius: 12, backgroundColor: colors.yellow, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 7 },
   adminYellowText: { color: colors.navy, fontWeight: "900" },
   adminSoftButton: { height: 48, borderRadius: 12, backgroundColor: colors.white, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 7, ...shadow },
@@ -1519,7 +1589,7 @@ const styles = StyleSheet.create({
   clearMediaButton: { minHeight: 42, borderRadius: 12, backgroundColor: "#FFF1F3", paddingHorizontal: 12, marginTop: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderWidth: 1, borderColor: "#F6B4BE" },
   dangerButton: { minHeight: 58, borderRadius: 13, backgroundColor: "#FFF1F3", paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderWidth: 1, borderColor: "#F6B4BE" },
   dangerText: { color: colors.red, fontWeight: "900" },
-  editorActions: { flexDirection: "row", gap: 10, marginTop: 10 },
+  editorActions: { flexDirection: "row", gap: 10, marginTop: 10, alignItems: "center" },
   extraImageGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 16 },
   extraImageItem: { width: "31%", height: 86, borderRadius: 10, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, overflow: "hidden" },
   extraImage: { width: "100%", height: "100%" },
@@ -1543,6 +1613,8 @@ const styles = StyleSheet.create({
   leadStatus: { color: colors.navy, backgroundColor: colors.yellow, overflow: "hidden", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, fontWeight: "900" },
   whatsLead: { marginTop: 14, flexDirection: "row", gap: 8, alignItems: "center" },
   whatsLeadText: { color: colors.green, fontWeight: "900" },
+  openLeadText: { color: colors.yellow, fontWeight: "900", marginTop: 10 },
+  leadMessageFull: { color: colors.navy, fontSize: 15, lineHeight: 23, backgroundColor: colors.soft, borderRadius: 12, padding: 14 },
   menuOverlay: { flex: 1 },
   sideMenu: { position: "absolute", left: 0, top: 0, bottom: 0, width: "82%", backgroundColor: colors.white, paddingBottom: 24 },
   sideHeader: { height: 145, backgroundColor: colors.navy, borderBottomRightRadius: 34, justifyContent: "center", paddingHorizontal: 26, borderBottomWidth: 4, borderBottomColor: colors.yellow },
