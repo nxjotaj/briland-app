@@ -107,7 +107,7 @@ export default function App() {
       });
       setSelectedProduct((current) => current ?? produtos[0] ?? null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao carregar dados do Supabase.");
+      setError(err instanceof Error ? err.message : "Falha ao carregar dados do catálogo.");
     } finally {
       setLoading(false);
     }
@@ -495,7 +495,7 @@ function HomeScreen({ go, products, categories, media }: { go: (route: Route) =>
 function CategoriesScreen({ categories, onPick }: { categories: Categoria[]; onPick: (id: string) => void }) {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
-      <PageTitle title="Categorias" subtitle="Explore todas as categorias vindas do Supabase." />
+      <PageTitle title="Categorias" subtitle="Explore todas as nossas linhas de produtos." />
       {categories.length === 0 ? <EmptyState text="Nenhuma categoria disponível." /> : (
         <View style={styles.grid}>
           {categories.map((item) => (
@@ -811,7 +811,6 @@ function AboutScreen({ settings }: { settings: AboutSettings }) {
       <PageTitle title={settings.title || defaultAbout.title} subtitle={settings.subtitle || defaultAbout.subtitle} />
       <View style={styles.aboutCard}>
         <Text style={styles.aboutText}>{settings.body || defaultAbout.body}</Text>
-        <Text style={styles.aboutBody}>Conteúdo editável no painel administrativo, com persistência no Supabase.</Text>
       </View>
     </ScrollView>
   );

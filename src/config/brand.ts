@@ -21,6 +21,6 @@ export const defaultSocialLinks: SocialLinks = {
 
 export const defaultAbout: AboutSettings = {
   title: "Sobre a Briland",
-  subtitle: "Informações institucionais editáveis no painel administrativo.",
-  body: "A Briland oferece soluções automotivas com catálogo conectado ao Supabase, atendimento comercial e gestão administrativa centralizada."
+  subtitle: "Qualidade e confiança em soluções automotivas.",
+  body: "A Briland oferece soluções automotivas com foco em qualidade, atendimento ágil e produtos desenvolvidos para acompanhar as necessidades do mercado."
 };
