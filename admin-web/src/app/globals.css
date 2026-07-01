@@ -1,0 +1,65 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  background: #f4f6fa;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #f4f6fa;
+  color: #021126;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+input[type="number"] {
+  appearance: textfield;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  appearance: none;
+}
+
+@layer components {
+  .input {
+    @apply h-11 w-full rounded-xl border border-line bg-white px-3 text-sm font-semibold text-navy outline-none transition focus:border-yellow focus:ring-2 focus:ring-yellow/25;
+  }
+
+  .textarea {
+    @apply min-h-28 w-full rounded-xl border border-line bg-white px-3 py-3 text-sm font-semibold text-navy outline-none transition focus:border-yellow focus:ring-2 focus:ring-yellow/25;
+  }
+
+  .btn-yellow {
+    @apply inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-yellow px-4 text-sm font-black text-navy transition hover:brightness-95 disabled:opacity-60;
+  }
+
+  .btn-white {
+    @apply inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-line bg-white px-4 text-sm font-black text-navy shadow-sm transition hover:bg-soft;
+  }
+
+  .btn-danger {
+    @apply inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 text-sm font-black text-red-700 transition hover:bg-red-100;
+  }
+
+  .icon-btn {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-xl bg-soft text-navy transition hover:bg-yellow;
+  }
+}
