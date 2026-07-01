@@ -25,10 +25,10 @@ import {
   View
 } from "react-native";
 
-import { CONFIG_STORAGE_KEY, signInWithPassword, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabaseRpc, uploadStorageObject } from "./src/api/supabase";
+import { CONFIG_STORAGE_KEY, signInWithPassword, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRpc, uploadStorageObject } from "./src/api/supabase";
 import { colors, defaultAbout, defaultSocialLinks } from "./src/config/brand";
 import type { AboutSettings, Aplicacao, AppData, Categoria, Lead, Marca, MediaSettings, Permission, Produto, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
-import { createId, csvEscape, loginErrorMessage, money, parseCsv, slugify } from "./src/utils/helpers";
+import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage, money, parseCsv, slugify } from "./src/utils/helpers";
 
 type IconName = keyof typeof Ionicons.glyphMap;
 
@@ -212,7 +212,8 @@ export default function App() {
 
   const createLead = async (payload: Partial<Lead>) => {
     try {
-      await supabasePost<Lead>("LeadOrcamento", {
+      await supabasePostMinimal("LeadOrcamento", {
+        id: createId("lead"),
         nome: payload.nome || currentUser?.name || "Visitante Briland",
         empresa: payload.empresa || currentUser?.company || "Não informado",
         telefone: payload.telefone || "5521973636891",
@@ -756,7 +757,7 @@ function ContactScreen({ onSubmit }: { onSubmit: (lead: Partial<Lead>) => void }
         <Text style={styles.label}>Mensagem *</Text>
         <TextInput value={form.mensagem} onChangeText={(mensagem) => setForm({ ...form, mensagem })} placeholder="Digite sua mensagem aqui..." style={styles.textArea} multiline placeholderTextColor="#9BA0AA" />
         <View style={styles.securityBox}><Ionicons name="shield-checkmark-outline" size={32} color={colors.yellow} /><View style={styles.flex}><Text style={styles.bold}>Seus dados estão protegidos</Text></View></View>
-        <Pressable style={styles.yellowButton} onPress={() => onSubmit({ ...form, origem: "contato", mensagem: "[" + department + "] " + form.mensagem })}><Ionicons name="paper-plane-outline" size={22} color={colors.navy} /><Text style={styles.yellowButtonText}>Enviar mensagem</Text></Pressable>
+        <Pressable style={styles.yellowButton} onPress={() => onSubmit({ ...form, origem: department === "Suporte" ? "contato-suporte" : "contato-comercial", mensagem: "[" + department + "] " + form.mensagem })}><Ionicons name="paper-plane-outline" size={22} color={colors.navy} /><Text style={styles.yellowButtonText}>Enviar mensagem</Text></Pressable>
       </View>
     </ScrollView>
   );
@@ -1198,8 +1199,8 @@ function AdminLeads({ leads, products }: { leads: Lead[]; products: Produto[] })
   return (
     <>
       <Text style={styles.adminTitle}>Leads e orçamentos</Text>
-      {leads.length === 0 ? <EmptyState text="Nenhum lead encontrado." /> : leads.map((lead) => <Pressable key={lead.id} style={styles.leadCard} onPress={() => setSelected(lead)}><View style={styles.leadTop}><Text style={styles.adminItemTitle}>{lead.nome}</Text><Text style={styles.leadStatus}>{lead.status || "NOVO"}</Text></View><Text style={styles.mutedSmall}>{lead.empresa || "Sem empresa"} • {lead.cidade || "Cidade"}/{lead.estado || "UF"} • {productById.get(lead.produtoId ?? "")?.codigoInterno || "Sem produto"}</Text><Text style={styles.detailText} numberOfLines={3}>{lead.mensagem}</Text><Text style={styles.openLeadText}>Toque para ler completo</Text></Pressable>)}
-      {selected && <Modal visible transparent animationType="slide" onRequestClose={() => setSelected(null)}><Pressable style={styles.sheetOverlay} onPress={() => setSelected(null)} /><ScrollView style={styles.editorSheet} contentContainerStyle={styles.editorContent}><View style={styles.sheetHeader}><Text style={styles.sheetTitle}>Lead recebido</Text><Pressable onPress={() => setSelected(null)}><Ionicons name="close" size={26} color={colors.navy} /></Pressable></View><DetailItem label="Nome" value={selected.nome || "Não informado"} /><DetailItem label="Empresa" value={selected.empresa || "Não informado"} /><DetailItem label="Telefone" value={selected.telefone || "Não informado"} /><DetailItem label="E-mail" value={selected.email || "Não informado"} /><DetailItem label="Produto" value={productById.get(selected.produtoId ?? "")?.nome || "Sem produto"} /><Text style={styles.sheetLabel}>Mensagem</Text><Text style={styles.leadMessageFull}>{selected.mensagem || "Sem mensagem"}</Text><Pressable style={styles.whatsLead} onPress={() => openWhatsLead(selected)}><Ionicons name="logo-whatsapp" size={18} color={colors.green} /><Text style={styles.whatsLeadText}>Abrir WhatsApp</Text></Pressable></ScrollView></Modal>}
+      {leads.length === 0 ? <EmptyState text="Nenhum lead encontrado." /> : leads.map((lead) => <Pressable key={lead.id} style={styles.leadCard} onPress={() => setSelected(lead)}><View style={styles.leadTop}><Text style={styles.adminItemTitle}>{lead.nome}</Text><Text style={styles.leadStatus}>{leadDepartment(lead.mensagem, lead.origem)}</Text></View><Text style={styles.mutedSmall}>{lead.status || "NOVO"} • {lead.empresa || "Sem empresa"} • {lead.cidade || "Cidade"}/{lead.estado || "UF"} • {productById.get(lead.produtoId ?? "")?.codigoInterno || "Sem produto"}</Text><Text style={styles.detailText} numberOfLines={3}>{leadMessageBody(lead.mensagem) || "Sem mensagem"}</Text><Text style={styles.openLeadText}>Toque para ler completo</Text></Pressable>)}
+      {selected && <Modal visible transparent animationType="slide" onRequestClose={() => setSelected(null)}><Pressable style={styles.sheetOverlay} onPress={() => setSelected(null)} /><ScrollView style={styles.editorSheet} contentContainerStyle={styles.editorContent}><View style={styles.sheetHeader}><Text style={styles.sheetTitle}>Lead recebido</Text><Pressable onPress={() => setSelected(null)}><Ionicons name="close" size={26} color={colors.navy} /></Pressable></View><DetailItem label="Nome" value={selected.nome || "Não informado"} /><DetailItem label="Área" value={leadDepartment(selected.mensagem, selected.origem)} /><DetailItem label="Empresa" value={selected.empresa || "Não informado"} /><DetailItem label="Telefone" value={selected.telefone || "Não informado"} /><DetailItem label="E-mail" value={selected.email || "Não informado"} /><DetailItem label="Produto" value={productById.get(selected.produtoId ?? "")?.nome || "Sem produto"} /><Text style={styles.sheetLabel}>Mensagem</Text><Text style={styles.leadMessageFull}>{leadMessageBody(selected.mensagem) || "Sem mensagem"}</Text><Pressable style={styles.whatsLead} onPress={() => openWhatsLead(selected)}><Ionicons name="logo-whatsapp" size={18} color={colors.green} /><Text style={styles.whatsLeadText}>Abrir WhatsApp</Text></Pressable></ScrollView></Modal>}
     </>
   );
 }

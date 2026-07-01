@@ -48,6 +48,19 @@ export async function supabasePost<T>(table: string, payload: Record<string, unk
   return (await response.json()) as T[];
 }
 
+export async function supabasePostMinimal(table: string, payload: Record<string, unknown>, token?: string) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+    method: "POST",
+    headers: {
+      ...requestHeaders(token),
+      "Content-Type": "application/json",
+      Prefer: "return=minimal"
+    },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) throw new Error(await response.text());
+}
+
 export async function supabasePatch<T>(table: string, id: string, payload: Record<string, unknown>, token?: string) {
   const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, {
     method: "PATCH",

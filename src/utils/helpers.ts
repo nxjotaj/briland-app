@@ -16,6 +16,17 @@ export function createId(prefix: string) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+export function leadDepartment(message?: string | null, origin?: string | null) {
+  const source = `${origin || ""} ${message || ""}`.toLowerCase();
+  if (source.includes("suporte")) return "Suporte";
+  if (source.includes("comercial")) return "Comercial";
+  return "Não informado";
+}
+
+export function leadMessageBody(message?: string | null) {
+  return (message || "").replace(/^\[(Comercial|Suporte)\]\s*/i, "").trim();
+}
+
 export function loginErrorMessage(err: unknown) {
   const raw = err instanceof Error ? err.message : String(err);
   const lower = raw.toLowerCase();
