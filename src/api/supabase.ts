@@ -62,6 +62,17 @@ export async function supabasePatch<T>(table: string, id: string, payload: Recor
   return (await response.json()) as T[];
 }
 
+export async function supabaseDelete(table: string, id: string, token?: string) {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: {
+      ...requestHeaders(token),
+      Prefer: "return=minimal"
+    }
+  });
+  if (!response.ok) throw new Error(await response.text());
+}
+
 export async function uploadStorageObject(uri: string, path: string, contentType: string, token?: string) {
   const file = await fetch(uri);
   const blob = await file.blob();

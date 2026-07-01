@@ -53,6 +53,7 @@ export type Lead = { id: string; nome: string; empresa?: string | null; telefone
 export type Permission = { id: string; fieldKey: string; fieldLabel: string; visibleToVisitor: boolean; visibleToClient: boolean; visibleToRepresentative: boolean; visibleToAdmin: boolean };
 export type SocialLinks = { instagram: string; linkedin: string; whatsapp: string; site: string };
 export type MediaSettings = { initialImage: string; homeImage: string };
+export type AboutSettings = { title: string; subtitle: string; body: string };
 export type AuthSession = { access_token: string; user: { id: string; email?: string } };
 
 export type AppData = {

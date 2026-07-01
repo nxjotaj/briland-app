@@ -23,61 +23,16 @@ import {
   View
 } from "react-native";
 
-import { CONFIG_STORAGE_KEY, signInWithPassword, supabaseGet, supabasePatch, supabasePost, supabaseRpc, uploadStorageObject } from "./src/api/supabase";
-import type { Aplicacao, AppData, Categoria, Lead, Marca, MediaSettings, Permission, Produto, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
-
-const colors = {
-  navy: "#021126",
-  yellow: "#FCB900",
-  ink: "#07142A",
-  muted: "#6F7480",
-  line: "#E8EAF0",
-  soft: "#F6F7F9",
-  red: "#CF102D",
-  green: "#16A34A",
-  white: "#FFFFFF"
-};
+import { CONFIG_STORAGE_KEY, signInWithPassword, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabaseRpc, uploadStorageObject } from "./src/api/supabase";
+import { colors, defaultAbout, defaultSocialLinks } from "./src/config/brand";
+import type { AboutSettings, Aplicacao, AppData, Categoria, Lead, Marca, MediaSettings, Permission, Produto, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
+import { createId, loginErrorMessage, money, slugify } from "./src/utils/helpers";
 
 type IconName = keyof typeof Ionicons.glyphMap;
 
 const logo = require("./assets/briland-logo.png");
 
 const userSelect = "id,name,company,email,role,status,notes,lastLoginAt,createdAt,updatedAt,authUserId";
-
-function money(value?: number | null) {
-  if (typeof value !== "number") return "Sob consulta";
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
-}
-
-const defaultSocialLinks: SocialLinks = {
-  instagram: "https://instagram.com/briland",
-  linkedin: "https://linkedin.com/company/briland",
-  whatsapp: "https://wa.me/5521973636891",
-  site: "https://briland.com.br"
-};
-
-function slugify(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "") || `produto-${Date.now()}`;
-}
-
-function createId(prefix: string) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function loginErrorMessage(err: unknown) {
-  const raw = err instanceof Error ? err.message : String(err);
-  const lower = raw.toLowerCase();
-  if (lower.includes("invalid login credentials") || lower.includes("invalid_credentials")) return "Senha incorreta ou e-mail incorreto.";
-  if (lower.includes("email not confirmed")) return "E-mail ainda não confirmado.";
-  if (lower.includes("user") && lower.includes("not")) return "E-mail incorreto ou usuário não encontrado.";
-  return "Não foi possível entrar. Confira e-mail e senha.";
-}
-
 function notify(title: string, message: string) {
   Alert.alert(title, message);
 }
@@ -100,6 +55,7 @@ export default function App() {
   const [selectedProduct, setSelectedProduct] = useState<Produto | null>(null);
   const [socialLinks, setSocialLinks] = useState<SocialLinks>(defaultSocialLinks);
   const [mediaSettings, setMediaSettings] = useState<MediaSettings>({ initialImage: "", homeImage: "" });
+  const [aboutSettings, setAboutSettings] = useState<AboutSettings>(defaultAbout);
   const [loading, setLoading] = useState(true);
   const [routeSplash, setRouteSplash] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -133,9 +89,10 @@ export default function App() {
           ])
         : [[], [], []] as [Usuario[], Lead[], Permission[]];
 
-      const settings = appSettings as { media?: MediaSettings; socialLinks?: SocialLinks };
+      const settings = appSettings as { media?: MediaSettings; socialLinks?: SocialLinks; about?: AboutSettings };
       if (settings.socialLinks) setSocialLinks({ ...defaultSocialLinks, ...settings.socialLinks });
       if (settings.media) setMediaSettings({ initialImage: settings.media.initialImage || "", homeImage: settings.media.homeImage || "" });
+      if (settings.about) setAboutSettings({ ...defaultAbout, ...settings.about });
 
       setData({
         produtos,
@@ -158,22 +115,25 @@ export default function App() {
     void reload("VISITANTE", undefined);
     void AsyncStorage.getItem(CONFIG_STORAGE_KEY).then((stored) => {
       if (!stored) return;
-      const parsed = JSON.parse(stored) as { socialLinks?: SocialLinks; mediaSettings?: MediaSettings };
+      const parsed = JSON.parse(stored) as { socialLinks?: SocialLinks; mediaSettings?: MediaSettings; aboutSettings?: AboutSettings };
       if (parsed.socialLinks) setSocialLinks(parsed.socialLinks);
       if (parsed.mediaSettings) setMediaSettings(parsed.mediaSettings);
+      if (parsed.aboutSettings) setAboutSettings({ ...defaultAbout, ...parsed.aboutSettings });
     }).catch(() => undefined);
   }, []);
 
-  const saveAdminConfig = async (nextSocialLinks = socialLinks, nextMediaSettings = mediaSettings) => {
+  const saveAdminConfig = async (nextSocialLinks = socialLinks, nextMediaSettings = mediaSettings, nextAboutSettings = aboutSettings) => {
     setSocialLinks(nextSocialLinks);
     setMediaSettings(nextMediaSettings);
+    setAboutSettings(nextAboutSettings);
     if (authToken && role === "ADMIN") {
       await Promise.all([
         supabaseRpc("save_app_setting", { setting_key: "socialLinks", setting_value: nextSocialLinks }, authToken),
-        supabaseRpc("save_app_setting", { setting_key: "media", setting_value: nextMediaSettings }, authToken)
+        supabaseRpc("save_app_setting", { setting_key: "media", setting_value: nextMediaSettings }, authToken),
+        supabaseRpc("save_app_setting", { setting_key: "about", setting_value: nextAboutSettings }, authToken)
       ]);
     }
-    await AsyncStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify({ socialLinks: nextSocialLinks, mediaSettings: nextMediaSettings }));
+    await AsyncStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify({ socialLinks: nextSocialLinks, mediaSettings: nextMediaSettings, aboutSettings: nextAboutSettings }));
   };
 
   const activeProducts = useMemo(() => data.produtos.filter((item) => item.ativo !== false), [data.produtos]);
@@ -225,8 +185,8 @@ export default function App() {
       const session = await signInWithPassword(email, password);
       const users = await supabaseGet<Usuario>("User", `select=${userSelect}&authUserId=eq.${session.user.id}`, session.access_token);
       const user = users[0];
-      if (!user) throw new Error("Usuario Auth sem vinculo na tabela User.");
-      if (user.status === "INACTIVE") throw new Error("Este usuario esta inativo.");
+      if (!user) throw new Error("Usuário Auth sem vínculo na tabela User.");
+      if (user.status === "INACTIVE") throw new Error("Este usuário está inativo.");
       setAuthToken(session.access_token);
       setCurrentUser(user);
       setRole(user.role);
@@ -253,17 +213,17 @@ export default function App() {
     try {
       await supabasePost<Lead>("LeadOrcamento", {
         nome: payload.nome || currentUser?.name || "Visitante Briland",
-        empresa: payload.empresa || currentUser?.company || "Nao informado",
+        empresa: payload.empresa || currentUser?.company || "Não informado",
         telefone: payload.telefone || "5521973636891",
         email: payload.email || currentUser?.email || "catalogo@briland.com.br",
-        cidade: payload.cidade || "Nao informado",
+        cidade: payload.cidade || "Não informado",
         estado: payload.estado || "NA",
         produtoId: payload.produtoId ?? null,
-        mensagem: payload.mensagem || "Solicitacao enviada pelo app Briland.",
+        mensagem: payload.mensagem || "Solicitação enviada pelo app Briland.",
         origem: payload.origem || "app-mobile",
         status: "NOVO"
       });
-      notify("Solicitacao enviada", "Recebemos sua mensagem no painel de leads.");
+      notify("Solicitação enviada", "Recebemos sua mensagem no painel de leads.");
       void reload();
     } catch (err) {
       notify("Não foi possível salvar", err instanceof Error ? err.message : "Verifique as permissões RLS da tabela LeadOrcamento.");
@@ -276,14 +236,14 @@ export default function App() {
       {loading && <LoadingOverlay />}
       {routeSplash && <RouteSplash />}
       {route === "login" ? (
-        <LoginScreen onLogin={login} onSignup={() => go("signup")} onCatalog={() => go("initial")} error={loginMessage} />
+        <LoginScreen onLogin={login} onSignup={() => go("signup")} onCatalog={() => go("initial")} links={socialLinks} error={loginMessage} />
       ) : route === "initial" ? (
         <InitialScreen media={mediaSettings} onCatalog={() => go("home")} onLogin={() => go("login")} />
       ) : route === "admin" ? (
-        <AdminScreen data={data} active={adminTab} setActive={setAdminTab} onBack={() => go("home")} onLogout={logout} reload={() => reload(role, authToken)} authToken={authToken} socialLinks={socialLinks} setSocialLinks={(links) => void saveAdminConfig(links, mediaSettings)} mediaSettings={mediaSettings} setMediaSettings={(settings) => void saveAdminConfig(socialLinks, settings)} onAction={(text) => notify("Painel admin", text)} />
+        <AdminScreen data={data} active={adminTab} setActive={setAdminTab} onBack={() => go("home")} onLogout={logout} reload={() => reload(role, authToken)} authToken={authToken} socialLinks={socialLinks} setSocialLinks={(links) => void saveAdminConfig(links, mediaSettings, aboutSettings)} mediaSettings={mediaSettings} setMediaSettings={(settings) => void saveAdminConfig(socialLinks, settings, aboutSettings)} aboutSettings={aboutSettings} setAboutSettings={(settings) => void saveAdminConfig(socialLinks, mediaSettings, settings)} onAction={(text) => notify("Painel admin", text)} />
       ) : (
         <>
-          <Header back={["detail", "about", "signup"].includes(route)} onBack={() => go("home")} onMenu={() => setMenuOpen(true)} />
+          <Header back={["detail", "about", "signup"].includes(route)} onBack={() => go("home")} onMenu={() => setMenuOpen(true)} whatsappUrl={socialLinks.whatsapp} />
           {error && <ErrorBanner message={error} onRetry={reload} />}
           {route === "home" && <HomeScreen go={go} products={activeProducts} categories={data.categorias} media={mediaSettings} />}
           {route === "categories" && <CategoriesScreen categories={data.categorias} onPick={(id) => { setCategoryFilter(id); go("products"); }} />}
@@ -370,9 +330,9 @@ export default function App() {
               launch
             />
           )}
-          {route === "detail" && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} onQuote={() => createLead({ produtoId: selectedProduct.id, mensagem: `Tenho interesse no produto ${selectedProduct.codigoInterno} - ${selectedProduct.nome}.`, origem: "produto" })} />}
+          {route === "detail" && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} whatsappUrl={socialLinks.whatsapp} onQuote={() => createLead({ produtoId: selectedProduct.id, mensagem: `Tenho interesse no produto ${selectedProduct.codigoInterno} - ${selectedProduct.nome}.`, origem: "produto" })} />}
           {route === "contact" && <ContactScreen onSubmit={createLead} />}
-          {route === "about" && <AboutScreen />}
+          {route === "about" && <AboutScreen settings={aboutSettings} />}
           {route === "signup" && <SignupScreen links={socialLinks} onSubmit={createLead} onLogin={() => go("login")} />}
           {route !== "signup" && <SocialDock links={socialLinks} />}
         </>
@@ -409,14 +369,14 @@ function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => voi
   );
 }
 
-function Header({ back, onBack, onMenu }: { back?: boolean; onBack: () => void; onMenu: () => void }) {
+function Header({ back, onBack, onMenu, whatsappUrl }: { back?: boolean; onBack: () => void; onMenu: () => void; whatsappUrl: string }) {
   return (
     <View style={styles.header}>
       <Pressable style={styles.iconButton} onPress={back ? onBack : onMenu}>
         <Ionicons name={back ? "chevron-back" : "menu"} size={28} color={colors.navy} />
       </Pressable>
       <LogoPlate compact />
-      <Pressable style={styles.iconButton} onPress={() => Linking.openURL("https://wa.me/5521973636891")}>
+      <Pressable style={styles.iconButton} onPress={() => Linking.openURL(whatsappUrl)}>
         <Ionicons name="logo-whatsapp" size={25} color={colors.navy} />
       </Pressable>
     </View>
@@ -515,7 +475,7 @@ function CategoriesScreen({ categories, onPick }: { categories: Categoria[]; onP
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <PageTitle title="Categorias" subtitle="Explore todas as categorias vindas do Supabase." />
-      {categories.length === 0 ? <EmptyState text="Nenhuma categoria disponivel." /> : (
+      {categories.length === 0 ? <EmptyState text="Nenhuma categoria disponível." /> : (
         <View style={styles.grid}>
           {categories.map((item) => (
             <Pressable style={styles.categoryCard} key={item.id} onPress={() => onPick(item.id)}>
@@ -592,7 +552,7 @@ function ProductList({
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <PageTitle title={title} subtitle={subtitle} badge={launch ? "NOVO" : undefined} />
       <View style={styles.searchRow}>
-        <View style={styles.searchBox}><Ionicons name="search" size={22} color={colors.navy} /><TextInput value={query} onChangeText={setQuery} placeholder="Buscar codigo, EAN, NCM ou descricao..." placeholderTextColor="#9BA0AA" style={styles.searchInput} /></View>
+        <View style={styles.searchBox}><Ionicons name="search" size={22} color={colors.navy} /><TextInput value={query} onChangeText={setQuery} placeholder="Buscar código, EAN, NCM ou descricao..." placeholderTextColor="#9BA0AA" style={styles.searchInput} /></View>
         <Pressable style={styles.filterButton} onPress={() => setFilterOpen(true)}><Ionicons name="filter" size={22} color={colors.navy} /><Text style={styles.filterText}>Filtros</Text></Pressable>
       </View>
       <View style={styles.chips}>
@@ -611,7 +571,7 @@ function ProductList({
                 {launch && <Ribbon text="NOVO" color={colors.yellow} />}
               </View>
               <View style={styles.productBody}>
-                <Text style={styles.productCode}>{product.codigoInterno || "Sem codigo"}</Text>
+                <Text style={styles.productCode}>{product.codigoInterno || "Sem código"}</Text>
                 <Text style={styles.productName} numberOfLines={2}>{product.nome}</Text>
                 <Text style={styles.mutedSmall}>{categoryById.get(product.categoriaId ?? "")?.nome || "Sem categoria"} • {brandById.get(product.marcaId ?? "")?.nome || "Sem marca"}</Text>
                 <View style={styles.cardLine} />
@@ -641,7 +601,7 @@ function ProductList({
   );
 }
 
-function ProductDetail({ product, role, category, brand, onQuote }: { product: Produto; role: Role; category?: Categoria; brand?: Marca; onQuote: () => void }) {
+function ProductDetail({ product, role, category, brand, whatsappUrl, onQuote }: { product: Produto; role: Role; category?: Categoria; brand?: Marca; whatsappUrl: string; onQuote: () => void }) {
   const gallery = [product.imagemPrincipal, ...(product.imagensExtras ?? [])].filter(Boolean) as string[];
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
@@ -649,14 +609,14 @@ function ProductDetail({ product, role, category, brand, onQuote }: { product: P
         {gallery[0] ? <Image source={{ uri: gallery[0] }} style={styles.detailImage} resizeMode="contain" /> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Cadastre a imagem principal no painel admin" tall />}
         <View style={styles.dotsOverlay}><View style={styles.dotActive} />{gallery.slice(1, 5).map((item) => <View key={item} style={styles.dotLight} />)}</View>
       </View>
-      <Text style={styles.smallYellow}>{product.codigoInterno || "Sem codigo"}</Text>
+      <Text style={styles.smallYellow}>{product.codigoInterno || "Sem código"}</Text>
       <Text style={styles.detailTitle}>{product.nome}</Text>
       <Text style={styles.muted}>{product.descricaoCurta || "Produto cadastrado no catálogo Briland."}</Text>
       <View style={styles.statRow}>
-        <InfoCard icon="document-text-outline" label="Preco" value={role === "VISITANTE" ? "Login requerido" : money(product.preco)} />
+        <InfoCard icon="document-text-outline" label="Preço" value={role === "VISITANTE" ? "Login requerido" : money(product.preco)} />
         <InfoCard icon="cube-outline" label="Estoque" value={typeof product.estoque === "number" ? `${product.estoque}` : "Sob consulta"} green={Boolean(product.estoque && product.estoque > 0)} small="unidades" />
       </View>
-      <Accordion title="Informacoes principais" open>
+      <Accordion title="Informações principais" open>
         <View style={styles.detailGrid}>
           <DetailItem label="Categoria" value={category?.nome || "A cadastrar"} />
           <DetailItem label="Marca" value={brand?.nome || "A cadastrar"} />
@@ -669,15 +629,15 @@ function ProductDetail({ product, role, category, brand, onQuote }: { product: P
       <Accordion title="Descrição completa" open={Boolean(product.descricaoCompleta)}>
         <Text style={styles.detailText}>{product.descricaoCompleta}</Text>
       </Accordion>
-      <Accordion title="Ficha tecnica" open={Boolean(product.fichaTecnica)}>
+      <Accordion title="Ficha técnica" open={Boolean(product.fichaTecnica)}>
         <Text style={styles.detailText}>{product.fichaTecnica}</Text>
       </Accordion>
       <Accordion title="Observação comercial" open={Boolean(product.observacaoComercial)}>
         <Text style={styles.detailText}>{product.observacaoComercial}</Text>
       </Accordion>
       <View style={styles.actionRow}>
-        <Pressable style={styles.yellowButton} onPress={onQuote}><Ionicons name="document-text-outline" size={20} color={colors.navy} /><Text style={styles.yellowButtonText}>Solicitar orcamento</Text></Pressable>
-        <Pressable style={styles.whatsButton} onPress={() => Linking.openURL(`https://wa.me/5521973636891?text=${encodeURIComponent(`Tenho interesse no produto ${product.codigoInterno} - ${product.nome}`)}`)}><Ionicons name="logo-whatsapp" size={24} color={colors.green} /></Pressable>
+        <Pressable style={styles.yellowButton} onPress={onQuote}><Ionicons name="document-text-outline" size={20} color={colors.navy} /><Text style={styles.yellowButtonText}>Solicitar orçamento</Text></Pressable>
+        <Pressable style={styles.whatsButton} onPress={() => Linking.openURL(`${whatsappUrl}${whatsappUrl.includes("?") ? "&" : "?"}text=${encodeURIComponent(`Tenho interesse no produto ${product.codigoInterno} - ${product.nome}`)}`)}><Ionicons name="logo-whatsapp" size={24} color={colors.green} /></Pressable>
       </View>
     </ScrollView>
   );
@@ -763,10 +723,10 @@ function ContactScreen({ onSubmit }: { onSubmit: (lead: Partial<Lead>) => void }
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <PageTitle title="Contato" subtitle="Estamos aqui para te ajudar. Envie sua mensagem direto para o painel." />
       <View style={styles.formCard}>
-        <Text style={styles.label}>Com quem voce quer falar? *</Text>
+        <Text style={styles.label}>Com quem você quer falar? *</Text>
         <View style={styles.choiceRow}>
-          <Choice title="Comercial" subtitle="Duvidas, orcamentos e parcerias" selected icon="briefcase-outline" />
-          <Choice title="Suporte" subtitle="Atendimento tecnico e suporte" icon="headset-outline" />
+          <Choice title="Comercial" subtitle="Dúvidas, orçamentos e parcerias" selected icon="briefcase-outline" />
+          <Choice title="Suporte" subtitle="Atendimento técnico e suporte" icon="headset-outline" />
         </View>
         <Input label="Nome completo" value={form.nome} onChangeText={(nome) => setForm({ ...form, nome })} />
         <Input label="Empresa" value={form.empresa} onChangeText={(empresa) => setForm({ ...form, empresa })} />
@@ -781,64 +741,63 @@ function ContactScreen({ onSubmit }: { onSubmit: (lead: Partial<Lead>) => void }
   );
 }
 
-function LoginScreen({ onLogin, onSignup, onCatalog, error }: { onLogin: (email: string, password: string) => void | Promise<void>; onSignup: () => void; onCatalog: () => void; error?: string }) {
+function LoginScreen({ onLogin, onSignup, onCatalog, links, error }: { onLogin: (email: string, password: string) => void | Promise<void>; onSignup: () => void; onCatalog: () => void; links: SocialLinks; error?: string }) {
   const [email, setEmail] = useState("faturamento@briland.com.br");
   const [password, setPassword] = useState("");
+  const supportUrl = links.whatsapp + (links.whatsapp.includes("?") ? "&" : "?") + "text=Preciso%20recuperar%20meu%20acesso%20Briland";
   return (
     <SafeAreaView style={styles.loginScreen}>
       <ScrollView contentContainerStyle={styles.loginContent} keyboardShouldPersistTaps="handled">
-      <Pressable onPress={onCatalog} style={styles.loginLogoButton}>
-        <Image source={logo} style={styles.loginLogo} resizeMode="contain" />
-      </Pressable>
-      <Text style={styles.loginLabel}>Insira seu e-mail</Text>
-      <DarkInput icon="mail-outline" value={email} onChangeText={setEmail} placeholder="seu@email.com" />
-      <Text style={styles.loginLabel}>Insira sua senha</Text>
-      <DarkInput icon="lock-closed-outline" value={password} onChangeText={setPassword} placeholder="Digite sua senha" secure />
-      {error ? <View style={styles.loginErrorBox}><Ionicons name="alert-circle-outline" size={19} color={colors.red} /><Text style={styles.loginErrorText}>{error}</Text></View> : null}
-      <Pressable style={styles.loginButton} onPress={() => onLogin(email, password)}><Text style={styles.loginButtonText}>Entrar</Text></Pressable>
-      <Pressable onPress={() => Linking.openURL("https://wa.me/5521973636891?text=Preciso%20recuperar%20meu%20acesso%20Briland")}><Text style={styles.forgotText}>Esqueci a senha  ›</Text></Pressable>
-      <Divider text="ou" dark />
-      <Pressable style={styles.supportButton} onPress={() => Linking.openURL("https://wa.me/5521973636891")}><Ionicons name="logo-whatsapp" size={26} color="#22C55E" /><Text style={styles.supportText}>Falar com suporte</Text></Pressable>
-      <Pressable style={styles.catalogBackButton} onPress={onCatalog}><Ionicons name="home-outline" size={22} color={colors.white} /><Text style={styles.catalogBackText}>Voltar ao catálogo</Text></Pressable>
-      <Text style={styles.loginMuted}>Ainda não tem uma conta?</Text>
-      <Pressable style={styles.signupDarkButton} onPress={onSignup}><Ionicons name="person-add-outline" size={26} color={colors.yellow} /><Text style={styles.signupDarkText}>Cadastrar</Text></Pressable>
+        <Pressable onPress={onCatalog} style={styles.loginLogoButton}>
+          <Image source={logo} style={styles.loginLogo} resizeMode="contain" />
+        </Pressable>
+        <Text style={styles.loginLabel}>Insira seu e-mail</Text>
+        <DarkInput icon="mail-outline" value={email} onChangeText={setEmail} placeholder="seu@email.com" />
+        <Text style={styles.loginLabel}>Insira sua senha</Text>
+        <DarkInput icon="lock-closed-outline" value={password} onChangeText={setPassword} placeholder="Digite sua senha" secure />
+        {error ? <View style={styles.loginErrorBox}><Ionicons name="alert-circle-outline" size={19} color={colors.red} /><Text style={styles.loginErrorText}>{error}</Text></View> : null}
+        <Pressable style={styles.loginButton} onPress={() => onLogin(email, password)}><Text style={styles.loginButtonText}>Entrar</Text></Pressable>
+        <Pressable onPress={() => Linking.openURL(supportUrl)}><Text style={styles.forgotText}>Esqueci a senha  ›</Text></Pressable>
+        <Divider text="ou" dark />
+        <Pressable style={styles.supportButton} onPress={() => Linking.openURL(links.whatsapp)}><Ionicons name="logo-whatsapp" size={26} color="#22C55E" /><Text style={styles.supportText}>Falar com suporte</Text></Pressable>
+        <Pressable style={styles.catalogBackButton} onPress={onCatalog}><Ionicons name="home-outline" size={22} color={colors.white} /><Text style={styles.catalogBackText}>Voltar ao catálogo</Text></Pressable>
+        <Text style={styles.loginMuted}>Ainda não tem uma conta?</Text>
+        <Pressable style={styles.signupDarkButton} onPress={onSignup}><Ionicons name="person-add-outline" size={26} color={colors.yellow} /><Text style={styles.signupDarkText}>Cadastrar</Text></Pressable>
       </ScrollView>
     </SafeAreaView>
   );
 }
-
 function SignupScreen({ links, onSubmit, onLogin }: { links: SocialLinks; onSubmit: (lead: Partial<Lead>) => void; onLogin: () => void }) {
   const [form, setForm] = useState({ nome: "", empresa: "", telefone: "", email: "", mensagem: "" });
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.signupContent}>
       <PageTitle title="Cadastrar empresa" subtitle="Preencha os dados abaixo para solicitar seu cadastro empresarial." />
-      <Input label="Razao social" value={form.empresa} onChangeText={(empresa) => setForm({ ...form, empresa })} />
-      <Input label="Nome do responsavel" value={form.nome} onChangeText={(nome) => setForm({ ...form, nome })} />
+      <Input label="Razão social" value={form.empresa} onChangeText={(empresa) => setForm({ ...form, empresa })} />
+      <Input label="Nome do responsável" value={form.nome} onChangeText={(nome) => setForm({ ...form, nome })} />
       <Input label="Contato (Telefone / WhatsApp)" value={form.telefone} onChangeText={(telefone) => setForm({ ...form, telefone })} />
       <Input label="E-mail" value={form.email} onChangeText={(email) => setForm({ ...form, email })} />
-      <Input label="CNPJ / Observacoes" value={form.mensagem} onChangeText={(mensagem) => setForm({ ...form, mensagem })} />
-      <View style={styles.checkRow}><View style={styles.emptyCheck} /><Text style={styles.checkText}>Concordo com contato comercial da Briland sobre promocoes e lancamentos.</Text></View>
-      <Pressable style={styles.yellowButton} onPress={() => onSubmit({ ...form, origem: "cadastro", mensagem: form.mensagem || "Solicitacao de cadastro empresarial pelo app." })}><Text style={styles.yellowButtonText}>Cadastrar</Text></Pressable>
-      <Pressable onPress={onLogin}><Text style={styles.loginLink}>Ja tem uma conta? <Text style={styles.yellowText}>Entrar</Text></Text></Pressable>
+      <Input label="CNPJ / Observações" value={form.mensagem} onChangeText={(mensagem) => setForm({ ...form, mensagem })} />
+      <View style={styles.checkRow}><View style={styles.emptyCheck} /><Text style={styles.checkText}>Concordo com contato comercial da Briland sobre promoções e lançamentos.</Text></View>
+      <Pressable style={styles.yellowButton} onPress={() => onSubmit({ ...form, origem: "cadastro", mensagem: form.mensagem || "Solicitação de cadastro empresarial pelo app." })}><Text style={styles.yellowButtonText}>Cadastrar</Text></Pressable>
+      <Pressable onPress={onLogin}><Text style={styles.loginLink}>Já tem uma conta? <Text style={styles.yellowText}>Entrar</Text></Text></Pressable>
       <SocialDock links={links} />
     </ScrollView>
   );
 }
 
-function AboutScreen() {
+function AboutScreen({ settings }: { settings: AboutSettings }) {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
-      <PageTitle title="Sobre a Briland" subtitle="Informacoes institucionais editaveis no painel administrativo." />
+      <PageTitle title={settings.title || defaultAbout.title} subtitle={settings.subtitle || defaultAbout.subtitle} />
       <View style={styles.aboutCard}>
-        <Text style={styles.aboutText}>A Briland oferece soluções automotivas com catálogo conectado ao Supabase, atendimento comercial e gestão administrativa centralizada.</Text>
-        <Text style={styles.aboutBody}>Esta primeira versao ja consome dados reais do banco e esta preparada para evoluir com autenticacao segura, RLS refinado, Storage, importacao e exportacao.</Text>
+        <Text style={styles.aboutText}>{settings.body || defaultAbout.body}</Text>
+        <Text style={styles.aboutBody}>Conteúdo editável no painel administrativo, com persistência no Supabase.</Text>
       </View>
     </ScrollView>
   );
 }
-
-function AdminScreen({ data, active, setActive, onBack, onLogout, reload, authToken, socialLinks, setSocialLinks, mediaSettings, setMediaSettings, onAction }: { data: AppData; active: string; setActive: (tab: string) => void; onBack: () => void; onLogout: () => void; reload: () => void; authToken?: string; socialLinks: SocialLinks; setSocialLinks: (links: SocialLinks) => void; mediaSettings: MediaSettings; setMediaSettings: (settings: MediaSettings) => void; onAction: (message: string) => void }) {
-  const tabs = ["Dashboard", "Produtos", "Categorias", "Marcas", "Aplicações", "Usuários", "Permissões", "Leads", "Mídia", "Links"];
+function AdminScreen({ data, active, setActive, onBack, onLogout, reload, authToken, socialLinks, setSocialLinks, mediaSettings, setMediaSettings, aboutSettings, setAboutSettings, onAction }: { data: AppData; active: string; setActive: (tab: string) => void; onBack: () => void; onLogout: () => void; reload: () => void; authToken?: string; socialLinks: SocialLinks; setSocialLinks: (links: SocialLinks) => void; mediaSettings: MediaSettings; setMediaSettings: (settings: MediaSettings) => void; aboutSettings: AboutSettings; setAboutSettings: (settings: AboutSettings) => void; onAction: (message: string) => void }) {
+  const tabs = ["Dashboard", "Produtos", "Categorias", "Marcas", "Aplicações", "Usuários", "Permissões", "Leads", "Mídia", "Links", "Conteúdo"];
   return (
     <SafeAreaView style={styles.adminSafe}>
       <View style={styles.adminHeader}>
@@ -853,22 +812,22 @@ function AdminScreen({ data, active, setActive, onBack, onLogout, reload, authTo
         {tabs.map((tab) => <Pressable key={tab} onPress={() => setActive(tab)} style={[styles.adminTab, active === tab && styles.adminTabActive]}><Text style={[styles.adminTabText, active === tab && styles.adminTabTextActive]}>{tab}</Text></Pressable>)}
       </ScrollView>
       <ScrollView style={styles.adminBody} contentContainerStyle={styles.adminContent}>
-        {active === "Dashboard" && <AdminDashboard data={data} onAction={onAction} />}
+        {active === "Dashboard" && <AdminDashboard data={data} onAction={onAction} setActive={setActive} />}
         {active === "Produtos" && <AdminProducts products={data.produtos} categories={data.categorias} brands={data.marcas} reload={reload} authToken={authToken} onAction={onAction} />}
         {active === "Categorias" && <AdminCrud title="Categorias" table="Categoria" items={data.categorias} icon="grid-outline" imageField="imagem" reload={reload} authToken={authToken} onAction={onAction} />}
         {active === "Marcas" && <AdminCrud title="Marcas" table="Marca" items={data.marcas} icon="shield-checkmark-outline" imageField="logo" reload={reload} authToken={authToken} onAction={onAction} />}
-        {active === "Aplicações" && <AdminCrud title="Aplicações" items={data.aplicacoes.map((item) => ({ id: item.id, nome: `${item.nome} • ${item.tipo || "Tipo"}`, ativo: item.ativo }))} icon="git-branch-outline" onAction={onAction} />}
-        {active === "Usuários" && <AdminUsers users={data.usuarios} onAction={onAction} />}
+        {active === "Aplicações" && <AdminApplications items={data.aplicacoes} reload={reload} authToken={authToken} onAction={onAction} />}
+        {active === "Usuários" && <AdminUsers users={data.usuarios} reload={reload} authToken={authToken} onAction={onAction} />}
         {active === "Permissões" && <AdminPermissions permissions={data.permissoes} reload={reload} authToken={authToken} onAction={onAction} />}
         {active === "Leads" && <AdminLeads leads={data.leads} products={data.produtos} />}
         {active === "Mídia" && <AdminMedia media={mediaSettings} setMedia={setMediaSettings} authToken={authToken} />}
         {active === "Links" && <AdminLinks links={socialLinks} setLinks={setSocialLinks} />}
+        {active === "Conteúdo" && <AdminContent settings={aboutSettings} setSettings={setAboutSettings} />}
       </ScrollView>
     </SafeAreaView>
   );
 }
-
-function AdminDashboard({ data, onAction }: { data: AppData; onAction: (message: string) => void }) {
+function AdminDashboard({ data, onAction, setActive }: { data: AppData; onAction: (message: string) => void; setActive: (tab: string) => void }) {
   const metrics: [string, string, IconName][] = [
     [String(data.produtos.length), "Total de produtos", "cube-outline"],
     [String(data.produtos.filter((p) => p.ativo !== false).length), "Produtos ativos", "checkmark-circle-outline"],
@@ -877,18 +836,18 @@ function AdminDashboard({ data, onAction }: { data: AppData; onAction: (message:
     [String(data.usuarios.filter((u) => u.status === "ACTIVE").length), "Usuários ativos", "people-outline"],
     [String(data.permissoes.length), "Campos permissionados", "lock-closed-outline"]
   ];
+  const shortcuts: [string, string][] = [["Produtos", "Criar/editar produtos"], ["Categorias", "Categorias"], ["Marcas", "Marcas"], ["Permissões", "Permissões"], ["Leads", "Leads"], ["Mídia", "Mídia"]];
   return (
     <>
       <Text style={styles.adminTitle}>Dashboard</Text>
-      <Text style={styles.adminSubtitle}>Metricas em tempo real das tabelas Supabase.</Text>
+      <Text style={styles.adminSubtitle}>Métricas em tempo real das tabelas Supabase.</Text>
       <View style={styles.adminMetricGrid}>{metrics.map(([value, label, icon]) => <View key={label} style={styles.adminMetric}><Ionicons name={icon} size={23} color={colors.yellow} /><Text style={styles.adminMetricValue}>{value}</Text><Text style={styles.adminMetricLabel}>{label}</Text></View>)}</View>
-      <AdminPanel title="Atalhos rapidos">
-        <View style={styles.shortcutGrid}>{["Criar produto", "Importar XLSX", "Exportar Excel", "Permissões", "Leads", "Auditoria"].map((item) => <Pressable key={item} style={styles.shortcut} onPress={() => onAction(`${item}: pronto para conectar ao backend administrativo seguro.`)}><Ionicons name="arrow-forward" size={18} color={colors.navy} /><Text style={styles.shortcutText}>{item}</Text></Pressable>)}</View>
+      <AdminPanel title="Atalhos rápidos">
+        <View style={styles.shortcutGrid}>{shortcuts.map(([tab, label]) => <Pressable key={tab} style={styles.shortcut} onPress={() => setActive(tab)}><Ionicons name="arrow-forward" size={18} color={colors.navy} /><Text style={styles.shortcutText}>{label}</Text></Pressable>)}</View>
       </AdminPanel>
     </>
   );
 }
-
 function AdminProducts({ products, categories, brands, reload, authToken, onAction }: { products: Produto[]; categories: Categoria[]; brands: Marca[]; reload: () => void; authToken?: string; onAction: (message: string) => void }) {
   const [editing, setEditing] = useState<Produto | null>(null);
   const newProduct = () => {
@@ -911,8 +870,8 @@ function AdminProducts({ products, categories, brands, reload, authToken, onActi
   return (
     <>
       <Text style={styles.adminTitle}>Produtos</Text>
-      <View style={styles.adminActions}><Pressable style={styles.adminYellowButton} onPress={newProduct}><Ionicons name="add" size={20} color={colors.navy} /><Text style={styles.adminYellowText}>Criar produto</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={() => onAction("Importacao XLSX deve rodar no backend.")}><Ionicons name="cloud-upload-outline" size={20} color={colors.navy} /><Text>Importar</Text></Pressable></View>
-      {products.map((product) => <Pressable key={product.id} style={styles.adminListItem} onPress={() => setEditing(product)}>{product.imagemPrincipal ? <Image source={{ uri: product.imagemPrincipal }} style={styles.adminThumb} /> : <View style={styles.adminThumbPlaceholder}><Ionicons name="image-outline" size={24} color={colors.yellow} /></View>}<View style={styles.flex}><Text style={styles.productCode}>{product.codigoInterno || "Sem codigo"}</Text><Text style={styles.adminItemTitle}>{product.nome}</Text><Text style={styles.mutedSmall}>{product.ativo ? "Ativo" : "Inativo"} • Ordem {product.ordem ?? 0} • {money(product.preco)}</Text></View><Switch value={product.ativo !== false} onValueChange={async (value) => { try { await supabasePatch<Produto>("Produto", product.id, { ativo: value }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar status."); } }} trackColor={{ true: colors.yellow, false: "#D7DAE1" }} /></Pressable>)}
+      <View style={styles.adminActions}><Pressable style={styles.adminYellowButton} onPress={newProduct}><Ionicons name="add" size={20} color={colors.navy} /><Text style={styles.adminYellowText}>Criar produto</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={reload}><Ionicons name="refresh" size={20} color={colors.navy} /><Text>Atualizar</Text></Pressable></View>
+      {products.map((product) => <Pressable key={product.id} style={styles.adminListItem} onPress={() => setEditing(product)}>{product.imagemPrincipal ? <Image source={{ uri: product.imagemPrincipal }} style={styles.adminThumb} /> : <View style={styles.adminThumbPlaceholder}><Ionicons name="image-outline" size={24} color={colors.yellow} /></View>}<View style={styles.flex}><Text style={styles.productCode}>{product.codigoInterno || "Sem código"}</Text><Text style={styles.adminItemTitle}>{product.nome}</Text><Text style={styles.mutedSmall}>{product.ativo ? "Ativo" : "Inativo"} • Ordem {product.ordem ?? 0} • {money(product.preco)}</Text></View><Switch value={product.ativo !== false} onValueChange={async (value) => { try { await supabasePatch<Produto>("Produto", product.id, { ativo: value }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar status."); } }} trackColor={{ true: colors.yellow, false: "#D7DAE1" }} /></Pressable>)}
       <ProductEditor product={editing} categories={categories} brands={brands} authToken={authToken} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(); }} />
     </>
   );
@@ -924,7 +883,8 @@ function ProductEditor({ product, categories, brands, authToken, onClose, onSave
   if (!product || !draft) return null;
   const isNew = !product.createdAt;
   const set = (key: keyof Produto, value: string | boolean | number | string[] | null) => setDraft({ ...draft, [key]: value });
-  const productImageHelp = "Imagem ideal: 1200 x 900 px (proporção 4:3), JPG/PNG/WEBP até 5MB. O app exibe com contain para não cortar no card nem no detalhe.";
+  const productImageHelp = "Imagem ideal: 1200 x 900 px (proporção 4:3), JPG/PNG/WEBP até 5MB. O app usa contain para não cortar no card nem no detalhe.";
+  const extras = draft.imagensExtras || [];
   const payload = () => ({
     nome: draft.nome,
     slug: draft.slug || slugify(`${draft.codigoInterno || ""}-${draft.nome}`),
@@ -937,16 +897,16 @@ function ProductEditor({ product, categories, brands, authToken, onClose, onSave
     ncm: draft.ncm || null,
     caixaMaster: draft.caixaMaster || null,
     imagemPrincipal: draft.imagemPrincipal || null,
-    imagensExtras: draft.imagensExtras || [],
-    preco: typeof draft.preco === "number" ? draft.preco : null,
-    estoque: typeof draft.estoque === "number" ? draft.estoque : null,
+    imagensExtras: extras,
+    preco: typeof draft.preco === "number" && !Number.isNaN(draft.preco) ? draft.preco : null,
+    estoque: typeof draft.estoque === "number" && !Number.isNaN(draft.estoque) ? draft.estoque : null,
     condicaoComercial: draft.condicaoComercial || null,
     prazoEntrega: draft.prazoEntrega || null,
     fichaTecnica: draft.fichaTecnica || null,
     manualPdf: draft.manualPdf || null,
     observacaoComercial: draft.observacaoComercial || null,
     observacaoInterna: draft.observacaoInterna || null,
-    margem: typeof draft.margem === "number" ? draft.margem : null,
+    margem: typeof draft.margem === "number" && !Number.isNaN(draft.margem) ? draft.margem : null,
     ca: draft.ca || null,
     ativo: draft.ativo !== false,
     destaque: Boolean(draft.destaque),
@@ -955,17 +915,23 @@ function ProductEditor({ product, categories, brands, authToken, onClose, onSave
   });
   const save = async () => {
     try {
-      if (isNew) {
-        await supabasePost<Produto>("Produto", { id: draft.id, ...payload() }, authToken);
-      } else {
-        await supabasePatch<Produto>("Produto", product.id, payload(), authToken);
+      if (!draft.nome.trim() || !draft.codigoInterno?.trim() || !draft.categoriaId || !draft.marcaId) {
+        notify("Campos obrigatórios", "Preencha nome, código interno, categoria e marca.");
+        return;
       }
+      if (isNew) await supabasePost<Produto>("Produto", { id: draft.id, ...payload() }, authToken);
+      else await supabasePatch<Produto>("Produto", product.id, payload(), authToken);
       await onSaved();
       notify("Produto salvo", "As alterações foram enviadas para o Supabase.");
     } catch (err) {
-      notify("Falha ao salvar", err instanceof Error ? err.message : "Verifique RLS/permissoes do endpoint Produto.");
+      notify("Falha ao salvar", err instanceof Error ? err.message : "Verifique RLS/permissões do endpoint Produto.");
     }
   };
+  const remove = () => Alert.alert("Excluir produto", "Essa ação remove o produto da tabela Produto.", [
+    { text: "Cancelar", style: "cancel" },
+    { text: "Excluir", style: "destructive", onPress: async () => { try { await supabaseDelete("Produto", product.id, authToken); await onSaved(); } catch (err) { notify("Falha ao excluir", err instanceof Error ? err.message : "Não foi possível excluir."); } } }
+  ]);
+  const addExtra = (url: string) => set("imagensExtras", [...extras, url]);
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.sheetOverlay} onPress={onClose} />
@@ -974,100 +940,162 @@ function ProductEditor({ product, categories, brands, authToken, onClose, onSave
         <Text style={styles.adminSubtitle}>Todos os campos seguem o schema real da tabela Produto.</Text>
         <AdminTextInput label="Nome" value={draft.nome} onChangeText={(value) => set("nome", value)} />
         <AdminTextInput label="Slug" value={draft.slug || ""} onChangeText={(value) => set("slug", value)} />
-        <AdminTextInput label="Codigo interno" value={draft.codigoInterno || ""} onChangeText={(value) => set("codigoInterno", value)} />
+        <AdminTextInput label="Código interno" value={draft.codigoInterno || ""} onChangeText={(value) => set("codigoInterno", value)} />
         <Text style={styles.sheetLabel}>Categoria</Text>
         <AdminChoicePills items={categories} selectedId={draft.categoriaId || null} onSelect={(id) => set("categoriaId", id)} />
         <Text style={styles.sheetLabel}>Marca</Text>
         <AdminChoicePills items={brands} selectedId={draft.marcaId || null} onSelect={(id) => set("marcaId", id)} />
-        <ImageUploadField label="Imagem principal" value={draft.imagemPrincipal || ""} folder="produtos/principal" authToken={authToken} help={productImageHelp} onUploaded={(url) => set("imagemPrincipal", url)} />
-        <ImageUploadField label="Imagem extra" value={(draft.imagensExtras || [])[0] || ""} folder="produtos/extras" authToken={authToken} help="Opcional: use também 1200 x 900 px para manter consistência no carrossel." onUploaded={(url) => set("imagensExtras", [url, ...(draft.imagensExtras || []).slice(1)])} />
+        <ImageUploadField label="Imagem principal" value={draft.imagemPrincipal || ""} folder="produtos/principal" authToken={authToken} help={productImageHelp} onUploaded={(url) => set("imagemPrincipal", url)} onClear={() => set("imagemPrincipal", null)} />
+        <ImageUploadField label="Adicionar imagem extra" value="" folder="produtos/extras" authToken={authToken} help="Opcional: use também 1200 x 900 px para manter consistência no carrossel." onUploaded={addExtra} />
+        {extras.length > 0 && <View style={styles.extraImageGrid}>{extras.map((url, index) => <View key={`${url}-${index}`} style={styles.extraImageItem}><Image source={{ uri: url }} style={styles.extraImage} resizeMode="contain" /><Pressable style={styles.extraRemove} onPress={() => set("imagensExtras", extras.filter((_, current) => current !== index))}><Ionicons name="trash-outline" size={16} color={colors.white} /></Pressable></View>)}</View>}
         <AdminTextInput label="Descrição curta" value={draft.descricaoCurta || ""} onChangeText={(value) => set("descricaoCurta", value)} multiline />
         <AdminTextInput label="Descrição completa" value={draft.descricaoCompleta || ""} onChangeText={(value) => set("descricaoCompleta", value)} multiline />
         <AdminTextInput label="EAN" value={draft.ean || ""} onChangeText={(value) => set("ean", value)} />
         <AdminTextInput label="NCM" value={draft.ncm || ""} onChangeText={(value) => set("ncm", value)} />
         <AdminTextInput label="CA" value={draft.ca || ""} onChangeText={(value) => set("ca", value)} />
         <AdminTextInput label="Caixa master" value={draft.caixaMaster || ""} onChangeText={(value) => set("caixaMaster", value)} />
-        <AdminTextInput label="Preco" value={String(draft.preco ?? "")} keyboard="numeric" onChangeText={(value) => set("preco", value ? Number(value.replace(",", ".")) : null)} />
+        <AdminTextInput label="Preço" value={String(draft.preco ?? "")} keyboard="numeric" onChangeText={(value) => set("preco", value ? Number(value.replace(",", ".")) : null)} />
         <AdminTextInput label="Estoque" value={String(draft.estoque ?? "")} keyboard="numeric" onChangeText={(value) => set("estoque", value ? Number(value) : null)} />
         <AdminTextInput label="Margem (%)" value={String(draft.margem ?? "")} keyboard="numeric" onChangeText={(value) => set("margem", value ? Number(value.replace(",", ".")) : null)} />
         <AdminTextInput label="Condição comercial" value={draft.condicaoComercial || ""} onChangeText={(value) => set("condicaoComercial", value)} multiline />
         <AdminTextInput label="Prazo de entrega" value={draft.prazoEntrega || ""} onChangeText={(value) => set("prazoEntrega", value)} />
-        <AdminTextInput label="Ficha tecnica" value={draft.fichaTecnica || ""} onChangeText={(value) => set("fichaTecnica", value)} multiline />
+        <AdminTextInput label="Ficha técnica" value={draft.fichaTecnica || ""} onChangeText={(value) => set("fichaTecnica", value)} multiline />
         <AdminTextInput label="Manual PDF URL" value={draft.manualPdf || ""} onChangeText={(value) => set("manualPdf", value)} />
         <AdminTextInput label="Observação comercial" value={draft.observacaoComercial || ""} onChangeText={(value) => set("observacaoComercial", value)} multiline />
         <AdminTextInput label="Observação interna" value={draft.observacaoInterna || ""} onChangeText={(value) => set("observacaoInterna", value)} multiline />
         <AdminTextInput label="Ordem" value={String(draft.ordem ?? 0)} keyboard="numeric" onChangeText={(value) => set("ordem", Number(value || 0))} />
         <View style={styles.editorSwitch}><Text style={styles.bold}>Ativo</Text><Switch value={draft.ativo !== false} onValueChange={(value) => set("ativo", value)} /></View>
         <View style={styles.editorSwitch}><Text style={styles.bold}>Destaque</Text><Switch value={Boolean(draft.destaque)} onValueChange={(value) => set("destaque", value)} /></View>
-        <Pressable style={styles.yellowButton} onPress={save}><Text style={styles.yellowButtonText}>Salvar produto</Text></Pressable>
+        <View style={styles.editorActions}>
+          {!isNew && <Pressable style={styles.dangerButton} onPress={remove}><Ionicons name="trash-outline" size={20} color={colors.red} /><Text style={styles.dangerText}>Excluir</Text></Pressable>}
+          <Pressable style={styles.yellowButton} onPress={save}><Text style={styles.yellowButtonText}>Salvar produto</Text></Pressable>
+        </View>
       </ScrollView>
     </Modal>
   );
 }
+type CategoryBrandItem = { id: string; nome: string; slug?: string | null; descricao?: string | null; ordem?: number | null; ativo?: boolean | null; imagem?: string | null; logo?: string | null; createdAt?: string | null };
 
-function AdminCrud({ title, items, icon, table, imageField, reload, authToken, onAction }: { title: string; items: Array<{ id: string; nome: string; ativo?: boolean | null; imagem?: string | null; logo?: string | null }>; icon: IconName; table?: "Categoria" | "Marca"; imageField?: "imagem" | "logo"; reload?: () => void; authToken?: string; onAction: (message: string) => void }) {
-  const [editing, setEditing] = useState<{ id: string; nome: string; ativo?: boolean | null; imagem?: string | null; logo?: string | null } | null>(null);
+function AdminCrud({ title, items, icon, table, imageField, reload, authToken, onAction }: { title: string; items: CategoryBrandItem[]; icon: IconName; table: "Categoria" | "Marca"; imageField: "imagem" | "logo"; reload: () => void; authToken?: string; onAction: (message: string) => void }) {
+  const [editing, setEditing] = useState<CategoryBrandItem | null>(null);
+  const create = () => {
+    const id = createId(table === "Categoria" ? "cat" : "marca");
+    setEditing({ id, nome: table === "Categoria" ? "Nova categoria" : "Nova marca", slug: id, ativo: true, ordem: items.length + 1 });
+  };
   return (
     <>
       <Text style={styles.adminTitle}>{title}</Text>
-      <View style={styles.adminActions}><Pressable style={styles.adminYellowButton} onPress={() => onAction(`Criar ${title.toLowerCase()} exige endpoint admin.`)}><Ionicons name="add" size={20} color={colors.navy} /><Text style={styles.adminYellowText}>Criar</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={() => onAction("Upload deve usar Supabase Storage com validacao no backend.")}><Ionicons name="image-outline" size={20} color={colors.navy} /><Text>Upload imagem</Text></Pressable></View>
-      {items.length === 0 ? <EmptyState text={`Nenhum item em ${title}.`} /> : items.map((item) => <Pressable key={item.id} style={styles.adminListItem} onPress={() => setEditing(item)}><View style={styles.adminIconBox}><Ionicons name={icon} size={24} color={colors.yellow} /></View><View style={styles.flex}><Text style={styles.adminItemTitle}>{item.nome}</Text><Text style={styles.mutedSmall}>{table ? "Toque para editar imagem/nome" : "Registro vindo do Supabase"}</Text></View><Switch value={item.ativo !== false} onValueChange={async (value) => { if (!table || !reload) return onAction("Alteracao indisponivel para esta tabela."); try { await supabasePatch(table, item.id, { ativo: value }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar status."); } }} trackColor={{ true: colors.yellow, false: "#D7DAE1" }} /></Pressable>)}
-      {editing && table && imageField && reload && <CategoryBrandEditor title={title} table={table} imageField={imageField} item={editing} authToken={authToken} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(); }} />}
+      <View style={styles.adminActions}><Pressable style={styles.adminYellowButton} onPress={create}><Ionicons name="add" size={20} color={colors.navy} /><Text style={styles.adminYellowText}>Criar</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={reload}><Ionicons name="refresh" size={20} color={colors.navy} /><Text>Atualizar</Text></Pressable></View>
+      {items.length === 0 ? <EmptyState text={"Nenhum item em " + title + "."} /> : items.map((item) => <Pressable key={item.id} style={styles.adminListItem} onPress={() => setEditing(item)}>{item[imageField] ? <Image source={{ uri: String(item[imageField]) }} style={styles.adminThumb} resizeMode="contain" /> : <View style={styles.adminIconBox}><Ionicons name={icon} size={24} color={colors.yellow} /></View>}<View style={styles.flex}><Text style={styles.adminItemTitle}>{item.nome}</Text><Text style={styles.mutedSmall}>Toque para editar nome, slug, status e imagem</Text></View><Switch value={item.ativo !== false} onValueChange={async (value) => { try { await supabasePatch(table, item.id, { ativo: value, updatedAt: new Date().toISOString() }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar status."); } }} trackColor={{ true: colors.yellow, false: "#D7DAE1" }} /></Pressable>)}
+      {editing && <CategoryBrandEditor title={title} table={table} imageField={imageField} item={editing} authToken={authToken} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(); }} />}
     </>
   );
 }
 
-function CategoryBrandEditor({ title, table, imageField, item, authToken, onClose, onSaved }: { title: string; table: "Categoria" | "Marca"; imageField: "imagem" | "logo"; item: { id: string; nome: string; ativo?: boolean | null; imagem?: string | null; logo?: string | null }; authToken?: string; onClose: () => void; onSaved: () => Promise<void> }) {
-  const [nome, setNome] = useState(item.nome);
-  const [imageUrl, setImageUrl] = useState((imageField === "imagem" ? item.imagem : item.logo) || "");
-  const [ativo, setAtivo] = useState(item.ativo !== false);
+function CategoryBrandEditor({ title, table, imageField, item, authToken, onClose, onSaved }: { title: string; table: "Categoria" | "Marca"; imageField: "imagem" | "logo"; item: CategoryBrandItem; authToken?: string; onClose: () => void; onSaved: () => Promise<void> }) {
+  const isNew = !item.createdAt;
+  const [draft, setDraft] = useState<CategoryBrandItem>(item);
+  const currentImage = (imageField === "imagem" ? draft.imagem : draft.logo) || "";
+  const set = (key: keyof CategoryBrandItem, value: string | boolean | number | null) => setDraft({ ...draft, [key]: value });
   const save = async () => {
     try {
-      await supabasePatch(table, item.id, { nome, [imageField]: imageUrl || null, ativo }, authToken);
+      if (!draft.nome.trim()) { notify("Campo obrigatório", "Preencha o nome."); return; }
+      const payload = table === "Categoria"
+        ? { nome: draft.nome, slug: draft.slug || slugify(draft.nome), descricao: draft.descricao || null, imagem: draft.imagem || null, ordem: Number(draft.ordem || 0), ativo: draft.ativo !== false, updatedAt: new Date().toISOString() }
+        : { nome: draft.nome, slug: draft.slug || slugify(draft.nome), logo: draft.logo || null, ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
+      if (isNew) await supabasePost(table, { id: draft.id, ...payload }, authToken);
+      else await supabasePatch(table, item.id, payload, authToken);
       await onSaved();
-      notify(`${title} salvo`, "Registro atualizado no Supabase.");
+      notify(title + " salvo", "Registro atualizado no Supabase.");
     } catch (err) {
-      notify("Falha ao salvar", err instanceof Error ? err.message : "Verifique RLS/permissoes.");
+      notify("Falha ao salvar", err instanceof Error ? err.message : "Verifique RLS/permissões.");
     }
   };
+  const remove = () => Alert.alert("Excluir " + title, "A exclusão pode falhar se existir produto usando esse registro.", [
+    { text: "Cancelar", style: "cancel" },
+    { text: "Excluir", style: "destructive", onPress: async () => { try { await supabaseDelete(table, item.id, authToken); await onSaved(); } catch (err) { notify("Falha ao excluir", err instanceof Error ? err.message : "Não foi possível excluir."); } } }
+  ]);
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.sheetOverlay} onPress={onClose} />
-      <View style={styles.sheet}>
-        <View style={styles.sheetHeader}><Text style={styles.sheetTitle}>Editar {title}</Text><Pressable onPress={onClose}><Ionicons name="close" size={26} color={colors.navy} /></Pressable></View>
-        <AdminTextInput label="Nome" value={nome} onChangeText={setNome} />
-        <ImageUploadField
-          label={imageField === "imagem" ? "Imagem da categoria" : "Logo da marca"}
-          value={imageUrl}
-          folder={imageField === "imagem" ? "categorias" : "marcas"}
-          authToken={authToken}
-          help={imageField === "imagem" ? "Categoria: 900 x 700 px, JPG/PNG/WEBP até 5MB." : "Marca: 600 x 300 px, PNG/WEBP com fundo limpo até 5MB."}
-          onUploaded={setImageUrl}
-        />
-        <View style={styles.editorSwitch}><Text style={styles.bold}>Ativo</Text><Switch value={ativo} onValueChange={setAtivo} /></View>
-        <Pressable style={styles.yellowButton} onPress={save}><Text style={styles.yellowButtonText}>Salvar</Text></Pressable>
-      </View>
+      <ScrollView style={styles.editorSheet} contentContainerStyle={styles.editorContent}>
+        <View style={styles.sheetHeader}><Text style={styles.sheetTitle}>{isNew ? "Criar " + title : "Editar " + title}</Text><Pressable onPress={onClose}><Ionicons name="close" size={26} color={colors.navy} /></Pressable></View>
+        <AdminTextInput label="Nome" value={draft.nome} onChangeText={(value) => set("nome", value)} />
+        <AdminTextInput label="Slug" value={draft.slug || ""} onChangeText={(value) => set("slug", value)} />
+        {table === "Categoria" && <AdminTextInput label="Descrição" value={draft.descricao || ""} onChangeText={(value) => set("descricao", value)} multiline />}
+        {table === "Categoria" && <AdminTextInput label="Ordem" value={String(draft.ordem ?? 0)} keyboard="numeric" onChangeText={(value) => set("ordem", Number(value || 0))} />}
+        <ImageUploadField label={imageField === "imagem" ? "Imagem da categoria" : "Logo da marca"} value={currentImage} folder={imageField === "imagem" ? "categorias" : "marcas"} authToken={authToken} help={imageField === "imagem" ? "Categoria: 900 x 700 px, JPG/PNG/WEBP até 5MB." : "Marca: 600 x 300 px, PNG/WEBP com fundo limpo até 5MB."} onUploaded={(url) => set(imageField, url)} onClear={() => set(imageField, null)} />
+        <View style={styles.editorSwitch}><Text style={styles.bold}>Ativo</Text><Switch value={draft.ativo !== false} onValueChange={(value) => set("ativo", value)} /></View>
+        <View style={styles.editorActions}>
+          {!isNew && <Pressable style={styles.dangerButton} onPress={remove}><Ionicons name="trash-outline" size={20} color={colors.red} /><Text style={styles.dangerText}>Excluir</Text></Pressable>}
+          <Pressable style={styles.yellowButton} onPress={save}><Text style={styles.yellowButtonText}>Salvar</Text></Pressable>
+        </View>
+      </ScrollView>
     </Modal>
   );
 }
-
-function AdminUsers({ users, onAction }: { users: Usuario[]; onAction: (message: string) => void }) {
+function AdminApplications({ items, reload, authToken, onAction }: { items: Aplicacao[]; reload: () => void; authToken?: string; onAction: (message: string) => void }) {
+  const [editing, setEditing] = useState<Aplicacao | null>(null);
+  const create = () => setEditing({ id: createId("app"), nome: "Nova aplicação", slug: "nova-aplicacao", tipo: "Geral", ativo: true });
   return (
     <>
-      <Text style={styles.adminTitle}>Usuários</Text>
-      <Text style={styles.adminSubtitle}>Usuários vinculados ao Supabase Auth. A tabela User está protegida por RLS.</Text>
-      {users.map((user) => <View key={user.id} style={styles.adminListItem}><View style={styles.avatar}><Text style={styles.avatarText}>{user.name[0]}</Text></View><View style={styles.flex}><Text style={styles.adminItemTitle}>{user.name}</Text><Text style={styles.mutedSmall}>{user.company || "Sem empresa"} • {user.role} • {user.status}</Text></View><Pressable onPress={() => onAction(`Editar ${user.name} exige backend admin.`)}><Ionicons name="create-outline" size={22} color={colors.navy} /></Pressable></View>)}
+      <Text style={styles.adminTitle}>Aplicações</Text>
+      <View style={styles.adminActions}><Pressable style={styles.adminYellowButton} onPress={create}><Ionicons name="add" size={20} color={colors.navy} /><Text style={styles.adminYellowText}>Criar</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={reload}><Ionicons name="refresh" size={20} color={colors.navy} /><Text>Atualizar</Text></Pressable></View>
+      {items.map((item) => <Pressable key={item.id} style={styles.adminListItem} onPress={() => setEditing(item)}><View style={styles.adminIconBox}><Ionicons name="git-branch-outline" size={24} color={colors.yellow} /></View><View style={styles.flex}><Text style={styles.adminItemTitle}>{item.nome}</Text><Text style={styles.mutedSmall}>{item.tipo || "Tipo não informado"} • {item.ativo === false ? "Inativa" : "Ativa"}</Text></View><Switch value={item.ativo !== false} onValueChange={async (value) => { try { await supabasePatch("Aplicacao", item.id, { ativo: value, updatedAt: new Date().toISOString() }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar aplicação."); } }} /></Pressable>)}
+      {editing && <ApplicationEditor item={editing} authToken={authToken} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(); }} />}
     </>
   );
 }
 
+function ApplicationEditor({ item, authToken, onClose, onSaved }: { item: Aplicacao; authToken?: string; onClose: () => void; onSaved: () => Promise<void> }) {
+  const isNew = !item.slug || item.id.startsWith("app_");
+  const [draft, setDraft] = useState<Aplicacao>(item);
+  const set = (key: keyof Aplicacao, value: string | boolean | null) => setDraft({ ...draft, [key]: value });
+  const save = async () => {
+    try {
+      const payload = { nome: draft.nome, slug: draft.slug || slugify(draft.nome), tipo: draft.tipo || null, ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
+      if (isNew) await supabasePost("Aplicacao", { id: draft.id, ...payload }, authToken);
+      else await supabasePatch("Aplicacao", item.id, payload, authToken);
+      await onSaved();
+      notify("Aplicação salva", "Registro salvo no Supabase.");
+    } catch (err) { notify("Falha ao salvar", err instanceof Error ? err.message : "Não foi possível salvar."); }
+  };
+  const remove = () => Alert.alert("Excluir aplicação", "A exclusão pode falhar se houver vínculos com produtos.", [{ text: "Cancelar", style: "cancel" }, { text: "Excluir", style: "destructive", onPress: async () => { try { await supabaseDelete("Aplicacao", item.id, authToken); await onSaved(); } catch (err) { notify("Falha ao excluir", err instanceof Error ? err.message : "Não foi possível excluir."); } } }]);
+  return <Modal visible transparent animationType="slide" onRequestClose={onClose}><Pressable style={styles.sheetOverlay} onPress={onClose} /><View style={styles.sheet}><View style={styles.sheetHeader}><Text style={styles.sheetTitle}>{isNew ? "Criar aplicação" : "Editar aplicação"}</Text><Pressable onPress={onClose}><Ionicons name="close" size={26} color={colors.navy} /></Pressable></View><AdminTextInput label="Nome" value={draft.nome} onChangeText={(value) => set("nome", value)} /><AdminTextInput label="Slug" value={draft.slug || ""} onChangeText={(value) => set("slug", value)} /><AdminTextInput label="Tipo" value={draft.tipo || ""} onChangeText={(value) => set("tipo", value)} /><View style={styles.editorSwitch}><Text style={styles.bold}>Ativo</Text><Switch value={draft.ativo !== false} onValueChange={(value) => set("ativo", value)} /></View><View style={styles.editorActions}>{!isNew && <Pressable style={styles.dangerButton} onPress={remove}><Ionicons name="trash-outline" size={20} color={colors.red} /><Text style={styles.dangerText}>Excluir</Text></Pressable>}<Pressable style={styles.yellowButton} onPress={save}><Text style={styles.yellowButtonText}>Salvar</Text></Pressable></View></View></Modal>;
+}
+
+function AdminUsers({ users, reload, authToken, onAction }: { users: Usuario[]; reload: () => void; authToken?: string; onAction: (message: string) => void }) {
+  const [editing, setEditing] = useState<Usuario | null>(null);
+  return (
+    <>
+      <Text style={styles.adminTitle}>Usuários</Text>
+      <Text style={styles.adminSubtitle}>Usuários vinculados ao Supabase Auth. Edite papel e status da tabela User.</Text>
+      {users.map((user) => <Pressable key={user.id} style={styles.adminListItem} onPress={() => setEditing(user)}><View style={styles.avatar}><Text style={styles.avatarText}>{user.name[0]}</Text></View><View style={styles.flex}><Text style={styles.adminItemTitle}>{user.name}</Text><Text style={styles.mutedSmall}>{user.company || "Sem empresa"} • {user.role} • {user.status}</Text></View><Ionicons name="create-outline" size={22} color={colors.navy} /></Pressable>)}
+      {editing && <UserEditor user={editing} reload={reload} authToken={authToken} onClose={() => setEditing(null)} onAction={onAction} />}
+    </>
+  );
+}
+
+function UserEditor({ user, reload, authToken, onClose, onAction }: { user: Usuario; reload: () => void; authToken?: string; onClose: () => void; onAction: (message: string) => void }) {
+  const [draft, setDraft] = useState<Usuario>(user);
+  const set = (key: keyof Usuario, value: string) => setDraft({ ...draft, [key]: value });
+  const save = async () => {
+    try {
+      await supabasePatch("User", user.id, { name: draft.name, company: draft.company || null, email: draft.email, role: draft.role, status: draft.status, notes: draft.notes || null, updatedAt: new Date().toISOString() }, authToken);
+      await reload();
+      onClose();
+      onAction("Usuário atualizado.");
+    } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao salvar usuário."); }
+  };
+  return <Modal visible transparent animationType="slide" onRequestClose={onClose}><Pressable style={styles.sheetOverlay} onPress={onClose} /><ScrollView style={styles.editorSheet} contentContainerStyle={styles.editorContent}><View style={styles.sheetHeader}><Text style={styles.sheetTitle}>Editar usuário</Text><Pressable onPress={onClose}><Ionicons name="close" size={26} color={colors.navy} /></Pressable></View><AdminTextInput label="Nome" value={draft.name} onChangeText={(value) => set("name", value)} /><AdminTextInput label="Empresa" value={draft.company || ""} onChangeText={(value) => set("company", value)} /><AdminTextInput label="E-mail" value={draft.email} onChangeText={(value) => set("email", value)} /><Text style={styles.sheetLabel}>Papel</Text><AdminChoicePills items={[{ id: "ADMIN", nome: "ADMIN" }, { id: "REPRESENTANTE", nome: "REPRESENTANTE" }, { id: "CLIENTE", nome: "CLIENTE" }, { id: "VISITANTE", nome: "VISITANTE" }]} selectedId={draft.role} onSelect={(id) => set("role", id)} /><Text style={styles.sheetLabel}>Status</Text><AdminChoicePills items={[{ id: "ACTIVE", nome: "ACTIVE" }, { id: "INACTIVE", nome: "INACTIVE" }]} selectedId={draft.status} onSelect={(id) => set("status", id)} /><AdminTextInput label="Notas" value={draft.notes || ""} onChangeText={(value) => set("notes", value)} multiline /><Pressable style={styles.yellowButton} onPress={save}><Text style={styles.yellowButtonText}>Salvar usuário</Text></Pressable></ScrollView></Modal>;
+}
 function AdminPermissions({ permissions, reload, authToken, onAction }: { permissions: Permission[]; reload: () => void; authToken?: string; onAction: (message: string) => void }) {
   const toggle = async (permission: Permission, key: keyof Pick<Permission, "visibleToVisitor" | "visibleToClient" | "visibleToRepresentative" | "visibleToAdmin">) => {
     try {
       await supabasePatch<Permission>("ProductFieldPermission", permission.id, { [key]: !permission[key] }, authToken);
       await reload();
     } catch (err) {
-      onAction(err instanceof Error ? err.message : "Falha ao salvar permissao.");
+      onAction(err instanceof Error ? err.message : "Falha ao salvar permissão.");
     }
   };
   return (
@@ -1090,7 +1118,7 @@ function AdminLeads({ leads, products }: { leads: Lead[]; products: Produto[] })
   const productById = new Map(products.map((item) => [item.id, item]));
   return (
     <>
-      <Text style={styles.adminTitle}>Leads e orcamentos</Text>
+      <Text style={styles.adminTitle}>Leads e orçamentos</Text>
       {leads.length === 0 ? <EmptyState text="Nenhum lead encontrado." /> : leads.map((lead) => <View key={lead.id} style={styles.leadCard}><View style={styles.leadTop}><Text style={styles.adminItemTitle}>{lead.nome}</Text><Text style={styles.leadStatus}>{lead.status || "NOVO"}</Text></View><Text style={styles.mutedSmall}>{lead.empresa || "Sem empresa"} • {lead.cidade || "Cidade"}/{lead.estado || "UF"} • {productById.get(lead.produtoId ?? "")?.codigoInterno || "Sem produto"}</Text><Text style={styles.detailText}>{lead.mensagem}</Text><Pressable style={styles.whatsLead} onPress={() => Linking.openURL(`https://wa.me/${lead.telefone || "5521973636891"}?text=${encodeURIComponent(`Olá ${lead.nome}, recebemos seu contato pela Briland.`)}`)}><Ionicons name="logo-whatsapp" size={18} color={colors.green} /><Text style={styles.whatsLeadText}>Abrir WhatsApp</Text></Pressable></View>)}
     </>
   );
@@ -1111,7 +1139,7 @@ function AdminMedia({ media, setMedia, authToken }: { media: MediaSettings; setM
       <AdminPanel title="Categorias e marcas">
         <Text style={styles.mutedSmall}>Imagens de categorias: edite em Admin / Categorias. Logos de marcas: edite em Admin / Marcas. Recomendado: 900 x 700 px para categorias e 600 x 300 px para logos.</Text>
       </AdminPanel>
-      <Pressable style={styles.yellowButton} onPress={() => { setMedia(draft); notify("Mídia salva", "Configuração salva no AppSetting do Supabase."); }}><Text style={styles.yellowButtonText}>Aplicar midia</Text></Pressable>
+      <Pressable style={styles.yellowButton} onPress={() => { setMedia(draft); notify("Mídia salva", "Configuração salva no AppSetting do Supabase."); }}><Text style={styles.yellowButtonText}>Aplicar mídia</Text></Pressable>
     </>
   );
 }
@@ -1132,6 +1160,21 @@ function AdminLinks({ links, setLinks }: { links: SocialLinks; setLinks: (links:
   );
 }
 
+function AdminContent({ settings, setSettings }: { settings: AboutSettings; setSettings: (settings: AboutSettings) => void }) {
+  const [draft, setDraft] = useState(settings);
+  const update = (key: keyof AboutSettings, value: string) => setDraft({ ...draft, [key]: value });
+  return (
+    <>
+      <Text style={styles.adminTitle}>Conteúdo</Text>
+      <Text style={styles.adminSubtitle}>Textos institucionais exibidos na tela Sobre a Briland.</Text>
+      <AdminTextInput label="Título" value={draft.title} onChangeText={(value) => update("title", value)} />
+      <AdminTextInput label="Subtítulo" value={draft.subtitle} onChangeText={(value) => update("subtitle", value)} multiline />
+      <AdminTextInput label="Texto principal" value={draft.body} onChangeText={(value) => update("body", value)} multiline />
+      <Pressable style={styles.yellowButton} onPress={() => { setSettings(draft); notify("Conteúdo salvo", "Texto institucional salvo no AppSetting do Supabase."); }}><Text style={styles.yellowButtonText}>Salvar conteúdo</Text></Pressable>
+    </>
+  );
+}
+
 function AdminChoicePills({ items, selectedId, onSelect }: { items: Array<{ id: string; nome: string }>; selectedId: string | null; onSelect: (id: string) => void }) {
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetOptions}>
@@ -1140,7 +1183,7 @@ function AdminChoicePills({ items, selectedId, onSelect }: { items: Array<{ id: 
   );
 }
 
-function ImageUploadField({ label, value, folder, authToken, help, onUploaded }: { label: string; value: string; folder: string; authToken?: string; help: string; onUploaded: (url: string) => void }) {
+function ImageUploadField({ label, value, folder, authToken, help, onUploaded, onClear }: { label: string; value: string; folder: string; authToken?: string; help: string; onUploaded: (url: string) => void; onClear?: () => void }) {
   const [uploading, setUploading] = useState(false);
   const pick = async () => {
     try {
@@ -1173,6 +1216,7 @@ function ImageUploadField({ label, value, folder, authToken, help, onUploaded }:
         {uploading ? <ActivityIndicator color={colors.navy} /> : <Ionicons name="cloud-upload-outline" size={20} color={colors.navy} />}
         <Text style={styles.adminYellowText}>{uploading ? "Enviando..." : "Selecionar imagem"}</Text>
       </Pressable>
+      {value && onClear && <Pressable style={styles.clearMediaButton} onPress={onClear}><Ionicons name="close-circle-outline" size={18} color={colors.red} /><Text style={styles.dangerText}>Remover imagem deste cadastro</Text></Pressable>}
     </View>
   );
 }
@@ -1351,12 +1395,12 @@ const styles = StyleSheet.create({
   segment: { flexDirection: "row", borderRadius: 22, backgroundColor: colors.white, padding: 4, ...shadow },
   segmentActive: { width: 42, height: 36, borderRadius: 18, backgroundColor: colors.navy, alignItems: "center", justifyContent: "center" },
   segmentLight: { width: 42, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
-  productCard: { width: "47.4%", borderRadius: 12, backgroundColor: colors.white, overflow: "hidden", borderWidth: 1, borderColor: colors.line, ...shadow },
+  productCard: { width: "47.4%", minHeight: 292, borderRadius: 12, backgroundColor: colors.white, overflow: "hidden", borderWidth: 1, borderColor: colors.line, ...shadow },
   productListCard: { width: "100%", borderRadius: 14, backgroundColor: colors.white, overflow: "hidden", borderWidth: 1, borderColor: colors.line, flexDirection: "row", ...shadow },
   promoCard: { borderColor: "#F4A7B1" },
   launchCard: { borderColor: colors.yellow },
   listImageWrap: { width: 132 },
-  productImage: { width: "100%", height: 128, backgroundColor: colors.white },
+  productImage: { width: "100%", height: 136, backgroundColor: colors.white },
   productListImage: { width: 132, height: "100%", backgroundColor: colors.white },
   ribbon: { position: "absolute", left: 8, top: 8, borderRadius: 4, paddingHorizontal: 8, paddingVertical: 3, transform: [{ rotate: "-9deg" }] },
   ribbonText: { color: colors.white, fontWeight: "900", fontSize: 11 },
@@ -1472,6 +1516,14 @@ const styles = StyleSheet.create({
   adminYellowText: { color: colors.navy, fontWeight: "900" },
   adminSoftButton: { height: 48, borderRadius: 12, backgroundColor: colors.white, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 7, ...shadow },
   adminSoftButtonWide: { minHeight: 48, borderRadius: 12, backgroundColor: colors.white, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderWidth: 1, borderColor: colors.line, ...shadow },
+  clearMediaButton: { minHeight: 42, borderRadius: 12, backgroundColor: "#FFF1F3", paddingHorizontal: 12, marginTop: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderWidth: 1, borderColor: "#F6B4BE" },
+  dangerButton: { minHeight: 58, borderRadius: 13, backgroundColor: "#FFF1F3", paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderWidth: 1, borderColor: "#F6B4BE" },
+  dangerText: { color: colors.red, fontWeight: "900" },
+  editorActions: { flexDirection: "row", gap: 10, marginTop: 10 },
+  extraImageGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 16 },
+  extraImageItem: { width: "31%", height: 86, borderRadius: 10, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, overflow: "hidden" },
+  extraImage: { width: "100%", height: "100%" },
+  extraRemove: { position: "absolute", right: 5, top: 5, width: 26, height: 26, borderRadius: 13, backgroundColor: colors.red, alignItems: "center", justifyContent: "center" },
   uploadPreview: { width: "100%", height: 170, borderRadius: 12, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, marginVertical: 10 },
   uploadEmpty: { width: "100%", minHeight: 92, borderRadius: 12, backgroundColor: colors.soft, borderWidth: 1, borderColor: colors.line, marginVertical: 10, alignItems: "center", justifyContent: "center", gap: 6 },
   adminListItem: { borderRadius: 15, backgroundColor: colors.white, padding: 12, marginBottom: 10, flexDirection: "row", alignItems: "center", gap: 12, ...shadow },
@@ -1524,3 +1576,4 @@ const styles = StyleSheet.create({
   adminThumbPlaceholder: { width: 62, height: 62, borderRadius: 10, backgroundColor: colors.navy, alignItems: "center", justifyContent: "center" },
   editorSwitch: { height: 48, borderBottomWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }
 });
+
