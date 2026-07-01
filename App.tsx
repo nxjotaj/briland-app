@@ -117,9 +117,8 @@ export default function App() {
     void reload("VISITANTE", undefined);
     void AsyncStorage.getItem(CONFIG_STORAGE_KEY).then((stored) => {
       if (!stored) return;
-      const parsed = JSON.parse(stored) as { socialLinks?: SocialLinks; mediaSettings?: MediaSettings; aboutSettings?: AboutSettings };
+      const parsed = JSON.parse(stored) as { socialLinks?: SocialLinks; aboutSettings?: AboutSettings };
       if (parsed.socialLinks) setSocialLinks(parsed.socialLinks);
-      if (parsed.mediaSettings) setMediaSettings(parsed.mediaSettings);
       if (parsed.aboutSettings) setAboutSettings({ ...defaultAbout, ...parsed.aboutSettings });
     }).catch(() => undefined);
   }, []);
@@ -135,7 +134,7 @@ export default function App() {
         supabaseRpc("save_app_setting", { setting_key: "about", setting_value: nextAboutSettings }, authToken)
       ]);
     }
-    await AsyncStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify({ socialLinks: nextSocialLinks, mediaSettings: nextMediaSettings, aboutSettings: nextAboutSettings }));
+    await AsyncStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify({ socialLinks: nextSocialLinks, aboutSettings: nextAboutSettings }));
   };
 
   const activeProducts = useMemo(() => data.produtos.filter((item) => item.ativo !== false), [data.produtos]);
@@ -233,114 +232,118 @@ export default function App() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <StatusBar style={route === "login" || route === "admin" ? "light" : "dark"} />
+    <View style={styles.appRoot}>
+      <StatusBar hidden={route === "initial"} style={route === "login" || route === "admin" ? "light" : "dark"} />
       {loading && <LoadingOverlay />}
       {routeSplash && <RouteSplash />}
-      {route === "login" ? (
-        <LoginScreen onLogin={login} onSignup={() => go("signup")} onCatalog={() => go("initial")} links={socialLinks} error={loginMessage} />
-      ) : route === "initial" ? (
+      {route === "initial" ? (
         <InitialScreen media={mediaSettings} onCatalog={() => go("home")} onLogin={() => go("login")} />
-      ) : route === "admin" ? (
-        <AdminScreen data={data} active={adminTab} setActive={setAdminTab} onBack={() => go("home")} onLogout={logout} reload={() => reload(role, authToken)} authToken={authToken} socialLinks={socialLinks} setSocialLinks={(links) => void saveAdminConfig(links, mediaSettings, aboutSettings)} mediaSettings={mediaSettings} setMediaSettings={(settings) => void saveAdminConfig(socialLinks, settings, aboutSettings)} aboutSettings={aboutSettings} setAboutSettings={(settings) => void saveAdminConfig(socialLinks, mediaSettings, settings)} onAction={(text) => notify("Painel admin", text)} />
       ) : (
-        <>
-          <Header back={route !== "home"} onBack={() => go("home")} onMenu={() => setMenuOpen(true)} whatsappUrl={socialLinks.whatsapp} />
-          {error && <ErrorBanner message={error} onRetry={reload} />}
-          {route === "home" && <HomeScreen go={go} products={activeProducts} categories={data.categorias} media={mediaSettings} />}
-          {route === "categories" && <CategoriesScreen categories={data.categorias} onPick={(id) => { setCategoryFilter(id); go("products"); }} />}
-          {route === "products" && (
-            <ProductList
-              title="Produtos"
-              subtitle="Encontre o produto ideal para sua necessidade."
-              products={filteredProducts}
-              allCategories={data.categorias}
-              categoryById={categoryById}
-              brandById={brandById}
-              query={query}
-              setQuery={setQuery}
-              categoryFilter={categoryFilter}
-              setCategoryFilter={setCategoryFilter}
-              brandFilter={brandFilter}
-              setBrandFilter={setBrandFilter}
-              statusFilter={statusFilter}
-              setStatusFilter={setStatusFilter}
-              sortMode={sortMode}
-              setSortMode={setSortMode}
-              brands={data.marcas}
-              filterOpen={filterOpen}
-              setFilterOpen={setFilterOpen}
-              listMode={listMode}
-              setListMode={setListMode}
-              onOpen={openProduct}
-              role={role}
-            />
+        <SafeAreaView style={styles.safe}>
+          {route === "login" ? (
+            <LoginScreen onLogin={login} onSignup={() => go("signup")} onCatalog={() => go("initial")} links={socialLinks} error={loginMessage} />
+          ) : route === "admin" ? (
+            <AdminScreen data={data} active={adminTab} setActive={setAdminTab} onBack={() => go("home")} onLogout={logout} reload={() => reload(role, authToken)} authToken={authToken} socialLinks={socialLinks} setSocialLinks={(links) => void saveAdminConfig(links, mediaSettings, aboutSettings)} mediaSettings={mediaSettings} setMediaSettings={(settings) => void saveAdminConfig(socialLinks, settings, aboutSettings)} aboutSettings={aboutSettings} setAboutSettings={(settings) => void saveAdminConfig(socialLinks, mediaSettings, settings)} onAction={(text) => notify("Painel admin", text)} />
+          ) : (
+            <>
+              <Header back={route !== "home"} onBack={() => go("home")} onMenu={() => setMenuOpen(true)} whatsappUrl={socialLinks.whatsapp} />
+              {error && <ErrorBanner message={error} onRetry={reload} />}
+              {route === "home" && <HomeScreen go={go} products={activeProducts} categories={data.categorias} media={mediaSettings} />}
+              {route === "categories" && <CategoriesScreen categories={data.categorias} onPick={(id) => { setCategoryFilter(id); go("products"); }} />}
+              {route === "products" && (
+                <ProductList
+                  title="Produtos"
+                  subtitle="Encontre o produto ideal para sua necessidade."
+                  products={filteredProducts}
+                  allCategories={data.categorias}
+                  categoryById={categoryById}
+                  brandById={brandById}
+                  query={query}
+                  setQuery={setQuery}
+                  categoryFilter={categoryFilter}
+                  setCategoryFilter={setCategoryFilter}
+                  brandFilter={brandFilter}
+                  setBrandFilter={setBrandFilter}
+                  statusFilter={statusFilter}
+                  setStatusFilter={setStatusFilter}
+                  sortMode={sortMode}
+                  setSortMode={setSortMode}
+                  brands={data.marcas}
+                  filterOpen={filterOpen}
+                  setFilterOpen={setFilterOpen}
+                  listMode={listMode}
+                  setListMode={setListMode}
+                  onOpen={openProduct}
+                  role={role}
+                />
+              )}
+              {route === "promotions" && (
+                <ProductList
+                  title="Promoções"
+                  subtitle="Produtos em destaque e oportunidades comerciais."
+                  products={filteredProducts.filter((item) => item.destaque || typeof item.preco === "number")}
+                  allCategories={data.categorias}
+                  categoryById={categoryById}
+                  brandById={brandById}
+                  query={query}
+                  setQuery={setQuery}
+                  categoryFilter={categoryFilter}
+                  setCategoryFilter={setCategoryFilter}
+                  brandFilter={brandFilter}
+                  setBrandFilter={setBrandFilter}
+                  statusFilter={statusFilter}
+                  setStatusFilter={setStatusFilter}
+                  sortMode={sortMode}
+                  setSortMode={setSortMode}
+                  brands={data.marcas}
+                  filterOpen={filterOpen}
+                  setFilterOpen={setFilterOpen}
+                  listMode={listMode}
+                  setListMode={setListMode}
+                  onOpen={openProduct}
+                  role={role}
+                  promo
+                />
+              )}
+              {route === "launches" && (
+                <ProductList
+                  title="Lançamentos"
+                  subtitle="Últimos produtos cadastrados no catálogo."
+                  products={[...filteredProducts].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 80)}
+                  allCategories={data.categorias}
+                  categoryById={categoryById}
+                  brandById={brandById}
+                  query={query}
+                  setQuery={setQuery}
+                  categoryFilter={categoryFilter}
+                  setCategoryFilter={setCategoryFilter}
+                  brandFilter={brandFilter}
+                  setBrandFilter={setBrandFilter}
+                  statusFilter={statusFilter}
+                  setStatusFilter={setStatusFilter}
+                  sortMode={sortMode}
+                  setSortMode={setSortMode}
+                  brands={data.marcas}
+                  filterOpen={filterOpen}
+                  setFilterOpen={setFilterOpen}
+                  listMode={listMode}
+                  setListMode={setListMode}
+                  onOpen={openProduct}
+                  role={role}
+                  launch
+                />
+              )}
+              {route === "detail" && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} whatsappUrl={socialLinks.whatsapp} onQuote={() => createLead({ produtoId: selectedProduct.id, mensagem: `Tenho interesse no produto ${selectedProduct.codigoInterno} - ${selectedProduct.nome}.`, origem: "produto" })} />}
+              {route === "contact" && <ContactScreen onSubmit={createLead} />}
+              {route === "about" && <AboutScreen settings={aboutSettings} />}
+              {route === "signup" && <SignupScreen links={socialLinks} onSubmit={createLead} onLogin={() => go("login")} />}
+              {route !== "signup" && <SocialDock links={socialLinks} />}
+            </>
           )}
-          {route === "promotions" && (
-            <ProductList
-              title="Promoções"
-              subtitle="Produtos em destaque e oportunidades comerciais."
-              products={filteredProducts.filter((item) => item.destaque || typeof item.preco === "number")}
-              allCategories={data.categorias}
-              categoryById={categoryById}
-              brandById={brandById}
-              query={query}
-              setQuery={setQuery}
-              categoryFilter={categoryFilter}
-              setCategoryFilter={setCategoryFilter}
-              brandFilter={brandFilter}
-              setBrandFilter={setBrandFilter}
-              statusFilter={statusFilter}
-              setStatusFilter={setStatusFilter}
-              sortMode={sortMode}
-              setSortMode={setSortMode}
-              brands={data.marcas}
-              filterOpen={filterOpen}
-              setFilterOpen={setFilterOpen}
-              listMode={listMode}
-              setListMode={setListMode}
-              onOpen={openProduct}
-              role={role}
-              promo
-            />
-          )}
-          {route === "launches" && (
-            <ProductList
-              title="Lançamentos"
-              subtitle="Últimos produtos cadastrados no catálogo."
-              products={[...filteredProducts].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 80)}
-              allCategories={data.categorias}
-              categoryById={categoryById}
-              brandById={brandById}
-              query={query}
-              setQuery={setQuery}
-              categoryFilter={categoryFilter}
-              setCategoryFilter={setCategoryFilter}
-              brandFilter={brandFilter}
-              setBrandFilter={setBrandFilter}
-              statusFilter={statusFilter}
-              setStatusFilter={setStatusFilter}
-              sortMode={sortMode}
-              setSortMode={setSortMode}
-              brands={data.marcas}
-              filterOpen={filterOpen}
-              setFilterOpen={setFilterOpen}
-              listMode={listMode}
-              setListMode={setListMode}
-              onOpen={openProduct}
-              role={role}
-              launch
-            />
-          )}
-          {route === "detail" && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} whatsappUrl={socialLinks.whatsapp} onQuote={() => createLead({ produtoId: selectedProduct.id, mensagem: `Tenho interesse no produto ${selectedProduct.codigoInterno} - ${selectedProduct.nome}.`, origem: "produto" })} />}
-          {route === "contact" && <ContactScreen onSubmit={createLead} />}
-          {route === "about" && <AboutScreen settings={aboutSettings} />}
-          {route === "signup" && <SignupScreen links={socialLinks} onSubmit={createLead} onLogin={() => go("login")} />}
-          {route !== "signup" && <SocialDock links={socialLinks} />}
-        </>
+        </SafeAreaView>
       )}
       <SideMenu visible={menuOpen} role={role} user={currentUser} onClose={() => setMenuOpen(false)} go={go} setRole={setRole} setCurrentUser={(user) => { setCurrentUser(user); if (!user) setAuthToken(undefined); }} />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -1402,10 +1405,11 @@ const shadow = {
 };
 
 const styles = StyleSheet.create({
+  appRoot: { flex: 1, backgroundColor: colors.soft },
   safe: { flex: 1, backgroundColor: colors.soft },
   screen: { flex: 1, backgroundColor: colors.soft },
   contentWithDock: { paddingHorizontal: 20, paddingBottom: 122 },
-  initialScreen: { flex: 1, justifyContent: "flex-end", paddingHorizontal: 20, paddingBottom: 22, backgroundColor: colors.soft, overflow: "hidden" },
+  initialScreen: { flex: 1, justifyContent: "flex-end", backgroundColor: colors.soft, overflow: "hidden" },
   initialBackgroundImage: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, width: "100%", height: "100%", backgroundColor: colors.white },
   initialFallback: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0 },
   loadingOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 30, backgroundColor: "rgba(2,17,38,0.82)", alignItems: "center", justifyContent: "center" },
@@ -1424,7 +1428,7 @@ const styles = StyleSheet.create({
   yellowText: { color: colors.yellow, fontWeight: "800" },
   initialMediaFrame: { width: "100%", height: 470, borderRadius: 18, overflow: "hidden", backgroundColor: colors.white },
   initialImage: { width: "100%", height: "100%", backgroundColor: colors.white },
-  welcomeSheet: { width: "100%", maxWidth: 430, alignSelf: "center", borderRadius: 34, backgroundColor: "rgba(255,255,255,0.96)", paddingHorizontal: 26, paddingTop: 28, paddingBottom: 24, alignItems: "center", ...shadow },
+  welcomeSheet: { marginHorizontal: 20, marginBottom: 22, maxWidth: 430, alignSelf: "stretch", borderRadius: 34, backgroundColor: "rgba(255,255,255,0.96)", paddingHorizontal: 26, paddingTop: 28, paddingBottom: 24, alignItems: "center", ...shadow },
   welcomeSheetCompact: { paddingHorizontal: 22, paddingTop: 22, paddingBottom: 20, borderRadius: 28 },
   welcomeSheetRoomy: { paddingTop: 32, paddingBottom: 28 },
   welcomeTitle: { fontSize: 25, fontWeight: "900", color: colors.navy },
