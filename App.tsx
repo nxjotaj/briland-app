@@ -400,10 +400,13 @@ function InitialScreen({ media, onCatalog, onLogin }: { media: MediaSettings; on
   return (
     <View style={styles.initialScreen}>
       {media.initialImage ? (
-        <Image source={{ uri: media.initialImage }} style={styles.initialBackgroundImage} resizeMode="cover" />
+        <>
+          <Image source={{ uri: media.initialImage }} style={styles.initialBackgroundBlur} resizeMode="cover" blurRadius={18} />
+          <Image source={{ uri: media.initialImage }} style={styles.initialBackgroundImage} resizeMode="contain" />
+        </>
       ) : (
         <View style={styles.initialFallback}>
-          <BrandedMedia title="Imagem inicial" subtitle="Recomendado 1080 x 1920 px" />
+          <BrandedMedia title="Imagem inicial" subtitle="Recomendado 1080 x 1440 px" />
         </View>
       )}
       <LinearGradient colors={["rgba(255,255,255,0.02)", "rgba(255,255,255,0.02)", "rgba(2,17,38,0.26)"]} style={StyleSheet.absoluteFill} />
@@ -1208,7 +1211,7 @@ function AdminMedia({ media, setMedia, authToken }: { media: MediaSettings; setM
       <Text style={styles.adminTitle}>Mídia do app</Text>
       <Text style={styles.adminSubtitle}>Envie imagens para o Supabase Storage. Quando vazio, o app usa um bloco Briland limpo.</Text>
       <AdminPanel title="Tela inicial">
-        <ImageUploadField label="Imagem da primeira tela" value={draft.initialImage} folder="app/inicial" authToken={authToken} help="Recomendado: 1080 x 1440 px, área segura central, JPG/PNG/WEBP até 5MB." onUploaded={(initialImage) => setDraft({ ...draft, initialImage })} />
+        <ImageUploadField label="Imagem da primeira tela" value={draft.initialImage} folder="app/inicial" authToken={authToken} help="Recomendado: 1080 x 1440 px. O app preserva a imagem inteira, sem recorte automático." onUploaded={(initialImage) => setDraft({ ...draft, initialImage })} />
       </AdminPanel>
       <AdminPanel title="Home">
         <ImageUploadField label="Imagem da home" value={draft.homeImage} folder="app/home" authToken={authToken} help="Recomendado: 1200 x 760 px, área segura para chamada e botão, JPG/PNG/WEBP até 5MB." onUploaded={(homeImage) => setDraft({ ...draft, homeImage })} />
@@ -1267,7 +1270,7 @@ function ImageUploadField({ label, value, folder, authToken, help, onUploaded, o
       setUploading(true);
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
+        allowsEditing: false,
         quality: 0.9
       });
       if (result.canceled || !result.assets[0]) return;
@@ -1406,7 +1409,8 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.soft },
   contentWithDock: { paddingHorizontal: 20, paddingBottom: 122 },
   initialScreen: { flex: 1, justifyContent: "flex-end", paddingHorizontal: 20, paddingBottom: 22, backgroundColor: colors.soft, overflow: "hidden" },
-  initialBackgroundImage: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, width: "100%", height: "100%" },
+  initialBackgroundBlur: { position: "absolute", left: -18, right: -18, top: -18, bottom: -18, width: "110%", height: "110%", opacity: 0.22 },
+  initialBackgroundImage: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, width: "100%", height: "100%", backgroundColor: colors.white },
   initialFallback: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0 },
   loadingOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 30, backgroundColor: "rgba(2,17,38,0.82)", alignItems: "center", justifyContent: "center" },
   loadingText: { color: colors.white, fontWeight: "800", marginTop: 14 },
