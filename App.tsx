@@ -21,6 +21,7 @@ import {
   Switch,
   Text,
   TextInput,
+  useWindowDimensions,
   View
 } from "react-native";
 
@@ -393,22 +394,30 @@ function LogoPlate({ compact = false }: { compact?: boolean }) {
 }
 
 function InitialScreen({ media, onCatalog, onLogin }: { media: MediaSettings; onCatalog: () => void; onLogin: () => void }) {
+  const { height } = useWindowDimensions();
+  const compact = height < 760;
+  const roomy = height > 890;
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.initialContent}>
-      <View style={styles.initialMediaFrame}>
-        {media.initialImage ? <Image source={{ uri: media.initialImage }} style={styles.initialImage} resizeMode="cover" /> : <BrandedMedia title="Imagem inicial" subtitle="Recomendado 1080 x 1440 px" />}
-      </View>
-      <View style={styles.welcomeSheet}>
-        <Text style={styles.welcomeTitle}>Bem-vindo a <Text style={styles.yellowText}>Briland</Text></Text>
-        <Text style={styles.centerMuted}>Acesse o catálogo real de produtos e soluções automotivas.</Text>
+    <View style={styles.initialScreen}>
+      {media.initialImage ? (
+        <Image source={{ uri: media.initialImage }} style={styles.initialBackgroundImage} resizeMode="cover" />
+      ) : (
+        <View style={styles.initialFallback}>
+          <BrandedMedia title="Imagem inicial" subtitle="Recomendado 1080 x 1920 px" />
+        </View>
+      )}
+      <LinearGradient colors={["rgba(255,255,255,0.02)", "rgba(255,255,255,0.02)", "rgba(2,17,38,0.26)"]} style={StyleSheet.absoluteFill} />
+      <View style={[styles.welcomeSheet, compact && styles.welcomeSheetCompact, roomy && styles.welcomeSheetRoomy]}>
+        <Text style={[styles.welcomeTitle, compact && styles.welcomeTitleCompact]} numberOfLines={1} adjustsFontSizeToFit>Bem-vindo a <Text style={styles.yellowText}>Briland</Text></Text>
+        <Text style={[styles.centerMuted, compact && styles.centerMutedCompact]}>Acesse o catálogo real de produtos e soluções automotivas.</Text>
         <SlideToEnter onComplete={onCatalog} />
-        <Divider text="ou" />
+        <Divider text="ou" compact={compact} />
         <Pressable style={styles.secondaryButton} onPress={onLogin}>
           <Ionicons name="person" size={24} color={colors.navy} />
           <Text style={styles.secondaryText}>Login com e-mail</Text>
         </Pressable>
       </View>
-    </ScrollView>
+    </View>
   );
 }
 
@@ -1362,8 +1371,8 @@ function DarkInput({ icon, value, onChangeText, placeholder, secure }: { icon: I
   return <View style={styles.darkInput}><Ionicons name={icon} size={25} color={colors.white} /><TextInput value={value} onChangeText={onChangeText} placeholder={placeholder} secureTextEntry={secure} placeholderTextColor="#8EA0BB" style={styles.darkInputText} /></View>;
 }
 
-function Divider({ text, dark }: { text: string; dark?: boolean }) {
-  return <View style={styles.divider}><View style={[styles.dividerLine, dark && styles.dividerLineDark]} /><Text style={[styles.dividerText, dark && styles.dividerTextDark]}>{text}</Text><View style={[styles.dividerLine, dark && styles.dividerLineDark]} /></View>;
+function Divider({ text, dark, compact }: { text: string; dark?: boolean; compact?: boolean }) {
+  return <View style={[styles.divider, compact && styles.dividerCompact]}><View style={[styles.dividerLine, dark && styles.dividerLineDark]} /><Text style={[styles.dividerText, dark && styles.dividerTextDark]}>{text}</Text><View style={[styles.dividerLine, dark && styles.dividerLineDark]} /></View>;
 }
 
 function SocialDock({ links }: { links: SocialLinks }) {
@@ -1396,7 +1405,9 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.soft },
   screen: { flex: 1, backgroundColor: colors.soft },
   contentWithDock: { paddingHorizontal: 20, paddingBottom: 122 },
-  initialContent: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 38, alignItems: "center" },
+  initialScreen: { flex: 1, justifyContent: "flex-end", paddingHorizontal: 20, paddingBottom: 22, backgroundColor: colors.soft, overflow: "hidden" },
+  initialBackgroundImage: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, width: "100%", height: "100%" },
+  initialFallback: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0 },
   loadingOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 30, backgroundColor: "rgba(2,17,38,0.82)", alignItems: "center", justifyContent: "center" },
   loadingText: { color: colors.white, fontWeight: "800", marginTop: 14 },
   routeSplash: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 26, backgroundColor: colors.navy, alignItems: "center", justifyContent: "center", gap: 18 },
@@ -1413,9 +1424,13 @@ const styles = StyleSheet.create({
   yellowText: { color: colors.yellow, fontWeight: "800" },
   initialMediaFrame: { width: "100%", height: 470, borderRadius: 18, overflow: "hidden", backgroundColor: colors.white },
   initialImage: { width: "100%", height: "100%", backgroundColor: colors.white },
-  welcomeSheet: { width: "100%", marginTop: -34, borderTopLeftRadius: 38, borderTopRightRadius: 38, backgroundColor: colors.white, padding: 28, alignItems: "center", ...shadow },
+  welcomeSheet: { width: "100%", maxWidth: 430, alignSelf: "center", borderRadius: 34, backgroundColor: "rgba(255,255,255,0.96)", paddingHorizontal: 26, paddingTop: 28, paddingBottom: 24, alignItems: "center", ...shadow },
+  welcomeSheetCompact: { paddingHorizontal: 22, paddingTop: 22, paddingBottom: 20, borderRadius: 28 },
+  welcomeSheetRoomy: { paddingTop: 32, paddingBottom: 28 },
   welcomeTitle: { fontSize: 25, fontWeight: "900", color: colors.navy },
+  welcomeTitleCompact: { fontSize: 22 },
   centerMuted: { color: colors.muted, textAlign: "center", fontSize: 17, lineHeight: 25, marginVertical: 16 },
+  centerMutedCompact: { fontSize: 15, lineHeight: 21, marginVertical: 12 },
   slideTrack: { width: "100%", height: 64, borderRadius: 34, backgroundColor: colors.navy, justifyContent: "center", overflow: "hidden", paddingHorizontal: 8, marginTop: 4 },
   slideFill: { position: "absolute", left: 0, top: 0, bottom: 0, backgroundColor: colors.yellow, borderRadius: 34 },
   slideText: { color: colors.white, fontWeight: "800", fontSize: 15, textAlign: "center", paddingLeft: 50, zIndex: 1 },
@@ -1539,6 +1554,7 @@ const styles = StyleSheet.create({
   signupDarkButton: { height: 60, borderRadius: 12, borderWidth: 1, borderColor: colors.yellow, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 12 },
   signupDarkText: { color: colors.yellow, fontSize: 19, fontWeight: "900" },
   divider: { flexDirection: "row", alignItems: "center", gap: 14, width: "100%", marginVertical: 22 },
+  dividerCompact: { marginVertical: 16 },
   dividerLine: { flex: 1, height: 1, backgroundColor: "#D6D8DE" },
   dividerLineDark: { backgroundColor: "rgba(255,255,255,0.18)" },
   dividerText: { color: colors.muted },
