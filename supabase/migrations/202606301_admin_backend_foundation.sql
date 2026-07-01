@@ -19,7 +19,7 @@ values
     'initialImage', '',
     'homeImage', '',
     'recommendations', jsonb_build_object(
-      'initialImage', '1080 x 1440 px, JPG/PNG/WEBP ate 5MB',
+      'initialImage', '1080 x 1920 px, JPG/PNG/WEBP ate 5MB',
       'homeImage', '1200 x 760 px, JPG/PNG/WEBP ate 5MB',
       'categoryImage', '900 x 700 px',
       'brandLogo', '600 x 300 px'
