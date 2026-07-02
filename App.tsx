@@ -28,7 +28,7 @@ import {
 import { CONFIG_STORAGE_KEY, signInWithPassword, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRpc, uploadStorageObject } from "./src/api/supabase";
 import { colors, defaultAbout, defaultSocialLinks } from "./src/config/brand";
 import type { AboutSettings, Aplicacao, AppData, Categoria, Lead, Marca, MediaSettings, Permission, Produto, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
-import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage, money, parseCsv, slugify } from "./src/utils/helpers";
+import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage, money, optimizedImageUrl, parseCsv, slugify } from "./src/utils/helpers";
 
 type IconName = keyof typeof Ionicons.glyphMap;
 type RegistrationRequest = { nome: string; empresa: string; telefone: string; email: string; cnpj: string; observacoes: string };
@@ -39,6 +39,14 @@ const logo = require("./assets/briland-logo.png");
 function Image({ resizeMode, contentFit, transition = 160, cachePolicy = "memory-disk", ...props }: CachedImageProps) {
   return <ExpoImage {...props} contentFit={contentFit ?? resizeMode ?? "cover"} transition={transition} cachePolicy={cachePolicy} />;
 }
+
+const imageSize = {
+  home: { width: 960, height: 610, resize: "cover", quality: 78 } as const,
+  category: { width: 480, height: 360, resize: "cover", quality: 72 } as const,
+  productCard: { width: 460, height: 340, resize: "contain", quality: 72 } as const,
+  productDetail: { width: 1280, height: 960, resize: "contain", quality: 88 } as const,
+  thumb: { width: 180, height: 140, resize: "contain", quality: 68 } as const
+};
 
 const userSelect = "id,name,company,email,role,status,notes,phone,cnpj,address,city,state,registrationNotes,approvedAt,approvedBy,lastLoginAt,createdAt,updatedAt,authUserId";
 function notify(title: string, message: string) {
@@ -128,6 +136,15 @@ export default function App() {
       if (parsed.aboutSettings) setAboutSettings({ ...defaultAbout, ...parsed.aboutSettings });
     }).catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    const urls = [
+      optimizedImageUrl(mediaSettings.homeImage, imageSize.home),
+      ...data.categorias.slice(0, 12).map((item) => optimizedImageUrl(item.imagem, imageSize.category)),
+      ...data.produtos.slice(0, 30).map((item) => optimizedImageUrl(item.imagemPrincipal, imageSize.productCard))
+    ].filter(Boolean);
+    if (urls.length) void ExpoImage.prefetch(urls);
+  }, [data.categorias, data.produtos, mediaSettings.homeImage]);
 
   const saveAdminConfig = async (nextSocialLinks = socialLinks, nextMediaSettings = mediaSettings, nextAboutSettings = aboutSettings) => {
     setSocialLinks(nextSocialLinks);
@@ -508,7 +525,7 @@ function HomeScreen({ go, products, categories, media }: { go: (route: Route) =>
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <View style={styles.heroCard}>
-        {media.homeImage ? <Image source={{ uri: media.homeImage }} style={styles.heroImage} resizeMode="cover" /> : <BrandedMedia title="Home Briland" subtitle="Recomendado 1200 x 760 px" />}
+        {media.homeImage ? <Image source={{ uri: optimizedImageUrl(media.homeImage, imageSize.home) }} style={styles.heroImage} resizeMode="cover" /> : <BrandedMedia title="Home Briland" subtitle="Recomendado 1200 x 760 px" />}
         <Pressable style={styles.heroCta} onPress={() => go("products")}>
           <Text style={styles.heroCtaText}>Ver catálogo completo</Text>
           <Ionicons name="arrow-forward" size={25} color={colors.navy} />
@@ -534,7 +551,7 @@ function CategoriesScreen({ categories, onPick }: { categories: Categoria[]; onP
         <View style={styles.grid}>
           {categories.map((item) => (
             <Pressable style={styles.categoryCard} key={item.id} onPress={() => onPick(item.id)}>
-              {item.imagem ? <Image source={{ uri: item.imagem }} style={styles.categoryImage} resizeMode="cover" /> : <BrandedMedia title={item.nome} subtitle="Imagem da categoria" />}
+              {item.imagem ? <Image source={{ uri: optimizedImageUrl(item.imagem, imageSize.category) }} style={styles.categoryImage} resizeMode="cover" /> : <BrandedMedia title={item.nome} subtitle="Imagem da categoria" />}
               <LinearGradient colors={["transparent", "rgba(252,185,0,0.35)"]} style={StyleSheet.absoluteFill} />
               <View style={styles.categoryFooter}>
                 <Text style={styles.categoryName}>{item.nome}</Text>
@@ -620,7 +637,7 @@ function ProductList({
           {products.map((product) => (
             <Pressable key={product.id} style={[listMode === "grid" ? styles.productCard : styles.productListCard, promo && styles.promoCard, launch && styles.launchCard]} onPress={() => onOpen(product)}>
               <View style={listMode === "grid" ? undefined : styles.listImageWrap}>
-                {product.imagemPrincipal ? <Image source={{ uri: product.imagemPrincipal }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" compact={listMode === "list"} />}
+                {product.imagemPrincipal ? <Image source={{ uri: optimizedImageUrl(product.imagemPrincipal, imageSize.productCard) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" compact={listMode === "list"} />}
                 {promo && <Ribbon text="DESTAQUE" color={colors.red} />}
                 {launch && <Ribbon text="NOVO" color={colors.yellow} />}
               </View>
@@ -660,7 +677,7 @@ function ProductDetail({ product, role, category, brand, whatsappUrl, onQuote }:
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <View style={styles.detailMedia}>
-        {gallery[0] ? <Image source={{ uri: gallery[0] }} style={styles.detailImage} resizeMode="contain" /> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Cadastre a imagem principal no painel admin" tall />}
+        {gallery[0] ? <Image source={{ uri: optimizedImageUrl(gallery[0], imageSize.productDetail) }} style={styles.detailImage} resizeMode="contain" /> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Cadastre a imagem principal no painel admin" tall />}
         <View style={styles.dotsOverlay}><View style={styles.dotActive} />{gallery.slice(1, 5).map((item) => <View key={item} style={styles.dotLight} />)}</View>
       </View>
       <Text style={styles.smallYellow}>{product.codigoInterno || "Sem código"}</Text>
@@ -983,7 +1000,7 @@ function AdminProducts({ products, categories, brands, reload, authToken, onActi
     <>
       <Text style={styles.adminTitle}>Produtos</Text>
       <View style={styles.adminActions}><Pressable style={styles.adminYellowButton} onPress={newProduct}><Ionicons name="add" size={20} color={colors.navy} /><Text style={styles.adminYellowText}>Criar produto</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={importProducts}><Ionicons name="cloud-upload-outline" size={20} color={colors.navy} /><Text>Importar CSV</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={exportProducts}><Ionicons name="download-outline" size={20} color={colors.navy} /><Text>Exportar</Text></Pressable></View>
-      {products.map((product) => <Pressable key={product.id} style={styles.adminListItem} onPress={() => setEditing(product)}>{product.imagemPrincipal ? <Image source={{ uri: product.imagemPrincipal }} style={styles.adminThumb} /> : <View style={styles.adminThumbPlaceholder}><Ionicons name="image-outline" size={24} color={colors.yellow} /></View>}<View style={styles.flex}><Text style={styles.productCode}>{product.codigoInterno || "Sem código"}</Text><Text style={styles.adminItemTitle}>{product.nome}</Text><Text style={styles.mutedSmall}>{product.ativo ? "Ativo" : "Inativo"} • Ordem {product.ordem ?? 0} • {money(product.preco)}</Text></View><Switch value={product.ativo !== false} onValueChange={async (value) => { try { await supabasePatch<Produto>("Produto", product.id, { ativo: value }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar status."); } }} trackColor={{ true: colors.yellow, false: "#D7DAE1" }} /></Pressable>)}
+      {products.map((product) => <Pressable key={product.id} style={styles.adminListItem} onPress={() => setEditing(product)}>{product.imagemPrincipal ? <Image source={{ uri: optimizedImageUrl(product.imagemPrincipal, imageSize.thumb) }} style={styles.adminThumb} /> : <View style={styles.adminThumbPlaceholder}><Ionicons name="image-outline" size={24} color={colors.yellow} /></View>}<View style={styles.flex}><Text style={styles.productCode}>{product.codigoInterno || "Sem código"}</Text><Text style={styles.adminItemTitle}>{product.nome}</Text><Text style={styles.mutedSmall}>{product.ativo ? "Ativo" : "Inativo"} • Ordem {product.ordem ?? 0} • {money(product.preco)}</Text></View><Switch value={product.ativo !== false} onValueChange={async (value) => { try { await supabasePatch<Produto>("Produto", product.id, { ativo: value }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar status."); } }} trackColor={{ true: colors.yellow, false: "#D7DAE1" }} /></Pressable>)}
       <ProductEditor product={editing} categories={categories} brands={brands} authToken={authToken} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(); }} />
     </>
   );
@@ -1059,7 +1076,7 @@ function ProductEditor({ product, categories, brands, authToken, onClose, onSave
         <AdminChoicePills items={brands} selectedId={draft.marcaId || null} onSelect={(id) => set("marcaId", id)} />
         <ImageUploadField label="Imagem principal" value={draft.imagemPrincipal || ""} folder="produtos/principal" authToken={authToken} help={productImageHelp} onUploaded={(url) => set("imagemPrincipal", url)} onClear={() => set("imagemPrincipal", null)} />
         <ImageUploadField label="Adicionar imagem extra" value="" folder="produtos/extras" authToken={authToken} help="Opcional: use também 1200 x 900 px para manter consistência no carrossel." onUploaded={addExtra} />
-        {extras.length > 0 && <View style={styles.extraImageGrid}>{extras.map((url, index) => <View key={`${url}-${index}`} style={styles.extraImageItem}><Image source={{ uri: url }} style={styles.extraImage} resizeMode="contain" /><Pressable style={styles.extraRemove} onPress={() => set("imagensExtras", extras.filter((_, current) => current !== index))}><Ionicons name="trash-outline" size={16} color={colors.white} /></Pressable></View>)}</View>}
+        {extras.length > 0 && <View style={styles.extraImageGrid}>{extras.map((url, index) => <View key={`${url}-${index}`} style={styles.extraImageItem}><Image source={{ uri: optimizedImageUrl(url, imageSize.thumb) }} style={styles.extraImage} resizeMode="contain" /><Pressable style={styles.extraRemove} onPress={() => set("imagensExtras", extras.filter((_, current) => current !== index))}><Ionicons name="trash-outline" size={16} color={colors.white} /></Pressable></View>)}</View>}
         <AdminTextInput label="Descrição curta" value={draft.descricaoCurta || ""} onChangeText={(value) => set("descricaoCurta", value)} multiline />
         <AdminTextInput label="Descrição completa" value={draft.descricaoCompleta || ""} onChangeText={(value) => set("descricaoCompleta", value)} multiline />
         <AdminTextInput label="EAN" value={draft.ean || ""} onChangeText={(value) => set("ean", value)} />
@@ -1098,7 +1115,7 @@ function AdminCrud({ title, items, icon, table, imageField, reload, authToken, o
     <>
       <Text style={styles.adminTitle}>{title}</Text>
       <View style={styles.adminActions}><Pressable style={styles.adminYellowButton} onPress={create}><Ionicons name="add" size={20} color={colors.navy} /><Text style={styles.adminYellowText}>Criar</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={reload}><Ionicons name="refresh" size={20} color={colors.navy} /><Text>Atualizar</Text></Pressable></View>
-      {items.length === 0 ? <EmptyState text={"Nenhum item em " + title + "."} /> : items.map((item) => <Pressable key={item.id} style={styles.adminListItem} onPress={() => setEditing(item)}>{item[imageField] ? <Image source={{ uri: String(item[imageField]) }} style={styles.adminThumb} resizeMode="contain" /> : <View style={styles.adminIconBox}><Ionicons name={icon} size={24} color={colors.yellow} /></View>}<View style={styles.flex}><Text style={styles.adminItemTitle}>{item.nome}</Text><Text style={styles.mutedSmall}>Toque para editar nome, slug, status e imagem</Text></View><Switch value={item.ativo !== false} onValueChange={async (value) => { try { await supabasePatch(table, item.id, { ativo: value }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar status."); } }} trackColor={{ true: colors.yellow, false: "#D7DAE1" }} /></Pressable>)}
+      {items.length === 0 ? <EmptyState text={"Nenhum item em " + title + "."} /> : items.map((item) => <Pressable key={item.id} style={styles.adminListItem} onPress={() => setEditing(item)}>{item[imageField] ? <Image source={{ uri: optimizedImageUrl(String(item[imageField]), imageSize.thumb) }} style={styles.adminThumb} resizeMode="contain" /> : <View style={styles.adminIconBox}><Ionicons name={icon} size={24} color={colors.yellow} /></View>}<View style={styles.flex}><Text style={styles.adminItemTitle}>{item.nome}</Text><Text style={styles.mutedSmall}>Toque para editar nome, slug, status e imagem</Text></View><Switch value={item.ativo !== false} onValueChange={async (value) => { try { await supabasePatch(table, item.id, { ativo: value }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar status."); } }} trackColor={{ true: colors.yellow, false: "#D7DAE1" }} /></Pressable>)}
       {editing && <CategoryBrandEditor title={title} table={table} imageField={imageField} item={editing} authToken={authToken} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(); }} />}
     </>
   );
@@ -1339,7 +1356,7 @@ function ImageUploadField({ label, value, folder, authToken, help, onUploaded, o
     <View style={styles.inputGroup}>
       <Text style={styles.label}>{label}</Text>
       <Text style={styles.mutedSmall}>{help}</Text>
-      {value ? <Image source={{ uri: value }} style={styles.uploadPreview} resizeMode="contain" /> : <View style={styles.uploadEmpty}><Ionicons name="image-outline" size={26} color={colors.yellow} /><Text style={styles.mutedSmall}>Nenhuma imagem enviada.</Text></View>}
+      {value ? <Image source={{ uri: optimizedImageUrl(value, imageSize.productCard) }} style={styles.uploadPreview} resizeMode="contain" /> : <View style={styles.uploadEmpty}><Ionicons name="image-outline" size={26} color={colors.yellow} /><Text style={styles.mutedSmall}>Nenhuma imagem enviada.</Text></View>}
       <Pressable style={styles.adminSoftButtonWide} onPress={pick} disabled={uploading}>
         {uploading ? <ActivityIndicator color={colors.navy} /> : <Ionicons name="cloud-upload-outline" size={20} color={colors.navy} />}
         <Text style={styles.adminYellowText}>{uploading ? "Enviando..." : "Selecionar imagem"}</Text>

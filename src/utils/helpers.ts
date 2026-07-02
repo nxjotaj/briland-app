@@ -27,6 +27,29 @@ export function leadMessageBody(message?: string | null) {
   return (message || "").replace(/^\[(Comercial|Suporte)\]\s*/i, "").trim();
 }
 
+type ImageTransformOptions = {
+  width: number;
+  height?: number;
+  quality?: number;
+  resize?: "cover" | "contain" | "fill";
+};
+
+export function optimizedImageUrl(url?: string | null, options?: ImageTransformOptions) {
+  if (!url || !options) return url || "";
+  const marker = "/storage/v1/object/public/";
+  if (!url.includes(marker)) return url;
+  try {
+    const parsed = new URL(url.replace(marker, "/storage/v1/render/image/public/"));
+    parsed.searchParams.set("width", String(options.width));
+    if (options.height) parsed.searchParams.set("height", String(options.height));
+    parsed.searchParams.set("resize", options.resize || "contain");
+    parsed.searchParams.set("quality", String(options.quality ?? 78));
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 export function loginErrorMessage(err: unknown) {
   const raw = err instanceof Error ? err.message : String(err);
   const lower = raw.toLowerCase();
