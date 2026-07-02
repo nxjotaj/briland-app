@@ -232,6 +232,33 @@ export default function App() {
     }
   };
 
+  const requestRegistration = async (payload: Partial<Lead>) => {
+    try {
+      const now = new Date().toISOString();
+      await supabasePostMinimal("User", {
+        id: createId("user"),
+        name: payload.nome || "Responsável não informado",
+        company: payload.empresa || "Empresa não informada",
+        email: payload.email || `cadastro-${Date.now()}@briland.local`,
+        passwordHash: "PENDING_APPROVAL",
+        role: "CLIENTE",
+        status: "INACTIVE",
+        notes: [
+          "Cadastro pendente pelo app.",
+          `Telefone/WhatsApp: ${payload.telefone || "Não informado"}`,
+          `CNPJ / Observações: ${payload.mensagem || "Não informado"}`
+        ].join("\n"),
+        updatedAt: now,
+        authUserId: null
+      });
+      notify("Recebemos seu cadastro, aguarde aprovação", "Nossa equipe vai analisar as informações enviadas.");
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err);
+      const duplicate = raw.toLowerCase().includes("duplicate") || raw.includes("User_email_key");
+      notify("Não foi possível cadastrar", duplicate ? "Este e-mail já possui cadastro ou solicitação em análise." : raw);
+    }
+  };
+
   return (
     <View style={styles.appRoot}>
       <StatusBar hidden={route === "initial"} style={route === "login" || route === "admin" ? "light" : "dark"} />
@@ -337,7 +364,7 @@ export default function App() {
               {route === "detail" && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} whatsappUrl={socialLinks.whatsapp} onQuote={() => createLead({ produtoId: selectedProduct.id, mensagem: `Tenho interesse no produto ${selectedProduct.codigoInterno} - ${selectedProduct.nome}.`, origem: "produto" })} />}
               {route === "contact" && <ContactScreen onSubmit={createLead} />}
               {route === "about" && <AboutScreen settings={aboutSettings} />}
-              {route === "signup" && <SignupScreen links={socialLinks} onSubmit={createLead} onLogin={() => go("login")} />}
+              {route === "signup" && <SignupScreen links={socialLinks} onSubmit={requestRegistration} onLogin={() => go("login")} />}
               {route !== "signup" && <SocialDock links={socialLinks} />}
             </>
           )}
