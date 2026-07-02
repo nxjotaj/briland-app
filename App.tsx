@@ -31,10 +31,11 @@ import type { AboutSettings, Aplicacao, AppData, Categoria, Lead, Marca, MediaSe
 import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage, money, parseCsv, slugify } from "./src/utils/helpers";
 
 type IconName = keyof typeof Ionicons.glyphMap;
+type RegistrationRequest = { nome: string; empresa: string; telefone: string; email: string; cnpj: string; observacoes: string };
 
 const logo = require("./assets/briland-logo.png");
 
-const userSelect = "id,name,company,email,role,status,notes,lastLoginAt,createdAt,updatedAt,authUserId";
+const userSelect = "id,name,company,email,role,status,notes,phone,cnpj,address,city,state,registrationNotes,approvedAt,approvedBy,lastLoginAt,createdAt,updatedAt,authUserId";
 function notify(title: string, message: string) {
   Alert.alert(title, message);
 }
@@ -187,6 +188,7 @@ export default function App() {
       const users = await supabaseGet<Usuario>("User", `select=${userSelect}&authUserId=eq.${session.user.id}`, session.access_token);
       const user = users[0];
       if (!user) throw new Error("Usuário Auth sem vínculo na tabela User.");
+      if (user.status === "PENDING") throw new Error("Seu cadastro ainda está aguardando aprovação.");
       if (user.status === "INACTIVE") throw new Error("Este usuário está inativo.");
       setAuthToken(session.access_token);
       setCurrentUser(user);
@@ -232,7 +234,7 @@ export default function App() {
     }
   };
 
-  const requestRegistration = async (payload: Partial<Lead>) => {
+  const requestRegistration = async (payload: RegistrationRequest) => {
     try {
       const now = new Date().toISOString();
       await supabasePostMinimal("User", {
@@ -242,12 +244,11 @@ export default function App() {
         email: payload.email || `cadastro-${Date.now()}@briland.local`,
         passwordHash: "PENDING_APPROVAL",
         role: "CLIENTE",
-        status: "INACTIVE",
-        notes: [
-          "Cadastro pendente pelo app.",
-          `Telefone/WhatsApp: ${payload.telefone || "Não informado"}`,
-          `CNPJ / Observações: ${payload.mensagem || "Não informado"}`
-        ].join("\n"),
+        status: "PENDING",
+        phone: payload.telefone || null,
+        cnpj: payload.cnpj || null,
+        registrationNotes: payload.observacoes || null,
+        notes: "Cadastro pendente pelo app.",
         updatedAt: now,
         authUserId: null
       });
@@ -815,8 +816,8 @@ function LoginScreen({ onLogin, onSignup, onCatalog, links, error }: { onLogin: 
     </SafeAreaView>
   );
 }
-function SignupScreen({ links, onSubmit, onLogin }: { links: SocialLinks; onSubmit: (lead: Partial<Lead>) => void; onLogin: () => void }) {
-  const [form, setForm] = useState({ nome: "", empresa: "", telefone: "", email: "", mensagem: "" });
+function SignupScreen({ links, onSubmit, onLogin }: { links: SocialLinks; onSubmit: (request: RegistrationRequest) => void; onLogin: () => void }) {
+  const [form, setForm] = useState<RegistrationRequest>({ nome: "", empresa: "", telefone: "", email: "", cnpj: "", observacoes: "" });
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.signupContent}>
       <PageTitle title="Cadastrar empresa" subtitle="Preencha os dados abaixo para solicitar seu cadastro empresarial." />
@@ -824,9 +825,10 @@ function SignupScreen({ links, onSubmit, onLogin }: { links: SocialLinks; onSubm
       <Input label="Nome do responsável" value={form.nome} onChangeText={(nome) => setForm({ ...form, nome })} />
       <Input label="Contato (Telefone / WhatsApp)" value={form.telefone} onChangeText={(telefone) => setForm({ ...form, telefone })} />
       <Input label="E-mail" value={form.email} onChangeText={(email) => setForm({ ...form, email })} />
-      <Input label="CNPJ / Observações" value={form.mensagem} onChangeText={(mensagem) => setForm({ ...form, mensagem })} />
+      <Input label="CNPJ" value={form.cnpj} onChangeText={(cnpj) => setForm({ ...form, cnpj })} />
+      <Input label="Observações" value={form.observacoes} onChangeText={(observacoes) => setForm({ ...form, observacoes })} />
       <View style={styles.checkRow}><View style={styles.emptyCheck} /><Text style={styles.checkText}>Concordo com contato comercial da Briland sobre promoções e lançamentos.</Text></View>
-      <Pressable style={styles.yellowButton} onPress={() => onSubmit({ ...form, origem: "cadastro", mensagem: form.mensagem || "Solicitação de cadastro empresarial pelo app." })}><Text style={styles.yellowButtonText}>Cadastrar</Text></Pressable>
+      <Pressable style={styles.yellowButton} onPress={() => onSubmit(form)}><Text style={styles.yellowButtonText}>Cadastrar</Text></Pressable>
       <Pressable onPress={onLogin}><Text style={styles.loginLink}>Já tem uma conta? <Text style={styles.yellowText}>Entrar</Text></Text></Pressable>
       <SocialDock links={links} />
     </ScrollView>
@@ -1186,13 +1188,27 @@ function UserEditor({ user, reload, authToken, onClose, onAction }: { user: Usua
   const set = (key: keyof Usuario, value: string) => setDraft({ ...draft, [key]: value });
   const save = async () => {
     try {
-      await supabasePatch("User", user.id, { name: draft.name, company: draft.company || null, email: draft.email, role: draft.role, status: draft.status, notes: draft.notes || null }, authToken);
+      await supabasePatch("User", user.id, {
+        name: draft.name,
+        company: draft.company || null,
+        email: draft.email,
+        role: draft.role,
+        status: draft.status,
+        phone: draft.phone || null,
+        cnpj: draft.cnpj || null,
+        address: draft.address || null,
+        city: draft.city || null,
+        state: draft.state || null,
+        registrationNotes: draft.registrationNotes || null,
+        notes: draft.notes || null,
+        approvedAt: draft.status === "ACTIVE" ? (draft.approvedAt || new Date().toISOString()) : draft.approvedAt || null
+      }, authToken);
       await reload();
       onClose();
       onAction("Usuário atualizado.");
     } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao salvar usuário."); }
   };
-  return <Modal visible transparent animationType="slide" onRequestClose={onClose}><Pressable style={styles.sheetOverlay} onPress={onClose} /><ScrollView style={styles.editorSheet} contentContainerStyle={styles.editorContent}><View style={styles.sheetHeader}><Text style={styles.sheetTitle}>Editar usuário</Text><Pressable onPress={onClose}><Ionicons name="close" size={26} color={colors.navy} /></Pressable></View><AdminTextInput label="Nome" value={draft.name} onChangeText={(value) => set("name", value)} /><AdminTextInput label="Empresa" value={draft.company || ""} onChangeText={(value) => set("company", value)} /><AdminTextInput label="E-mail" value={draft.email} onChangeText={(value) => set("email", value)} /><Text style={styles.sheetLabel}>Papel</Text><AdminChoicePills items={[{ id: "ADMIN", nome: "ADMIN" }, { id: "REPRESENTANTE", nome: "REPRESENTANTE" }, { id: "CLIENTE", nome: "CLIENTE" }, { id: "VISITANTE", nome: "VISITANTE" }]} selectedId={draft.role} onSelect={(id) => set("role", id)} /><Text style={styles.sheetLabel}>Status</Text><AdminChoicePills items={[{ id: "ACTIVE", nome: "ACTIVE" }, { id: "INACTIVE", nome: "INACTIVE" }]} selectedId={draft.status} onSelect={(id) => set("status", id)} /><AdminTextInput label="Notas" value={draft.notes || ""} onChangeText={(value) => set("notes", value)} multiline /><Pressable style={styles.yellowButton} onPress={save}><Text style={styles.yellowButtonText}>Salvar usuário</Text></Pressable></ScrollView></Modal>;
+  return <Modal visible transparent animationType="slide" onRequestClose={onClose}><Pressable style={styles.sheetOverlay} onPress={onClose} /><ScrollView style={styles.editorSheet} contentContainerStyle={styles.editorContent}><View style={styles.sheetHeader}><Text style={styles.sheetTitle}>Editar usuário</Text><Pressable onPress={onClose}><Ionicons name="close" size={26} color={colors.navy} /></Pressable></View><AdminTextInput label="Nome" value={draft.name} onChangeText={(value) => set("name", value)} /><AdminTextInput label="Empresa" value={draft.company || ""} onChangeText={(value) => set("company", value)} /><AdminTextInput label="E-mail" value={draft.email} onChangeText={(value) => set("email", value)} /><AdminTextInput label="Telefone / WhatsApp" value={draft.phone || ""} onChangeText={(value) => set("phone", value)} /><AdminTextInput label="CNPJ" value={draft.cnpj || ""} onChangeText={(value) => set("cnpj", value)} /><AdminTextInput label="Endereço" value={draft.address || ""} onChangeText={(value) => set("address", value)} /><AdminTextInput label="Cidade" value={draft.city || ""} onChangeText={(value) => set("city", value)} /><AdminTextInput label="UF" value={draft.state || ""} onChangeText={(value) => set("state", value)} /><Text style={styles.sheetLabel}>Papel</Text><AdminChoicePills items={[{ id: "ADMIN", nome: "ADMIN" }, { id: "REPRESENTANTE", nome: "REPRESENTANTE" }, { id: "CLIENTE", nome: "CLIENTE" }]} selectedId={draft.role} onSelect={(id) => set("role", id)} /><Text style={styles.sheetLabel}>Status</Text><AdminChoicePills items={[{ id: "PENDING", nome: "PENDING" }, { id: "ACTIVE", nome: "ACTIVE" }, { id: "INACTIVE", nome: "INACTIVE" }]} selectedId={draft.status} onSelect={(id) => set("status", id)} /><AdminTextInput label="Observações do cadastro" value={draft.registrationNotes || ""} onChangeText={(value) => set("registrationNotes", value)} multiline /><AdminTextInput label="Notas internas" value={draft.notes || ""} onChangeText={(value) => set("notes", value)} multiline /><Pressable style={styles.yellowButton} onPress={save}><Text style={styles.yellowButtonText}>Salvar usuário</Text></Pressable></ScrollView></Modal>;
 }
 function AdminPermissions({ permissions, reload, authToken, onAction }: { permissions: Permission[]; reload: () => void; authToken?: string; onAction: (message: string) => void }) {
   const toggle = async (permission: Permission, key: keyof Pick<Permission, "visibleToVisitor" | "visibleToClient" | "visibleToRepresentative" | "visibleToAdmin">) => {

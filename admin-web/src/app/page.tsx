@@ -87,6 +87,8 @@ const emptyData: AppData = {
   settings: {}
 };
 
+const userSelectFields = "id,name,company,email,role,status,notes,phone,cnpj,address,city,state,registrationNotes,approvedAt,approvedBy,lastLoginAt,createdAt,updatedAt,authUserId";
+
 function leadDepartment(lead: Lead) {
   const source = `${lead.origem || ""} ${lead.mensagem || ""}`.toLowerCase();
   if (source.includes("suporte")) return "Suporte";
@@ -117,7 +119,7 @@ export default function Page() {
   const loadAdmin = async (token: string, authUserId: string) => {
     const { data: users, error } = await supabase
       .from("User")
-      .select("id,name,company,email,role,status,notes,lastLoginAt,createdAt,updatedAt,authUserId")
+      .select(userSelectFields)
       .eq("authUserId", authUserId)
       .limit(1)
       .returns<Usuario[]>();
@@ -150,7 +152,7 @@ export default function Page() {
         supabase.from("Categoria").select("*").order("ordem", { ascending: true }).returns<Categoria[]>(),
         supabase.from("Marca").select("*").order("nome").returns<Marca[]>(),
         supabase.from("Aplicacao").select("*").order("nome").returns<Aplicacao[]>(),
-        supabase.from("User").select("id,name,company,email,role,status,notes,lastLoginAt,createdAt,updatedAt,authUserId").order("name").returns<Usuario[]>(),
+        supabase.from("User").select(userSelectFields).order("name").returns<Usuario[]>(),
         supabase.from("LeadOrcamento").select("*").order("createdAt", { ascending: false }).limit(300).returns<Lead[]>(),
         supabase.from("ProductFieldPermission").select("*").order("fieldLabel").returns<Permission[]>(),
         supabase.from("ProdutoAplicacao").select("*").returns<ProdutoAplicacao[]>(),
@@ -686,14 +688,14 @@ function Leads({ leads, products, query, reload, notify }: { leads: Lead[]; prod
 
 function UsersSection({ users, query, reload, notify }: { users: Usuario[]; query: string; reload: () => Promise<void>; notify: (message: string) => void }) {
   const [editing, setEditing] = useState<Usuario | null>(null);
-  const filtered = users.filter((user) => [user.name, user.email, user.company, user.role, user.status].join(" ").toLowerCase().includes(query.toLowerCase()));
-  return <><Panel title={`${filtered.length} usuários`}><Table><thead><tr><Th>Nome</Th><Th>E-mail</Th><Th>Empresa</Th><Th>Role</Th><Th>Status</Th><Th /></tr></thead><tbody>{filtered.map((user) => <tr key={user.id}><Td>{user.name}</Td><Td>{user.email}</Td><Td>{user.company}</Td><Td>{user.role}</Td><Td>{user.status}</Td><Td><button className="icon-btn" onClick={() => setEditing(user)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table></Panel>{editing && <UserModal user={editing} reload={reload} notify={notify} onClose={() => setEditing(null)} />}</>;
+  const filtered = users.filter((user) => [user.name, user.email, user.company, user.phone, user.cnpj, user.role, user.status].join(" ").toLowerCase().includes(query.toLowerCase()));
+  return <><Panel title={`${filtered.length} usuários`}><Table><thead><tr><Th>Nome</Th><Th>E-mail</Th><Th>Empresa</Th><Th>Telefone</Th><Th>CNPJ</Th><Th>Role</Th><Th>Status</Th><Th /></tr></thead><tbody>{filtered.map((user) => <tr key={user.id}><Td>{user.name}</Td><Td>{user.email}</Td><Td>{user.company}</Td><Td>{user.phone || "-"}</Td><Td>{user.cnpj || "-"}</Td><Td>{user.role}</Td><Td>{user.status}</Td><Td><button className="icon-btn" onClick={() => setEditing(user)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table></Panel>{editing && <UserModal user={editing} reload={reload} notify={notify} onClose={() => setEditing(null)} />}</>;
 }
 
 function UserModal({ user, reload, notify, onClose }: { user: Usuario; reload: () => Promise<void>; notify: (message: string) => void; onClose: () => void }) {
   const [draft, setDraft] = useState(user);
   const save = async () => {
-    const { error } = await supabase.from("User").update({ name: draft.name, company: draft.company || null, email: draft.email, role: draft.role, status: draft.status, notes: draft.notes || null }).eq("id", user.id);
+    const { error } = await supabase.from("User").update({ name: draft.name, company: draft.company || null, email: draft.email, role: draft.role, status: draft.status, phone: draft.phone || null, cnpj: draft.cnpj || null, address: draft.address || null, city: draft.city || null, state: draft.state || null, registrationNotes: draft.registrationNotes || null, notes: draft.notes || null, approvedAt: draft.status === "ACTIVE" ? (draft.approvedAt || new Date().toISOString()) : draft.approvedAt || null }).eq("id", user.id);
     if (error) notify(error.message);
     else {
       notify("Usuário atualizado.");
@@ -701,7 +703,7 @@ function UserModal({ user, reload, notify, onClose }: { user: Usuario; reload: (
       onClose();
     }
   };
-  return <Modal title="Editar usuário" onClose={onClose}><div className="grid gap-4 lg:grid-cols-2"><Field label="Nome"><input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="Empresa"><input className="input" value={draft.company || ""} onChange={(e) => setDraft({ ...draft, company: e.target.value })} /></Field><Field label="E-mail"><input className="input" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} /></Field><Field label="Role"><select className="input" value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value as Role })}><option>ADMIN</option><option>REPRESENTANTE</option><option>CLIENTE</option><option>VISITANTE</option></select></Field><Field label="Status"><select className="input" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value as Usuario["status"] })}><option>ACTIVE</option><option>INACTIVE</option></select></Field><Field label="Notas"><textarea className="textarea" value={draft.notes || ""} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></Field></div><ModalActions saving={false} onSave={save} /></Modal>;
+  return <Modal title="Editar usuário" onClose={onClose}><div className="grid gap-4 lg:grid-cols-2"><Field label="Nome"><input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="Empresa"><input className="input" value={draft.company || ""} onChange={(e) => setDraft({ ...draft, company: e.target.value })} /></Field><Field label="E-mail"><input className="input" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} /></Field><Field label="Telefone / WhatsApp"><input className="input" value={draft.phone || ""} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} /></Field><Field label="CNPJ"><input className="input" value={draft.cnpj || ""} onChange={(e) => setDraft({ ...draft, cnpj: e.target.value })} /></Field><Field label="Endereço"><input className="input" value={draft.address || ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} /></Field><Field label="Cidade"><input className="input" value={draft.city || ""} onChange={(e) => setDraft({ ...draft, city: e.target.value })} /></Field><Field label="UF"><input className="input" value={draft.state || ""} onChange={(e) => setDraft({ ...draft, state: e.target.value })} /></Field><Field label="Role"><select className="input" value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value as Role })}><option>ADMIN</option><option>REPRESENTANTE</option><option>CLIENTE</option></select></Field><Field label="Status"><select className="input" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value as Usuario["status"] })}><option>PENDING</option><option>ACTIVE</option><option>INACTIVE</option></select></Field><Field label="Observações do cadastro"><textarea className="textarea" value={draft.registrationNotes || ""} onChange={(e) => setDraft({ ...draft, registrationNotes: e.target.value })} /></Field><Field label="Notas internas"><textarea className="textarea" value={draft.notes || ""} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></Field></div><ModalActions saving={false} onSave={save} /></Modal>;
 }
 
 function PermissionsSection({ permissions, query, reload, notify }: { permissions: Permission[]; query: string; reload: () => Promise<void>; notify: (message: string) => void }) {
