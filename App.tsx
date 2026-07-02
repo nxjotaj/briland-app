@@ -25,7 +25,7 @@ import {
   View
 } from "react-native";
 
-import { CONFIG_STORAGE_KEY, signInWithPassword, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRpc, uploadStorageObject } from "./src/api/supabase";
+import { CONFIG_STORAGE_KEY, signInWithPassword, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRpc, trackTelemetry, uploadStorageObject } from "./src/api/supabase";
 import { colors, defaultAbout, defaultSocialLinks } from "./src/config/brand";
 import type { AboutSettings, Aplicacao, AppData, Categoria, Lead, Marca, MediaSettings, Permission, Produto, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
 import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage, money, optimizedImageUrl, parseCsv, slugify } from "./src/utils/helpers";
@@ -52,6 +52,9 @@ const userSelect = "id,name,company,email,role,status,notes,phone,cnpj,address,c
 function notify(title: string, message: string) {
   Alert.alert(title, message);
 }
+
+const isAdminRole = (value: Role) => value === "ADMIN_MASTER" || value === "ADMIN_COLABORADOR" || value === "ADMIN";
+const isMasterRole = (value: Role) => value === "ADMIN_MASTER" || value === "ADMIN";
 
 export default function App() {
   const [route, setRoute] = useState<Route>("initial");
@@ -86,10 +89,11 @@ export default function App() {
   });
 
   const reload = async (nextRole = role, token = authToken) => {
+    const startedAt = Date.now();
     setLoading(true);
     setError(null);
     try {
-      const isAdminRole = nextRole === "ADMIN";
+      const isPanelRole = isAdminRole(nextRole);
       const [produtos, categorias, marcas, aplicacoes, appSettings] = await Promise.all([
         supabaseRpc<Produto[]>("get_visible_products", { requested_role: nextRole }, token),
         supabaseGet<Categoria>("Categoria", "select=*&order=ordem.asc", token),
@@ -97,7 +101,7 @@ export default function App() {
         supabaseGet<Aplicacao>("Aplicacao", "select=*", token),
         supabaseRpc<Record<string, unknown>>("get_app_settings", {}, token)
       ]);
-      const [usuarios, leads, permissoes] = isAdminRole
+      const [usuarios, leads, permissoes] = isPanelRole
         ? await Promise.all([
             supabaseGet<Usuario>("User", `select=${userSelect}`, token),
             supabaseGet<Lead>("LeadOrcamento", "select=*&order=createdAt.desc&limit=80", token),
@@ -120,8 +124,29 @@ export default function App() {
         permissoes
       });
       setSelectedProduct((current) => current ?? produtos[0] ?? null);
+      void trackTelemetry({
+        eventType: "load_time",
+        screen: route,
+        route,
+        userId: currentUser?.id ?? null,
+        userRole: nextRole,
+        durationMs: Date.now() - startedAt,
+        success: true,
+        metadata: { products: produtos.length, categories: categorias.length }
+      }, token);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao carregar dados do catálogo.");
+      const message = err instanceof Error ? err.message : "Falha ao carregar dados do catálogo.";
+      setError(message);
+      void trackTelemetry({
+        eventType: "api_error",
+        screen: route,
+        route,
+        userId: currentUser?.id ?? null,
+        userRole: nextRole,
+        durationMs: Date.now() - startedAt,
+        success: false,
+        message
+      }, token);
     } finally {
       setLoading(false);
     }
@@ -146,11 +171,22 @@ export default function App() {
     if (urls.length) void ExpoImage.prefetch(urls);
   }, [data.categorias, data.produtos, mediaSettings.homeImage]);
 
+  useEffect(() => {
+    void trackTelemetry({
+      eventType: "screen_view",
+      screen: route,
+      route,
+      userId: currentUser?.id ?? null,
+      userRole: role,
+      success: true
+    }, authToken);
+  }, [authToken, currentUser?.id, role, route]);
+
   const saveAdminConfig = async (nextSocialLinks = socialLinks, nextMediaSettings = mediaSettings, nextAboutSettings = aboutSettings) => {
     setSocialLinks(nextSocialLinks);
     setMediaSettings(nextMediaSettings);
     setAboutSettings(nextAboutSettings);
-    if (authToken && role === "ADMIN") {
+    if (authToken && isMasterRole(role)) {
       await Promise.all([
         supabaseRpc("save_app_setting", { setting_key: "socialLinks", setting_value: nextSocialLinks }, authToken),
         supabaseRpc("save_app_setting", { setting_key: "media", setting_value: nextMediaSettings }, authToken),
@@ -216,11 +252,26 @@ export default function App() {
       setCurrentUser(user);
       setRole(user.role);
       await reload(user.role, session.access_token);
-      setRoute(user.role === "ADMIN" ? "admin" : "products");
+      setRoute(isAdminRole(user.role) ? "admin" : "products");
+      void trackTelemetry({
+        eventType: "login",
+        screen: "login",
+        route: "login",
+        userId: user.id,
+        userRole: user.role,
+        success: true
+      }, session.access_token);
     } catch (err) {
       const message = loginErrorMessage(err);
       setLoginMessage(message);
       notify("Falha no login", message);
+      void trackTelemetry({
+        eventType: "login",
+        screen: "login",
+        route: "login",
+        success: false,
+        message
+      });
     } finally {
       setLoading(false);
     }
@@ -294,7 +345,7 @@ export default function App() {
           {route === "login" ? (
             <LoginScreen onLogin={login} onSignup={() => go("signup")} onCatalog={() => go("initial")} links={socialLinks} error={loginMessage} />
           ) : route === "admin" ? (
-            <AdminScreen data={data} active={adminTab} setActive={setAdminTab} onBack={() => go("home")} onLogout={logout} reload={() => reload(role, authToken)} authToken={authToken} socialLinks={socialLinks} setSocialLinks={(links) => void saveAdminConfig(links, mediaSettings, aboutSettings)} mediaSettings={mediaSettings} setMediaSettings={(settings) => void saveAdminConfig(socialLinks, settings, aboutSettings)} aboutSettings={aboutSettings} setAboutSettings={(settings) => void saveAdminConfig(socialLinks, mediaSettings, settings)} onAction={(text) => notify("Painel admin", text)} />
+            <AdminScreen role={role} data={data} active={adminTab} setActive={setAdminTab} onBack={() => go("home")} onLogout={logout} reload={() => reload(role, authToken)} authToken={authToken} socialLinks={socialLinks} setSocialLinks={(links) => void saveAdminConfig(links, mediaSettings, aboutSettings)} mediaSettings={mediaSettings} setMediaSettings={(settings) => void saveAdminConfig(socialLinks, settings, aboutSettings)} aboutSettings={aboutSettings} setAboutSettings={(settings) => void saveAdminConfig(socialLinks, mediaSettings, settings)} onAction={(text) => notify("Painel admin", text)} />
           ) : (
             <>
               <Header back={route !== "home"} onBack={() => go("home")} onMenu={() => setMenuOpen(true)} whatsappUrl={socialLinks.whatsapp} />
@@ -867,8 +918,10 @@ function AboutScreen({ settings }: { settings: AboutSettings }) {
     </ScrollView>
   );
 }
-function AdminScreen({ data, active, setActive, onBack, onLogout, reload, authToken, socialLinks, setSocialLinks, mediaSettings, setMediaSettings, aboutSettings, setAboutSettings, onAction }: { data: AppData; active: string; setActive: (tab: string) => void; onBack: () => void; onLogout: () => void; reload: () => void; authToken?: string; socialLinks: SocialLinks; setSocialLinks: (links: SocialLinks) => void; mediaSettings: MediaSettings; setMediaSettings: (settings: MediaSettings) => void; aboutSettings: AboutSettings; setAboutSettings: (settings: AboutSettings) => void; onAction: (message: string) => void }) {
-  const tabs = ["Dashboard", "Produtos", "Categorias", "Marcas", "Aplicações", "Usuários", "Permissões", "Leads", "Mídia", "Links", "Conteúdo"];
+function AdminScreen({ role, data, active, setActive, onBack, onLogout, reload, authToken, socialLinks, setSocialLinks, mediaSettings, setMediaSettings, aboutSettings, setAboutSettings, onAction }: { role: Role; data: AppData; active: string; setActive: (tab: string) => void; onBack: () => void; onLogout: () => void; reload: () => void; authToken?: string; socialLinks: SocialLinks; setSocialLinks: (links: SocialLinks) => void; mediaSettings: MediaSettings; setMediaSettings: (settings: MediaSettings) => void; aboutSettings: AboutSettings; setAboutSettings: (settings: AboutSettings) => void; onAction: (message: string) => void }) {
+  const tabs = isMasterRole(role)
+    ? ["Dashboard", "Produtos", "Categorias", "Marcas", "Aplicações", "Usuários", "Permissões", "Leads", "Mídia", "Links", "Conteúdo"]
+    : ["Dashboard", "Produtos", "Categorias", "Marcas", "Aplicações", "Leads"];
   return (
     <SafeAreaView style={styles.adminSafe}>
       <View style={styles.adminHeader}>
@@ -883,7 +936,7 @@ function AdminScreen({ data, active, setActive, onBack, onLogout, reload, authTo
         {tabs.map((tab) => <Pressable key={tab} onPress={() => setActive(tab)} style={[styles.adminTab, active === tab && styles.adminTabActive]}><Text style={[styles.adminTabText, active === tab && styles.adminTabTextActive]}>{tab}</Text></Pressable>)}
       </ScrollView>
       <ScrollView style={styles.adminBody} contentContainerStyle={styles.adminContent}>
-        {active === "Dashboard" && <AdminDashboard data={data} onAction={onAction} setActive={setActive} />}
+        {active === "Dashboard" && <AdminDashboard role={role} data={data} onAction={onAction} setActive={setActive} />}
         {active === "Produtos" && <AdminProducts products={data.produtos} categories={data.categorias} brands={data.marcas} reload={reload} authToken={authToken} onAction={onAction} />}
         {active === "Categorias" && <AdminCrud title="Categorias" table="Categoria" items={data.categorias} icon="grid-outline" imageField="imagem" reload={reload} authToken={authToken} onAction={onAction} />}
         {active === "Marcas" && <AdminCrud title="Marcas" table="Marca" items={data.marcas} icon="shield-checkmark-outline" imageField="logo" reload={reload} authToken={authToken} onAction={onAction} />}
@@ -898,16 +951,17 @@ function AdminScreen({ data, active, setActive, onBack, onLogout, reload, authTo
     </SafeAreaView>
   );
 }
-function AdminDashboard({ data, onAction, setActive }: { data: AppData; onAction: (message: string) => void; setActive: (tab: string) => void }) {
-  const metrics: [string, string, IconName, string][] = [
+function AdminDashboard({ role, data, onAction, setActive }: { role: Role; data: AppData; onAction: (message: string) => void; setActive: (tab: string) => void }) {
+  const master = isMasterRole(role);
+  const metrics = ([
     [String(data.produtos.length), "Total de produtos", "cube-outline", "Produtos"],
     [String(data.produtos.filter((p) => p.ativo !== false).length), "Produtos ativos", "checkmark-circle-outline", "Produtos"],
-    [String(data.produtos.filter((p) => !p.imagemPrincipal).length), "Sem foto", "image-outline", "Mídia"],
+    [String(data.produtos.filter((p) => !p.imagemPrincipal).length), "Sem foto", "image-outline", "Mídia", true],
     [String(data.leads.length), "Leads recebidos", "chatbubbles-outline", "Leads"],
-    [String(data.usuarios.filter((u) => u.status === "ACTIVE").length), "Usuários ativos", "people-outline", "Usuários"],
-    [String(data.permissoes.length), "Campos permissionados", "lock-closed-outline", "Permissões"]
-  ];
-  const shortcuts: [string, string][] = [["Produtos", "Criar/editar produtos"], ["Categorias", "Categorias"], ["Marcas", "Marcas"], ["Permissões", "Permissões"], ["Leads", "Leads"], ["Mídia", "Mídia"]];
+    [String(data.usuarios.filter((u) => u.status === "ACTIVE").length), "Usuários ativos", "people-outline", "Usuários", true],
+    [String(data.permissoes.length), "Campos permissionados", "lock-closed-outline", "Permissões", true]
+  ] as [string, string, IconName, string, boolean?][]).filter((item) => !item[4] || master);
+  const shortcuts = ([["Produtos", "Criar/editar produtos"], ["Categorias", "Categorias"], ["Marcas", "Marcas"], ["Permissões", "Permissões", true], ["Leads", "Leads"], ["Mídia", "Mídia", true]] as [string, string, boolean?][]).filter((item) => !item[2] || master);
   return (
     <>
       <Text style={styles.adminTitle}>Dashboard</Text>
@@ -1230,10 +1284,10 @@ function UserEditor({ user, reload, authToken, onClose, onAction }: { user: Usua
       onAction("Usuário atualizado.");
     } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao salvar usuário."); }
   };
-  return <Modal visible transparent animationType="slide" onRequestClose={onClose}><Pressable style={styles.sheetOverlay} onPress={onClose} /><ScrollView style={styles.editorSheet} contentContainerStyle={styles.editorContent}><View style={styles.sheetHeader}><Text style={styles.sheetTitle}>Editar usuário</Text><Pressable onPress={onClose}><Ionicons name="close" size={26} color={colors.navy} /></Pressable></View><AdminTextInput label="Nome" value={draft.name} onChangeText={(value) => set("name", value)} /><AdminTextInput label="Empresa" value={draft.company || ""} onChangeText={(value) => set("company", value)} /><AdminTextInput label="E-mail" value={draft.email} onChangeText={(value) => set("email", value)} /><AdminTextInput label="Telefone / WhatsApp" value={draft.phone || ""} onChangeText={(value) => set("phone", value)} /><AdminTextInput label="CNPJ" value={draft.cnpj || ""} onChangeText={(value) => set("cnpj", value)} /><AdminTextInput label="Endereço" value={draft.address || ""} onChangeText={(value) => set("address", value)} /><AdminTextInput label="Cidade" value={draft.city || ""} onChangeText={(value) => set("city", value)} /><AdminTextInput label="UF" value={draft.state || ""} onChangeText={(value) => set("state", value)} /><Text style={styles.sheetLabel}>Papel</Text><AdminChoicePills items={[{ id: "ADMIN", nome: "ADMIN" }, { id: "REPRESENTANTE", nome: "REPRESENTANTE" }, { id: "CLIENTE", nome: "CLIENTE" }]} selectedId={draft.role} onSelect={(id) => set("role", id)} /><Text style={styles.sheetLabel}>Status</Text><AdminChoicePills items={[{ id: "PENDING", nome: "PENDING" }, { id: "ACTIVE", nome: "ACTIVE" }, { id: "INACTIVE", nome: "INACTIVE" }]} selectedId={draft.status} onSelect={(id) => set("status", id)} /><AdminTextInput label="Observações do cadastro" value={draft.registrationNotes || ""} onChangeText={(value) => set("registrationNotes", value)} multiline /><AdminTextInput label="Notas internas" value={draft.notes || ""} onChangeText={(value) => set("notes", value)} multiline /><Pressable style={styles.yellowButton} onPress={save}><Text style={styles.yellowButtonText}>Salvar usuário</Text></Pressable></ScrollView></Modal>;
+  return <Modal visible transparent animationType="slide" onRequestClose={onClose}><Pressable style={styles.sheetOverlay} onPress={onClose} /><ScrollView style={styles.editorSheet} contentContainerStyle={styles.editorContent}><View style={styles.sheetHeader}><Text style={styles.sheetTitle}>Editar usuário</Text><Pressable onPress={onClose}><Ionicons name="close" size={26} color={colors.navy} /></Pressable></View><AdminTextInput label="Nome" value={draft.name} onChangeText={(value) => set("name", value)} /><AdminTextInput label="Empresa" value={draft.company || ""} onChangeText={(value) => set("company", value)} /><AdminTextInput label="E-mail" value={draft.email} onChangeText={(value) => set("email", value)} /><AdminTextInput label="Telefone / WhatsApp" value={draft.phone || ""} onChangeText={(value) => set("phone", value)} /><AdminTextInput label="CNPJ" value={draft.cnpj || ""} onChangeText={(value) => set("cnpj", value)} /><AdminTextInput label="Endereço" value={draft.address || ""} onChangeText={(value) => set("address", value)} /><AdminTextInput label="Cidade" value={draft.city || ""} onChangeText={(value) => set("city", value)} /><AdminTextInput label="UF" value={draft.state || ""} onChangeText={(value) => set("state", value)} /><Text style={styles.sheetLabel}>Papel</Text><AdminChoicePills items={[{ id: "ADMIN_MASTER", nome: "ADMIN_MASTER" }, { id: "ADMIN_COLABORADOR", nome: "ADMIN_COLABORADOR" }, { id: "NAO_CLIENTE", nome: "NAO_CLIENTE" }, { id: "CLIENTE", nome: "CLIENTE" }, { id: "REPRESENTANTE", nome: "REPRESENTANTE" }]} selectedId={draft.role} onSelect={(id) => set("role", id)} /><Text style={styles.sheetLabel}>Status</Text><AdminChoicePills items={[{ id: "PENDING", nome: "PENDING" }, { id: "ACTIVE", nome: "ACTIVE" }, { id: "INACTIVE", nome: "INACTIVE" }]} selectedId={draft.status} onSelect={(id) => set("status", id)} /><AdminTextInput label="Observações do cadastro" value={draft.registrationNotes || ""} onChangeText={(value) => set("registrationNotes", value)} multiline /><AdminTextInput label="Notas internas" value={draft.notes || ""} onChangeText={(value) => set("notes", value)} multiline /><Pressable style={styles.yellowButton} onPress={save}><Text style={styles.yellowButtonText}>Salvar usuário</Text></Pressable></ScrollView></Modal>;
 }
 function AdminPermissions({ permissions, reload, authToken, onAction }: { permissions: Permission[]; reload: () => void; authToken?: string; onAction: (message: string) => void }) {
-  const toggle = async (permission: Permission, key: keyof Pick<Permission, "visibleToVisitor" | "visibleToClient" | "visibleToRepresentative" | "visibleToAdmin">) => {
+  const toggle = async (permission: Permission, key: keyof Pick<Permission, "visibleToVisitor" | "visibleToNonClient" | "visibleToClient" | "visibleToRepresentative" | "visibleToAdmin">) => {
     try {
       await supabasePatch<Permission>("ProductFieldPermission", permission.id, { [key]: !permission[key] }, authToken);
       await reload();
@@ -1245,13 +1299,14 @@ function AdminPermissions({ permissions, reload, authToken, onAction }: { permis
     <>
       <Text style={styles.adminTitle}>Permissões</Text>
       <Text style={styles.adminSubtitle}>Tabela real ProductFieldPermission.</Text>
-      <View style={styles.permissionHeader}><Text style={styles.permissionField}>Campo</Text>{["Vis.", "Cli.", "Rep.", "Adm."].map((r) => <Text key={r} style={styles.permissionRole}>{r}</Text>)}</View>
+      <View style={styles.permissionHeader}><Text style={styles.permissionField}>Campo</Text>{["Vis.", "Não cli.", "Cli.", "Rep.", "Adm."].map((r) => <Text key={r} style={styles.permissionRole}>{r}</Text>)}</View>
       {permissions.map((field) => <View key={field.id} style={styles.permissionRow}><Text style={styles.permissionField}>{field.fieldLabel}</Text>{([
         ["visibleToVisitor", field.visibleToVisitor],
+        ["visibleToNonClient", field.visibleToNonClient],
         ["visibleToClient", field.visibleToClient],
         ["visibleToRepresentative", field.visibleToRepresentative],
         ["visibleToAdmin", field.visibleToAdmin]
-      ] as Array<[keyof Pick<Permission, "visibleToVisitor" | "visibleToClient" | "visibleToRepresentative" | "visibleToAdmin">, boolean]>).map(([key, checked]) => <Pressable key={key} onPress={() => toggle(field, key)} style={[styles.permissionCheck, checked && styles.permissionCheckOn]}>{checked && <Ionicons name="checkmark" size={14} color={colors.navy} />}</Pressable>)}</View>)}
+      ] as Array<[keyof Pick<Permission, "visibleToVisitor" | "visibleToNonClient" | "visibleToClient" | "visibleToRepresentative" | "visibleToAdmin">, boolean]>).map(([key, checked]) => <Pressable key={key} onPress={() => toggle(field, key)} style={[styles.permissionCheck, checked && styles.permissionCheckOn]}>{checked && <Ionicons name="checkmark" size={14} color={colors.navy} />}</Pressable>)}</View>)}
       <Text style={styles.mutedSmall}>As alteracoes sao salvas imediatamente no endpoint ProductFieldPermission.</Text>
     </>
   );
@@ -1386,7 +1441,7 @@ function SideMenu({ visible, onClose, go, role, user, setRole, setCurrentUser }:
         <View style={styles.sideHeader}><Image source={logo} style={styles.sideLogo} resizeMode="contain" /></View>
         {user && <Text style={styles.sideUser}>{user.name} • {role}</Text>}
         {items.map(([target, label, icon]) => <Pressable key={label} style={styles.sideItem} onPress={() => go(target)}><Ionicons name={icon} size={25} color={label === "Início" ? colors.yellow : colors.navy} /><Text style={[styles.sideLabel, label === "Início" && styles.yellowText]}>{label}</Text></Pressable>)}
-        {role === "ADMIN" && <Pressable style={styles.sideItem} onPress={() => go("admin")}><Ionicons name="speedometer-outline" size={25} color={colors.navy} /><Text style={styles.sideLabel}>Painel admin</Text></Pressable>}
+        {isAdminRole(role) && <Pressable style={styles.sideItem} onPress={() => go("admin")}><Ionicons name="speedometer-outline" size={25} color={colors.navy} /><Text style={styles.sideLabel}>Painel admin</Text></Pressable>}
         <Pressable style={styles.sideItem} onPress={() => { setRole("VISITANTE"); setCurrentUser(null); go(role === "VISITANTE" ? "login" : "initial"); }}><Ionicons name="log-in-outline" size={25} color={colors.navy} /><Text style={styles.sideLabel}>{role === "VISITANTE" ? "Login" : "Sair"}</Text></Pressable>
         <View style={styles.sidePromo}><Text style={styles.sidePromoText}>Copyright Briland 2026. Todos os direitos reservados.</Text></View>
       </View>

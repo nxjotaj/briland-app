@@ -12,7 +12,7 @@ export type Route =
   | "about"
   | "admin";
 
-export type Role = "VISITANTE" | "CLIENTE" | "REPRESENTANTE" | "ADMIN";
+export type Role = "VISITANTE" | "NAO_CLIENTE" | "CLIENTE" | "REPRESENTANTE" | "ADMIN" | "ADMIN_MASTER" | "ADMIN_COLABORADOR";
 
 export type Produto = {
   id: string;
@@ -50,7 +50,9 @@ export type Marca = { id: string; nome: string; slug?: string | null; logo?: str
 export type Aplicacao = { id: string; nome: string; slug?: string | null; tipo?: string | null; ativo?: boolean | null };
 export type Usuario = { id: string; name: string; company?: string | null; email: string; role: Role; status: "PENDING" | "ACTIVE" | "INACTIVE"; notes?: string | null; phone?: string | null; cnpj?: string | null; address?: string | null; city?: string | null; state?: string | null; registrationNotes?: string | null; approvedAt?: string | null; approvedBy?: string | null; lastLoginAt?: string | null; createdAt?: string | null; updatedAt?: string | null; authUserId?: string | null };
 export type Lead = { id: string; nome: string; empresa?: string | null; telefone?: string | null; email?: string | null; cidade?: string | null; estado?: string | null; produtoId?: string | null; mensagem?: string | null; origem?: string | null; status?: string | null; createdAt?: string | null };
-export type Permission = { id: string; fieldKey: string; fieldLabel: string; visibleToVisitor: boolean; visibleToClient: boolean; visibleToRepresentative: boolean; visibleToAdmin: boolean };
+export type Permission = { id: string; fieldKey: string; fieldLabel: string; visibleToVisitor: boolean; visibleToNonClient: boolean; visibleToClient: boolean; visibleToRepresentative: boolean; visibleToAdmin: boolean };
+export type TelemetryEvent = { id: string; eventType: string; screen?: string | null; route?: string | null; userId?: string | null; userRole?: string | null; durationMs?: number | null; success?: boolean | null; message?: string | null; metadata?: Record<string, unknown> | null; createdAt?: string | null };
+export type AuditLog = { id: string; actorUserId?: string | null; actorEmail?: string | null; action: string; entityType: string; entityId?: string | null; ipAddress?: string | null; userAgent?: string | null; metadata?: Record<string, unknown> | null; createdAt?: string | null };
 export type SocialLinks = { instagram: string; linkedin: string; whatsapp: string; site: string };
 export type MediaSettings = { initialImage: string; homeImage: string };
 export type AboutSettings = { title: string; subtitle: string; body: string };
@@ -64,4 +66,6 @@ export type AppData = {
   usuarios: Usuario[];
   leads: Lead[];
   permissoes: Permission[];
+  telemetry?: TelemetryEvent[];
+  auditLogs?: AuditLog[];
 };

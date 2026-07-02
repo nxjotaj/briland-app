@@ -61,6 +61,17 @@ export async function supabasePostMinimal(table: string, payload: Record<string,
   if (!response.ok) throw new Error(await response.text());
 }
 
+export async function trackTelemetry(payload: Record<string, unknown>, token?: string) {
+  try {
+    await supabasePostMinimal("AppTelemetryEvent", {
+      id: `tel_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      ...payload
+    }, token);
+  } catch {
+    // Telemetry must never block the app experience.
+  }
+}
+
 export async function supabasePatch<T>(table: string, id: string, payload: Record<string, unknown>, token?: string) {
   const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`, {
     method: "PATCH",

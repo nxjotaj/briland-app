@@ -7,6 +7,7 @@ import {
   Boxes,
   Building2,
   CheckCircle2,
+  Activity,
   Download,
   Eye,
   FileSpreadsheet,
@@ -45,6 +46,8 @@ import type {
   ProdutoAplicacao,
   Role,
   SocialLinks,
+  AuditLog,
+  TelemetryEvent,
   Usuario
 } from "@/lib/types";
 
@@ -57,6 +60,7 @@ type Tab =
   | "Leads"
   | "Usuários"
   | "Permissões"
+  | "Diagnóstico"
   | "Mídia"
   | "Links"
   | "Conteúdo";
@@ -70,6 +74,7 @@ const tabs: { id: Tab; icon: React.ElementType }[] = [
   { id: "Leads", icon: MessageCircle },
   { id: "Usuários", icon: Users },
   { id: "Permissões", icon: Lock },
+  { id: "Diagnóstico", icon: Activity },
   { id: "Mídia", icon: ImageIcon },
   { id: "Links", icon: LinkIcon },
   { id: "Conteúdo", icon: Settings }
@@ -84,10 +89,20 @@ const emptyData: AppData = {
   leads: [],
   permissoes: [],
   produtoAplicacoes: [],
-  settings: {}
+  settings: {},
+  telemetry: [],
+  auditLogs: []
 };
 
 const userSelectFields = "id,name,company,email,role,status,notes,phone,cnpj,address,city,state,registrationNotes,approvedAt,approvedBy,lastLoginAt,createdAt,updatedAt,authUserId";
+
+const isMaster = (role?: Role | null) => role === "ADMIN_MASTER" || role === "ADMIN";
+const isCollaborator = (role?: Role | null) => role === "ADMIN_COLABORADOR";
+const canUseAdminWeb = (role?: Role | null) => isMaster(role) || isCollaborator(role);
+const visibleTabsFor = (role?: Role | null) => {
+  if (isMaster(role)) return tabs;
+  return tabs.filter(({ id }) => ["Dashboard", "Produtos", "Categorias", "Marcas", "Aplicações", "Leads"].includes(id));
+};
 
 function leadDepartment(lead: Lead) {
   const source = `${lead.origem || ""} ${lead.mensagem || ""}`.toLowerCase();
@@ -98,6 +113,18 @@ function leadDepartment(lead: Lead) {
 
 function leadMessageBody(message?: string | null) {
   return (message || "").replace(/^\[(Comercial|Suporte)\]\s*/i, "").trim();
+}
+
+async function trackAdminTelemetry(payload: Omit<TelemetryEvent, "id" | "createdAt">) {
+  try {
+    await supabase.from("AppTelemetryEvent").insert({
+      id: createId("tel"),
+      ...payload,
+      metadata: payload.metadata || {}
+    });
+  } catch {
+    // Diagnostico nunca pode travar o painel.
+  }
 }
 
 export default function Page() {
@@ -125,41 +152,47 @@ export default function Page() {
       .returns<Usuario[]>();
     if (error) throw error;
     const user = users?.[0];
-    if (!user || user.role !== "ADMIN" || user.status !== "ACTIVE") {
+    if (!user || !canUseAdminWeb(user.role) || user.status !== "ACTIVE") {
       await supabase.auth.signOut();
-      throw new Error("Acesso permitido somente para usuários ADMIN ativos.");
+      throw new Error("Acesso permitido somente para administradores ativos.");
     }
     setSessionToken(token);
     setAdminUser(user);
-    await reload();
+    await reload(user.role);
   };
 
-  const reload = async () => {
+  const reload = async (roleOverride = adminUser?.role) => {
     setLoading(true);
+    const startedAt = performance.now();
     try {
+      const master = isMaster(roleOverride);
       const [
         produtos,
         categorias,
         marcas,
         aplicacoes,
-        usuarios,
         leads,
-        permissoes,
         produtoAplicacoes,
-        settings
+        settings,
+        usuarios,
+        permissoes,
+        telemetry,
+        auditLogs
       ] = await Promise.all([
         supabase.from("Produto").select("*").order("ordem", { ascending: true }).order("nome").returns<Produto[]>(),
         supabase.from("Categoria").select("*").order("ordem", { ascending: true }).returns<Categoria[]>(),
         supabase.from("Marca").select("*").order("nome").returns<Marca[]>(),
         supabase.from("Aplicacao").select("*").order("nome").returns<Aplicacao[]>(),
-        supabase.from("User").select(userSelectFields).order("name").returns<Usuario[]>(),
         supabase.from("LeadOrcamento").select("*").order("createdAt", { ascending: false }).limit(300).returns<Lead[]>(),
-        supabase.from("ProductFieldPermission").select("*").order("fieldLabel").returns<Permission[]>(),
         supabase.from("ProdutoAplicacao").select("*").returns<ProdutoAplicacao[]>(),
-        supabase.rpc("get_app_settings")
+        supabase.rpc("get_app_settings"),
+        master ? supabase.from("User").select(userSelectFields).order("name").returns<Usuario[]>() : Promise.resolve({ data: [], error: null }),
+        master ? supabase.from("ProductFieldPermission").select("*").order("fieldLabel").returns<Permission[]>() : Promise.resolve({ data: [], error: null }),
+        master ? supabase.from("AppTelemetryEvent").select("*").order("createdAt", { ascending: false }).limit(1000).returns<TelemetryEvent[]>() : Promise.resolve({ data: [], error: null }),
+        master ? supabase.from("AuditLog").select("*").order("createdAt", { ascending: false }).limit(500).returns<AuditLog[]>() : Promise.resolve({ data: [], error: null })
       ]);
 
-      const firstError = [produtos, categorias, marcas, aplicacoes, usuarios, leads, permissoes, produtoAplicacoes, settings].find((item) => item.error);
+      const firstError = [produtos, categorias, marcas, aplicacoes, usuarios, leads, permissoes, produtoAplicacoes, settings, telemetry, auditLogs].find((item) => item.error);
       if (firstError?.error) throw firstError.error;
 
       setData({
@@ -171,9 +204,32 @@ export default function Page() {
         leads: leads.data || [],
         permissoes: permissoes.data || [],
         produtoAplicacoes: produtoAplicacoes.data || [],
-        settings: (settings.data as AppSettings | null) || {}
+        settings: (settings.data as AppSettings | null) || {},
+        telemetry: telemetry.data || [],
+        auditLogs: auditLogs.data || []
+      });
+      void trackAdminTelemetry({
+        eventType: "load_time",
+        screen: "admin-web",
+        route: String(active),
+        userId: adminUser?.id || null,
+        userRole: roleOverride || null,
+        durationMs: Math.round(performance.now() - startedAt),
+        success: true,
+        metadata: { source: "admin-web", master }
       });
     } catch (error) {
+      void trackAdminTelemetry({
+        eventType: "api_error",
+        screen: "admin-web",
+        route: String(active),
+        userId: adminUser?.id || null,
+        userRole: roleOverride || null,
+        durationMs: Math.round(performance.now() - startedAt),
+        success: false,
+        message: error instanceof Error ? error.message : "Falha ao carregar dados.",
+        metadata: { source: "admin-web" }
+      });
       notify(error instanceof Error ? error.message : "Falha ao carregar dados.");
     } finally {
       setLoading(false);
@@ -201,8 +257,10 @@ export default function Page() {
       if (error) throw error;
       if (!auth.session) throw new Error("Sessão não criada.");
       await loadAdmin(auth.session.access_token, auth.session.user.id);
+      void trackAdminTelemetry({ eventType: "login", screen: "login", route: "admin-web", success: true, message: email, metadata: { source: "admin-web" } });
       notify("Login realizado.");
     } catch (error) {
+      void trackAdminTelemetry({ eventType: "login", screen: "login", route: "admin-web", success: false, message: error instanceof Error ? error.message : "Falha de login", metadata: { source: "admin-web", email } });
       setLoginError(error instanceof Error ? error.message : "Não foi possível entrar.");
     } finally {
       setAuthLoading(false);
@@ -216,8 +274,27 @@ export default function Page() {
     setData(emptyData);
   };
 
+  useEffect(() => {
+    if (!sessionToken || !adminUser) return;
+    const visibleTabs = visibleTabsFor(adminUser.role);
+    const canSeeTab = visibleTabs.some((item) => item.id === active);
+    const activeTab = canSeeTab ? active : "Dashboard";
+    void trackAdminTelemetry({
+      eventType: "screen_view",
+      screen: String(activeTab),
+      route: "admin-web",
+      userId: adminUser.id,
+      userRole: adminUser.role,
+      success: true,
+      metadata: { source: "admin-web" }
+    });
+  }, [active, adminUser, sessionToken]);
+
   if (authLoading && !sessionToken) return <FullLoader label="Validando acesso administrativo..." />;
   if (!sessionToken || !adminUser) return <LoginScreen onLogin={login} error={loginError} loading={authLoading} />;
+  const visibleTabs = visibleTabsFor(adminUser.role);
+  const canSeeTab = visibleTabs.some((item) => item.id === active);
+  const activeTab = canSeeTab ? active : "Dashboard";
 
   return (
     <div className="min-h-screen bg-soft text-navy">
@@ -227,7 +304,7 @@ export default function Page() {
           <div className="mt-2 text-sm text-white/60">Painel administrativo web</div>
         </div>
         <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
-          {tabs.map(({ id, icon: Icon }) => (
+          {visibleTabs.map(({ id, icon: Icon }) => (
             <button key={id} onClick={() => setActive(id)} className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-bold transition ${active === id ? "bg-yellow text-navy" : "text-white/78 hover:bg-white/10"}`}>
               <Icon size={18} />
               {id}
@@ -256,14 +333,14 @@ export default function Page() {
                 <Search size={17} className="text-muted" />
                 <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar no painel..." className="w-full bg-transparent outline-none" />
               </label>
-              <button onClick={reload} className="flex h-11 items-center justify-center gap-2 rounded-xl bg-navy px-4 text-sm font-black text-white">
+              <button onClick={() => void reload()} className="flex h-11 items-center justify-center gap-2 rounded-xl bg-navy px-4 text-sm font-black text-white">
                 {loading ? <Loader2 className="animate-spin" size={17} /> : <RefreshCw size={17} />}
                 Atualizar
               </button>
             </div>
           </div>
           <div className="mt-4 flex gap-2 overflow-x-auto lg:hidden">
-            {tabs.map(({ id }) => (
+            {visibleTabs.map(({ id }) => (
               <button key={id} onClick={() => setActive(id)} className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold ${active === id ? "bg-yellow text-navy" : "bg-white text-navy"}`}>
                 {id}
               </button>
@@ -272,17 +349,18 @@ export default function Page() {
         </header>
 
         <section className="p-5 lg:p-8">
-          {active === "Dashboard" && <Dashboard data={data} setActive={setActive} />}
-          {active === "Produtos" && <Products data={data} query={query} reload={reload} notify={notify} />}
-          {active === "Categorias" && <CategoryBrandSection title="Categorias" table="Categoria" imageField="imagem" items={data.categorias} query={query} reload={reload} notify={notify} />}
-          {active === "Marcas" && <CategoryBrandSection title="Marcas" table="Marca" imageField="logo" items={data.marcas} query={query} reload={reload} notify={notify} />}
-          {active === "Aplicações" && <Applications items={data.aplicacoes} query={query} reload={reload} notify={notify} />}
-          {active === "Leads" && <Leads leads={data.leads} products={data.produtos} query={query} reload={reload} notify={notify} />}
-          {active === "Usuários" && <UsersSection users={data.usuarios} query={query} reload={reload} notify={notify} />}
-          {active === "Permissões" && <PermissionsSection permissions={data.permissoes} query={query} reload={reload} notify={notify} />}
-          {active === "Mídia" && <MediaSettingsSection settings={data.settings.media} reload={reload} notify={notify} />}
-          {active === "Links" && <LinksSection settings={data.settings.socialLinks} reload={reload} notify={notify} />}
-          {active === "Conteúdo" && <ContentSection settings={data.settings.about} reload={reload} notify={notify} />}
+          {activeTab === "Dashboard" && <Dashboard data={data} setActive={setActive} role={adminUser.role} />}
+          {activeTab === "Produtos" && <Products data={data} query={query} reload={reload} notify={notify} />}
+          {activeTab === "Categorias" && <CategoryBrandSection title="Categorias" table="Categoria" imageField="imagem" items={data.categorias} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
+          {activeTab === "Marcas" && <CategoryBrandSection title="Marcas" table="Marca" imageField="logo" items={data.marcas} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
+          {activeTab === "Aplicações" && <Applications items={data.aplicacoes} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
+          {activeTab === "Leads" && <Leads leads={data.leads} products={data.produtos} query={query} reload={reload} notify={notify} />}
+          {activeTab === "Usuários" && <UsersSection users={data.usuarios} query={query} reload={reload} notify={notify} adminUser={adminUser} />}
+          {activeTab === "Permissões" && <PermissionsSectionV2 permissions={data.permissoes} query={query} reload={reload} notify={notify} />}
+          {activeTab === "Diagnóstico" && <Diagnostics data={data} />}
+          {activeTab === "Mídia" && <MediaSettingsSection settings={data.settings.media} reload={reload} notify={notify} />}
+          {activeTab === "Links" && <LinksSection settings={data.settings.socialLinks} reload={reload} notify={notify} />}
+          {activeTab === "Conteúdo" && <ContentSection settings={data.settings.about} reload={reload} notify={notify} />}
         </section>
       </main>
 
@@ -339,20 +417,21 @@ function LoginScreen({ onLogin, error, loading }: { onLogin: (email: string, pas
   );
 }
 
-function Dashboard({ data, setActive }: { data: AppData; setActive: (tab: Tab) => void }) {
-  const cards: { label: string; value: string; tab: Tab; icon: React.ElementType }[] = [
+function Dashboard({ data, setActive, role }: { data: AppData; setActive: (tab: Tab) => void; role: Role }) {
+  const cards = [
     { label: "Produtos", value: String(data.produtos.length), tab: "Produtos", icon: Boxes },
     { label: "Ativos", value: String(data.produtos.filter((item) => item.ativo !== false).length), tab: "Produtos", icon: CheckCircle2 },
     { label: "Sem imagem", value: String(data.produtos.filter((item) => !item.imagemPrincipal).length), tab: "Produtos", icon: ImageIcon },
     { label: "Leads", value: String(data.leads.length), tab: "Leads", icon: MessageCircle },
-    { label: "Usuários", value: String(data.usuarios.length), tab: "Usuários", icon: Users },
-    { label: "Permissões", value: String(data.permissoes.length), tab: "Permissões", icon: Lock }
-  ];
+    { label: "Usuários", value: String(data.usuarios.length), tab: "Usuários", icon: Users, masterOnly: true },
+    { label: "Permissões", value: String(data.permissoes.length), tab: "Permissões", icon: Lock, masterOnly: true },
+    { label: "Erros 24h", value: String(data.telemetry.filter((item) => item.success === false && Date.parse(item.createdAt || "") > Date.now() - 86400000).length), tab: "Diagnóstico", icon: Activity, masterOnly: true }
+  ].filter((item) => !item.masterOnly || isMaster(role));
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {cards.map(({ label, value, tab, icon: Icon }) => (
-          <button key={label} onClick={() => setActive(tab)} className="rounded-2xl bg-white p-5 text-left shadow-soft transition hover:-translate-y-0.5">
+          <button key={label} onClick={() => setActive(tab as Tab)} className="rounded-2xl bg-white p-5 text-left shadow-soft transition hover:-translate-y-0.5">
             <div className="flex items-center justify-between">
               <Icon className="text-yellow" />
               <span className="text-3xl font-black">{value}</span>
@@ -571,7 +650,7 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
   );
 }
 
-function CategoryBrandSection({ title, table, imageField, items, query, reload, notify }: { title: string; table: "Categoria" | "Marca"; imageField: "imagem" | "logo"; items: Array<Categoria | Marca>; query: string; reload: () => Promise<void>; notify: (message: string) => void }) {
+function CategoryBrandSection({ title, table, imageField, items, query, reload, notify, canDelete }: { title: string; table: "Categoria" | "Marca"; imageField: "imagem" | "logo"; items: Array<Categoria | Marca>; query: string; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean }) {
   const [editing, setEditing] = useState<Categoria | Marca | null>(null);
   const filtered = items.filter((item) => item.nome.toLowerCase().includes(query.toLowerCase()));
   const create = () => setEditing(table === "Categoria" ? { id: createId("cat"), nome: "Nova categoria", slug: "nova-categoria", ativo: true, ordem: 0 } : { id: createId("marca"), nome: "Nova marca", slug: "nova-marca", ativo: true });
@@ -587,12 +666,12 @@ function CategoryBrandSection({ title, table, imageField, items, query, reload, 
           })}</tbody>
         </Table>
       </Panel>
-      {editing && <CategoryBrandModal table={table} imageField={imageField} item={editing} reload={reload} notify={notify} onClose={() => setEditing(null)} />}
+      {editing && <CategoryBrandModal table={table} imageField={imageField} item={editing} reload={reload} notify={notify} canDelete={canDelete} onClose={() => setEditing(null)} />}
     </>
   );
 }
 
-function CategoryBrandModal({ table, imageField, item, reload, notify, onClose }: { table: "Categoria" | "Marca"; imageField: "imagem" | "logo"; item: Categoria | Marca; reload: () => Promise<void>; notify: (message: string) => void; onClose: () => void }) {
+function CategoryBrandModal({ table, imageField, item, reload, notify, canDelete, onClose }: { table: "Categoria" | "Marca"; imageField: "imagem" | "logo"; item: Categoria | Marca; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean; onClose: () => void }) {
   const [draft, setDraft] = useState<Record<string, unknown>>(item as Record<string, unknown>);
   const [saving, setSaving] = useState(false);
   const isNew = item.id.includes("_");
@@ -638,12 +717,12 @@ function CategoryBrandModal({ table, imageField, item, reload, notify, onClose }
       </div>
       <div className="mt-4"><UploadBox label={imageField === "imagem" ? "Imagem da categoria" : "Logo da marca"} folder={imageField === "imagem" ? "categorias" : "marcas"} value={String(draft[imageField] || "")} onUploaded={(url) => setDraft({ ...draft, [imageField]: url })} /></div>
       <label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(event) => setDraft({ ...draft, ativo: event.target.checked })} /> Ativo</label>
-      <ModalActions saving={saving} onSave={save} onDelete={!isNew ? remove : undefined} />
+      <ModalActions saving={saving} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} />
     </Modal>
   );
 }
 
-function Applications({ items, query, reload, notify }: { items: Aplicacao[]; query: string; reload: () => Promise<void>; notify: (message: string) => void }) {
+function Applications({ items, query, reload, notify, canDelete }: { items: Aplicacao[]; query: string; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean }) {
   const [editing, setEditing] = useState<Aplicacao | null>(null);
   const filtered = items.filter((item) => [item.nome, item.tipo].join(" ").toLowerCase().includes(query.toLowerCase()));
   return (
@@ -652,12 +731,12 @@ function Applications({ items, query, reload, notify }: { items: Aplicacao[]; qu
       <Panel title={`${filtered.length} aplicações`}>
         <Table><thead><tr><Th>Nome</Th><Th>Tipo</Th><Th>Status</Th><Th /></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><Td>{item.nome}</Td><Td>{item.tipo}</Td><Td><Toggle checked={item.ativo !== false} onChange={(checked) => updateRow("Aplicacao", item.id, { ativo: checked }, reload, notify)} /></Td><Td><button className="icon-btn" onClick={() => setEditing(item)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table>
       </Panel>
-      {editing && <ApplicationModal item={editing} reload={reload} notify={notify} onClose={() => setEditing(null)} />}
+      {editing && <ApplicationModal item={editing} reload={reload} notify={notify} canDelete={canDelete} onClose={() => setEditing(null)} />}
     </>
   );
 }
 
-function ApplicationModal({ item, reload, notify, onClose }: { item: Aplicacao; reload: () => Promise<void>; notify: (message: string) => void; onClose: () => void }) {
+function ApplicationModal({ item, reload, notify, canDelete, onClose }: { item: Aplicacao; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean; onClose: () => void }) {
   const [draft, setDraft] = useState(item);
   const isNew = item.id.includes("_");
   const save = async () => {
@@ -670,7 +749,17 @@ function ApplicationModal({ item, reload, notify, onClose }: { item: Aplicacao; 
       onClose();
     }
   };
-  return <Modal title="Aplicação" onClose={onClose}><div className="grid gap-4 lg:grid-cols-3"><Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value })} /></Field><Field label="Slug"><input className="input" value={draft.slug || ""} onChange={(e) => setDraft({ ...draft, slug: e.target.value })} /></Field><Field label="Tipo"><input className="input" value={draft.tipo || ""} onChange={(e) => setDraft({ ...draft, tipo: e.target.value })} /></Field></div><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativa</label><ModalActions saving={false} onSave={save} /></Modal>;
+  const remove = async () => {
+    if (!confirm("Excluir aplicação?")) return;
+    const { error } = await supabase.from("Aplicacao").delete().eq("id", item.id);
+    if (error) notify(error.message);
+    else {
+      notify("Aplicação excluída.");
+      await reload();
+      onClose();
+    }
+  };
+  return <Modal title="Aplicação" onClose={onClose}><div className="grid gap-4 lg:grid-cols-3"><Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value })} /></Field><Field label="Slug"><input className="input" value={draft.slug || ""} onChange={(e) => setDraft({ ...draft, slug: e.target.value })} /></Field><Field label="Tipo"><input className="input" value={draft.tipo || ""} onChange={(e) => setDraft({ ...draft, tipo: e.target.value })} /></Field></div><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativa</label><ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} /></Modal>;
 }
 
 function Leads({ leads, products, query, reload, notify }: { leads: Lead[]; products: Produto[]; query: string; reload: () => Promise<void>; notify: (message: string) => void }) {
@@ -686,16 +775,20 @@ function Leads({ leads, products, query, reload, notify }: { leads: Lead[]; prod
   );
 }
 
-function UsersSection({ users, query, reload, notify }: { users: Usuario[]; query: string; reload: () => Promise<void>; notify: (message: string) => void }) {
+function UsersSection({ users, query, reload, notify, adminUser }: { users: Usuario[]; query: string; reload: () => Promise<void>; notify: (message: string) => void; adminUser: Usuario }) {
   const [editing, setEditing] = useState<Usuario | null>(null);
   const filtered = users.filter((user) => [user.name, user.email, user.company, user.phone, user.cnpj, user.role, user.status].join(" ").toLowerCase().includes(query.toLowerCase()));
-  return <><Panel title={`${filtered.length} usuários`}><Table><thead><tr><Th>Nome</Th><Th>E-mail</Th><Th>Empresa</Th><Th>Telefone</Th><Th>CNPJ</Th><Th>Role</Th><Th>Status</Th><Th /></tr></thead><tbody>{filtered.map((user) => <tr key={user.id}><Td>{user.name}</Td><Td>{user.email}</Td><Td>{user.company}</Td><Td>{user.phone || "-"}</Td><Td>{user.cnpj || "-"}</Td><Td>{user.role}</Td><Td>{user.status}</Td><Td><button className="icon-btn" onClick={() => setEditing(user)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table></Panel>{editing && <UserModal user={editing} reload={reload} notify={notify} onClose={() => setEditing(null)} />}</>;
+  const pending = users.filter((user) => user.status === "PENDING").length;
+  const activeAdmins = users.filter((user) => user.status === "ACTIVE" && (isMaster(user.role) || isCollaborator(user.role))).length;
+  return <><div className="mb-5 grid gap-4 md:grid-cols-3"><Summary label="Pendentes" value={pending} /><Summary label="Usuários ativos" value={users.filter((user) => user.status === "ACTIVE").length} /><Summary label="Admins ativos" value={activeAdmins} /></div><Panel title={`${filtered.length} usuários`}><Table><thead><tr><Th>Nome</Th><Th>E-mail</Th><Th>Empresa</Th><Th>Telefone</Th><Th>CNPJ</Th><Th>Role</Th><Th>Status</Th><Th /></tr></thead><tbody>{filtered.map((user) => <tr key={user.id}><Td>{user.name}</Td><Td>{user.email}</Td><Td>{user.company}</Td><Td>{user.phone || "-"}</Td><Td>{user.cnpj || "-"}</Td><Td>{user.role}</Td><Td>{user.status}</Td><Td><button className="icon-btn" onClick={() => setEditing(user)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table></Panel>{editing && <UserModal user={editing} reload={reload} notify={notify} adminUser={adminUser} onClose={() => setEditing(null)} />}</>;
 }
 
-function UserModal({ user, reload, notify, onClose }: { user: Usuario; reload: () => Promise<void>; notify: (message: string) => void; onClose: () => void }) {
+function UserModal({ user, reload, notify, adminUser, onClose }: { user: Usuario; reload: () => Promise<void>; notify: (message: string) => void; adminUser: Usuario; onClose: () => void }) {
   const [draft, setDraft] = useState(user);
   const save = async () => {
-    const { error } = await supabase.from("User").update({ name: draft.name, company: draft.company || null, email: draft.email, role: draft.role, status: draft.status, phone: draft.phone || null, cnpj: draft.cnpj || null, address: draft.address || null, city: draft.city || null, state: draft.state || null, registrationNotes: draft.registrationNotes || null, notes: draft.notes || null, approvedAt: draft.status === "ACTIVE" ? (draft.approvedAt || new Date().toISOString()) : draft.approvedAt || null }).eq("id", user.id);
+    const approvedAt = draft.status === "ACTIVE" ? (draft.approvedAt || new Date().toISOString()) : draft.approvedAt || null;
+    const approvedBy = draft.status === "ACTIVE" ? (draft.approvedBy || adminUser.id) : draft.approvedBy || null;
+    const { error } = await supabase.from("User").update({ name: draft.name, company: draft.company || null, email: draft.email, role: draft.role, status: draft.status, phone: draft.phone || null, cnpj: draft.cnpj || null, address: draft.address || null, city: draft.city || null, state: draft.state || null, registrationNotes: draft.registrationNotes || null, notes: draft.notes || null, approvedAt, approvedBy }).eq("id", user.id);
     if (error) notify(error.message);
     else {
       notify("Usuário atualizado.");
@@ -703,13 +796,93 @@ function UserModal({ user, reload, notify, onClose }: { user: Usuario; reload: (
       onClose();
     }
   };
-  return <Modal title="Editar usuário" onClose={onClose}><div className="grid gap-4 lg:grid-cols-2"><Field label="Nome"><input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="Empresa"><input className="input" value={draft.company || ""} onChange={(e) => setDraft({ ...draft, company: e.target.value })} /></Field><Field label="E-mail"><input className="input" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} /></Field><Field label="Telefone / WhatsApp"><input className="input" value={draft.phone || ""} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} /></Field><Field label="CNPJ"><input className="input" value={draft.cnpj || ""} onChange={(e) => setDraft({ ...draft, cnpj: e.target.value })} /></Field><Field label="Endereço"><input className="input" value={draft.address || ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} /></Field><Field label="Cidade"><input className="input" value={draft.city || ""} onChange={(e) => setDraft({ ...draft, city: e.target.value })} /></Field><Field label="UF"><input className="input" value={draft.state || ""} onChange={(e) => setDraft({ ...draft, state: e.target.value })} /></Field><Field label="Role"><select className="input" value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value as Role })}><option>ADMIN</option><option>REPRESENTANTE</option><option>CLIENTE</option></select></Field><Field label="Status"><select className="input" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value as Usuario["status"] })}><option>PENDING</option><option>ACTIVE</option><option>INACTIVE</option></select></Field><Field label="Observações do cadastro"><textarea className="textarea" value={draft.registrationNotes || ""} onChange={(e) => setDraft({ ...draft, registrationNotes: e.target.value })} /></Field><Field label="Notas internas"><textarea className="textarea" value={draft.notes || ""} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></Field></div><ModalActions saving={false} onSave={save} /></Modal>;
+  return <Modal title="Editar usuário" onClose={onClose}><div className="grid gap-4 lg:grid-cols-2"><Field label="Nome"><input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="Empresa"><input className="input" value={draft.company || ""} onChange={(e) => setDraft({ ...draft, company: e.target.value })} /></Field><Field label="E-mail"><input className="input" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} /></Field><Field label="Telefone / WhatsApp"><input className="input" value={draft.phone || ""} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} /></Field><Field label="CNPJ"><input className="input" value={draft.cnpj || ""} onChange={(e) => setDraft({ ...draft, cnpj: e.target.value })} /></Field><Field label="Endereço"><input className="input" value={draft.address || ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} /></Field><Field label="Cidade"><input className="input" value={draft.city || ""} onChange={(e) => setDraft({ ...draft, city: e.target.value })} /></Field><Field label="UF"><input className="input" value={draft.state || ""} onChange={(e) => setDraft({ ...draft, state: e.target.value })} /></Field><Field label="Role"><select className="input" value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value as Role })}><option>ADMIN_MASTER</option><option>ADMIN_COLABORADOR</option><option>NAO_CLIENTE</option><option>CLIENTE</option><option>REPRESENTANTE</option></select></Field><Field label="Status"><select className="input" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value as Usuario["status"] })}><option>PENDING</option><option>ACTIVE</option><option>INACTIVE</option></select></Field><Field label="Observações do cadastro"><textarea className="textarea" value={draft.registrationNotes || ""} onChange={(e) => setDraft({ ...draft, registrationNotes: e.target.value })} /></Field><Field label="Notas internas"><textarea className="textarea" value={draft.notes || ""} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></Field></div><ModalActions saving={false} onSave={save} /></Modal>;
 }
 
 function PermissionsSection({ permissions, query, reload, notify }: { permissions: Permission[]; query: string; reload: () => Promise<void>; notify: (message: string) => void }) {
   const filtered = permissions.filter((item) => [item.fieldKey, item.fieldLabel].join(" ").toLowerCase().includes(query.toLowerCase()));
   const toggle = async (permission: Permission, key: keyof Pick<Permission, "visibleToVisitor" | "visibleToClient" | "visibleToRepresentative" | "visibleToAdmin">) => updateRow("ProductFieldPermission", permission.id, { [key]: !permission[key] }, reload, notify);
   return <Panel title={`${filtered.length} permissões`}><Table><thead><tr><Th>Campo</Th><Th>Visitante</Th><Th>Cliente</Th><Th>Representante</Th><Th>Admin</Th></tr></thead><tbody>{filtered.map((permission) => <tr key={permission.id}><Td><div className="font-black">{permission.fieldLabel}</div><div className="text-xs text-muted">{permission.fieldKey}</div></Td><Td><Toggle checked={permission.visibleToVisitor} onChange={() => toggle(permission, "visibleToVisitor")} /></Td><Td><Toggle checked={permission.visibleToClient} onChange={() => toggle(permission, "visibleToClient")} /></Td><Td><Toggle checked={permission.visibleToRepresentative} onChange={() => toggle(permission, "visibleToRepresentative")} /></Td><Td><Toggle checked={permission.visibleToAdmin} onChange={() => toggle(permission, "visibleToAdmin")} /></Td></tr>)}</tbody></Table></Panel>;
+}
+
+function PermissionsSectionV2({ permissions, query, reload, notify }: { permissions: Permission[]; query: string; reload: () => Promise<void>; notify: (message: string) => void }) {
+  const filtered = permissions.filter((item) => [item.fieldKey, item.fieldLabel].join(" ").toLowerCase().includes(query.toLowerCase()));
+  const toggle = async (permission: Permission, key: keyof Pick<Permission, "visibleToVisitor" | "visibleToNonClient" | "visibleToClient" | "visibleToRepresentative" | "visibleToAdmin">) => updateRow("ProductFieldPermission", permission.id, { [key]: !permission[key] }, reload, notify);
+  return (
+    <Panel title={`${filtered.length} permissões`}>
+      <Table>
+        <thead><tr><Th>Campo</Th><Th>Visitante</Th><Th>Não cliente</Th><Th>Cliente</Th><Th>Representante</Th><Th>Admin</Th></tr></thead>
+        <tbody>{filtered.map((permission) => (
+          <tr key={permission.id}>
+            <Td><div className="font-black">{permission.fieldLabel}</div><div className="text-xs text-muted">{permission.fieldKey}</div></Td>
+            <Td><Toggle checked={permission.visibleToVisitor} onChange={() => toggle(permission, "visibleToVisitor")} /></Td>
+            <Td><Toggle checked={permission.visibleToNonClient} onChange={() => toggle(permission, "visibleToNonClient")} /></Td>
+            <Td><Toggle checked={permission.visibleToClient} onChange={() => toggle(permission, "visibleToClient")} /></Td>
+            <Td><Toggle checked={permission.visibleToRepresentative} onChange={() => toggle(permission, "visibleToRepresentative")} /></Td>
+            <Td><Toggle checked={permission.visibleToAdmin} onChange={() => toggle(permission, "visibleToAdmin")} /></Td>
+          </tr>
+        ))}</tbody>
+      </Table>
+    </Panel>
+  );
+}
+
+function Diagnostics({ data }: { data: AppData }) {
+  const now = Date.now();
+  const last24h = now - 24 * 60 * 60 * 1000;
+  const telemetry24h = data.telemetry.filter((event) => event.createdAt && Date.parse(event.createdAt) >= last24h);
+  const errors24h = telemetry24h.filter((event) => event.success === false || event.eventType.includes("error"));
+  const failedLogins24h = telemetry24h.filter((event) => event.eventType === "login" && event.success === false);
+  const access24h = telemetry24h.filter((event) => event.eventType === "screen_view" || event.eventType === "login");
+  const activeAdmins = data.usuarios.filter((user) => user.status === "ACTIVE" && (isMaster(user.role) || isCollaborator(user.role)));
+  const legacyAdmins = data.usuarios.filter((user) => user.role === "ADMIN");
+  const loadRows = Object.values(data.telemetry.filter((event) => event.eventType === "load_time" && event.durationMs != null).reduce<Record<string, { screen: string; total: number; count: number; max: number }>>((acc, event) => {
+    const screen = event.screen || event.route || "Sem tela";
+    acc[screen] ||= { screen, total: 0, count: 0, max: 0 };
+    acc[screen].total += Number(event.durationMs || 0);
+    acc[screen].count += 1;
+    acc[screen].max = Math.max(acc[screen].max, Number(event.durationMs || 0));
+    return acc;
+  }, {})).map((row) => ({ ...row, avg: Math.round(row.total / Math.max(row.count, 1)) })).sort((a, b) => b.avg - a.avg).slice(0, 8);
+  const securityScore = Math.max(0, 100 - errors24h.length * 2 - failedLogins24h.length * 5 - Math.max(0, activeAdmins.length - 3) * 6 - legacyAdmins.length * 12);
+  const health = securityScore >= 85 && errors24h.length === 0 ? "Tudo saudável" : securityScore >= 70 ? "Atenção leve" : "Revisar agora";
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <Summary label="Score de segurança" value={securityScore} />
+        <Summary label="Acessos 24h" value={access24h.length} />
+        <Summary label="Erros 24h" value={errors24h.length} />
+        <Summary label="Admins ativos" value={activeAdmins.length} />
+      </div>
+      <Panel title={`Saúde geral: ${health}`}>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <Info label="Eventos monitorados" value={String(data.telemetry.length)} />
+          <Info label="Falhas de login 24h" value={String(failedLogins24h.length)} />
+          <Info label="Admins legados" value={String(legacyAdmins.length)} />
+          <Info label="Última alteração" value={data.auditLogs[0]?.createdAt ? new Date(data.auditLogs[0].createdAt).toLocaleString("pt-BR") : "-"} />
+        </div>
+      </Panel>
+      <Panel title="Telas mais lentas">
+        <Table>
+          <thead><tr><Th>Tela</Th><Th>Média</Th><Th>Pior leitura</Th><Th>Eventos</Th></tr></thead>
+          <tbody>{loadRows.map((row) => <tr key={row.screen}><Td>{row.screen}</Td><Td>{row.avg} ms</Td><Td>{row.max} ms</Td><Td>{row.count}</Td></tr>)}</tbody>
+        </Table>
+      </Panel>
+      <Panel title="Últimos erros">
+        <Table>
+          <thead><tr><Th>Data</Th><Th>Tipo</Th><Th>Tela</Th><Th>Mensagem</Th></tr></thead>
+          <tbody>{errors24h.slice(0, 12).map((event) => <tr key={event.id}><Td>{event.createdAt ? new Date(event.createdAt).toLocaleString("pt-BR") : "-"}</Td><Td>{event.eventType}</Td><Td>{event.screen || event.route || "-"}</Td><Td>{event.message || "-"}</Td></tr>)}</tbody>
+        </Table>
+      </Panel>
+      <Panel title="Alterações recentes">
+        <Table>
+          <thead><tr><Th>Data</Th><Th>Admin</Th><Th>Ação</Th><Th>Entidade</Th><Th>ID</Th></tr></thead>
+          <tbody>{data.auditLogs.slice(0, 20).map((log) => <tr key={log.id}><Td>{log.createdAt ? new Date(log.createdAt).toLocaleString("pt-BR") : "-"}</Td><Td>{log.actorEmail || log.actorUserId || "-"}</Td><Td>{log.action}</Td><Td>{log.entityType}</Td><Td>{log.entityId || "-"}</Td></tr>)}</tbody>
+        </Table>
+      </Panel>
+    </div>
+  );
 }
 
 function MediaSettingsSection({ settings, reload, notify }: { settings?: MediaSettings & { recommendations?: Record<string, string> }; reload: () => Promise<void>; notify: (message: string) => void }) {
