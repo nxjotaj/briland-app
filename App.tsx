@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BlurView } from "expo-blur";
 import * as DocumentPicker from "expo-document-picker";
+import { Image as ExpoImage, type ImageProps } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
@@ -10,7 +11,6 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
-  Image,
   Linking,
   Modal,
   PanResponder,
@@ -32,8 +32,13 @@ import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage
 
 type IconName = keyof typeof Ionicons.glyphMap;
 type RegistrationRequest = { nome: string; empresa: string; telefone: string; email: string; cnpj: string; observacoes: string };
+type CachedImageProps = ImageProps & { resizeMode?: ImageProps["contentFit"] };
 
 const logo = require("./assets/briland-logo.png");
+
+function Image({ resizeMode, contentFit, transition = 160, cachePolicy = "memory-disk", ...props }: CachedImageProps) {
+  return <ExpoImage {...props} contentFit={contentFit ?? resizeMode ?? "cover"} transition={transition} cachePolicy={cachePolicy} />;
+}
 
 const userSelect = "id,name,company,email,role,status,notes,phone,cnpj,address,city,state,registrationNotes,approvedAt,approvedBy,lastLoginAt,createdAt,updatedAt,authUserId";
 function notify(title: string, message: string) {

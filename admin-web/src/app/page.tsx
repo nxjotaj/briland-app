@@ -221,12 +221,12 @@ export default function Page() {
 
   return (
     <div className="min-h-screen bg-soft text-navy">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-72 flex-col bg-navy p-5 text-white lg:flex">
-        <div className="mb-8 rounded-2xl bg-white/8 p-5">
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-72 flex-col overflow-hidden bg-navy p-5 text-white lg:flex">
+        <div className="mb-5 shrink-0 rounded-2xl bg-white/8 p-5">
           <div className="text-3xl font-black tracking-wide">BRILAND</div>
           <div className="mt-2 text-sm text-white/60">Painel administrativo web</div>
         </div>
-        <nav className="flex flex-1 flex-col gap-1">
+        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
           {tabs.map(({ id, icon: Icon }) => (
             <button key={id} onClick={() => setActive(id)} className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-bold transition ${active === id ? "bg-yellow text-navy" : "text-white/78 hover:bg-white/10"}`}>
               <Icon size={18} />
@@ -234,7 +234,7 @@ export default function Page() {
             </button>
           ))}
         </nav>
-        <div className="rounded-2xl border border-white/10 p-4 text-sm text-white/70">
+        <div className="mt-5 shrink-0 rounded-2xl border border-white/10 p-4 text-sm text-white/70">
           <div className="font-bold text-white">{adminUser.name}</div>
           <div>{adminUser.email}</div>
           <button onClick={logout} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 px-3 py-2 font-bold text-white hover:bg-white/10">
