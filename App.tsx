@@ -782,7 +782,7 @@ function CategoriesScreen({ categories, imageVersion, onPick }: { categories: Ca
               <View style={styles.categoryIcon}>
                 {item.imagem ? <Image source={{ uri: liveImageUrl(item.imagem, imageSize.categoryIcon, imageVersion) }} style={styles.categoryImage} resizeMode="contain" /> : <Ionicons name="grid-outline" size={34} color={colors.navy} />}
               </View>
-              <Text style={styles.categoryName} numberOfLines={2}>{item.nome}</Text>
+              <Text style={styles.categoryName} numberOfLines={3}>{item.nome}</Text>
               <Ionicons name="arrow-forward-outline" size={24} color={colors.navy} style={styles.categoryArrow} />
             </Pressable>
           ))}
@@ -1897,11 +1897,11 @@ const styles = StyleSheet.create({
   badge: { backgroundColor: colors.yellow, color: colors.white, overflow: "hidden", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 5, fontWeight: "900" },
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 14 },
   list: { gap: 12 },
-  categoryCard: { width: "47.4%", minHeight: 168, borderRadius: 14, backgroundColor: colors.white, padding: 15, paddingRight: 42, overflow: "hidden", ...shadow },
-  categoryIcon: { width: 56, height: 56, borderRadius: 16, backgroundColor: colors.soft, alignItems: "center", justifyContent: "center", marginBottom: 14 },
+  categoryCard: { width: "47.4%", minHeight: 188, borderRadius: 14, backgroundColor: colors.white, padding: 15, paddingRight: 36, overflow: "hidden", ...shadow },
+  categoryIcon: { width: 56, height: 56, borderRadius: 16, backgroundColor: colors.soft, alignItems: "center", justifyContent: "center", marginBottom: 16 },
   categoryImage: { width: 44, height: 44 },
-  categoryName: { color: colors.navy, fontSize: 19, lineHeight: 23, fontWeight: "900", marginBottom: 6 },
-  categoryArrow: { position: "absolute", right: 14, bottom: 14 },
+  categoryName: { color: colors.navy, fontSize: 17, lineHeight: 21, fontWeight: "900", marginBottom: 28 },
+  categoryArrow: { position: "absolute", right: 13, bottom: 13 },
   vehicleBrandCard: { width: "47.4%", minHeight: 168, borderRadius: 14, backgroundColor: colors.white, padding: 15, paddingRight: 42, overflow: "hidden", ...shadow },
   vehicleBrandIcon: { width: 56, height: 56, borderRadius: 16, backgroundColor: colors.soft, alignItems: "center", justifyContent: "center", marginBottom: 14 },
   vehicleBrandImage: { width: 44, height: 44 },
