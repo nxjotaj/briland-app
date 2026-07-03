@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
   Linking,
   Modal,
   PanResponder,
@@ -25,7 +26,7 @@ import {
   View
 } from "react-native";
 
-import { CONFIG_STORAGE_KEY, signInWithPassword, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRpc, trackTelemetry, uploadStorageObject } from "./src/api/supabase";
+import { CONFIG_STORAGE_KEY, signInWithPassword, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRealtime, supabaseRpc, trackTelemetry, uploadStorageObject } from "./src/api/supabase";
 import { colors, defaultAbout, defaultSocialLinks } from "./src/config/brand";
 import type { AboutSettings, Aplicacao, AppData, CatalogPdfRole, CatalogPdfSettings, Categoria, Lead, Marca, MediaSettings, ModeloVeiculo, Montadora, Permission, Produto, ProdutoModeloVeiculo, ProdutoModeloVeiculoView, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
 import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage, money, optimizedImageUrl, parseCsv, slugify } from "./src/utils/helpers";
@@ -40,6 +41,21 @@ function Image({ resizeMode, contentFit, transition = 160, cachePolicy = "memory
   return <ExpoImage {...props} contentFit={contentFit ?? resizeMode ?? "cover"} transition={transition} cachePolicy={cachePolicy} />;
 }
 
+function liveImageUrl(url: string | null | undefined, options: Parameters<typeof optimizedImageUrl>[1], version: number) {
+  return optimizedImageUrl(url, options ? { ...options, version } : options);
+}
+
+function versionedRawUrl(url: string | null | undefined, version: number) {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("_v", String(version));
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 const imageSize = {
   home: { width: 960, height: 610, resize: "cover", quality: 78 } as const,
   category: { width: 480, height: 360, resize: "cover", quality: 72 } as const,
@@ -48,6 +64,19 @@ const imageSize = {
   productDetail: { width: 1280, height: 960, resize: "contain", quality: 88 } as const,
   thumb: { width: 180, height: 140, resize: "contain", quality: 68 } as const
 };
+
+const realtimeCatalogTables = [
+  "Produto",
+  "Categoria",
+  "Marca",
+  "Aplicacao",
+  "Montadora",
+  "ModeloVeiculo",
+  "ProdutoModeloVeiculo",
+  "ProdutoAplicacao",
+  "ProductFieldPermission",
+  "AppSetting"
+] as const;
 
 const userSelect = "id,name,company,email,role,status,notes,phone,cnpj,address,city,state,registrationNotes,approvedAt,approvedBy,lastLoginAt,createdAt,updatedAt,authUserId";
 function notify(title: string, message: string) {
@@ -87,7 +116,10 @@ export default function App() {
   const [aboutSettings, setAboutSettings] = useState<AboutSettings>(defaultAbout);
   const [loading, setLoading] = useState(true);
   const [routeSplash, setRouteSplash] = useState(false);
+  const [imageRefreshVersion, setImageRefreshVersion] = useState(Date.now());
   const [error, setError] = useState<string | null>(null);
+  const realtimeReloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const appState = useRef(AppState.currentState);
   const [data, setData] = useState<AppData>({
     produtos: [],
     categorias: [],
@@ -101,9 +133,9 @@ export default function App() {
     permissoes: []
   });
 
-  const reload = async (nextRole = role, token = authToken) => {
+  const reload = async (nextRole = role, token = authToken, options?: { silent?: boolean; refreshImages?: boolean }) => {
     const startedAt = Date.now();
-    setLoading(true);
+    if (!options?.silent) setLoading(true);
     setError(null);
     try {
       const isPanelRole = isAdminRole(nextRole);
@@ -143,7 +175,7 @@ export default function App() {
         leads,
         permissoes
       });
-      setSelectedProduct((current) => current ?? produtos[0] ?? null);
+      setSelectedProduct((current) => current ? produtos.find((product) => product.id === current.id) ?? null : produtos[0] ?? null);
       void trackTelemetry({
         eventType: "load_time",
         screen: route,
@@ -154,6 +186,7 @@ export default function App() {
         success: true,
         metadata: { products: produtos.length, categories: categorias.length }
       }, token);
+      if (options?.refreshImages) setImageRefreshVersion(Date.now());
     } catch (err) {
       const message = err instanceof Error ? err.message : "Falha ao carregar dados do catálogo.";
       setError(message);
@@ -168,7 +201,7 @@ export default function App() {
         message
       }, token);
     } finally {
-      setLoading(false);
+      if (!options?.silent) setLoading(false);
     }
   };
 
@@ -183,13 +216,47 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (authToken) supabaseRealtime.realtime.setAuth(authToken);
+
+    const scheduleRealtimeReload = () => {
+      if (realtimeReloadTimer.current) clearTimeout(realtimeReloadTimer.current);
+      realtimeReloadTimer.current = setTimeout(() => {
+        void reload(role, authToken, { silent: true, refreshImages: true });
+      }, 800);
+    };
+
+    const channel = supabaseRealtime.channel(`catalog-live-${role}`);
+    realtimeCatalogTables.forEach((table) => {
+      channel.on("postgres_changes", { event: "*", schema: "public", table }, scheduleRealtimeReload);
+    });
+    void channel.subscribe();
+
+    return () => {
+      if (realtimeReloadTimer.current) clearTimeout(realtimeReloadTimer.current);
+      void supabaseRealtime.removeChannel(channel);
+    };
+  }, [authToken, role]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      const wasInBackground = appState.current === "inactive" || appState.current === "background";
+      appState.current = nextState;
+      if (wasInBackground && nextState === "active") {
+        void reload(role, authToken, { silent: true, refreshImages: true });
+      }
+    });
+    return () => subscription.remove();
+  }, [authToken, role]);
+
+  useEffect(() => {
     const urls = [
-      optimizedImageUrl(mediaSettings.homeImage, imageSize.home),
-      ...data.categorias.slice(0, 12).map((item) => optimizedImageUrl(item.imagem, imageSize.categoryIcon)),
-      ...data.produtos.slice(0, 30).map((item) => optimizedImageUrl(item.imagemPrincipal, imageSize.productCard))
+      versionedRawUrl(mediaSettings.initialImage, imageRefreshVersion),
+      optimizedImageUrl(mediaSettings.homeImage, { ...imageSize.home, version: imageRefreshVersion }),
+      ...data.categorias.slice(0, 12).map((item) => optimizedImageUrl(item.imagem, { ...imageSize.categoryIcon, version: imageRefreshVersion })),
+      ...data.produtos.slice(0, 30).map((item) => optimizedImageUrl(item.imagemPrincipal, { ...imageSize.productCard, version: imageRefreshVersion }))
     ].filter(Boolean);
     if (urls.length) void ExpoImage.prefetch(urls);
-  }, [data.categorias, data.produtos, mediaSettings.homeImage]);
+  }, [data.categorias, data.produtos, imageRefreshVersion, mediaSettings.homeImage, mediaSettings.initialImage]);
 
   useEffect(() => {
     void trackTelemetry({
@@ -422,7 +489,7 @@ export default function App() {
       {loading && <LoadingOverlay />}
       {routeSplash && <RouteSplash />}
       {route === "initial" ? (
-        <InitialScreen media={mediaSettings} onCatalog={() => go("home")} onLogin={() => go("login")} />
+        <InitialScreen media={mediaSettings} imageVersion={imageRefreshVersion} onCatalog={() => go("home")} onLogin={() => go("login")} />
       ) : (
         <SafeAreaView style={styles.safe}>
           {route === "login" ? (
@@ -433,9 +500,9 @@ export default function App() {
             <>
               <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} whatsappUrl={socialLinks.whatsapp} />
               {error && <ErrorBanner message={error} onRetry={reload} />}
-              {route === "home" && <HomeScreen go={openDirectCatalogRoute} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""} />}
-              {route === "categories" && <CategoriesScreen categories={data.categorias} onPick={(id) => { clearCatalogFilters(); setCategoryFilter(id); go("products"); }} />}
-              {route === "vehicleBrands" && <VehicleBrandsScreen montadoras={data.montadoras} applications={data.produtoModelosVeiculo} onPick={(id) => { clearCatalogFilters(); setMontadoraFilter(id); go("products"); }} />}
+              {route === "home" && <HomeScreen go={openDirectCatalogRoute} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""} imageVersion={imageRefreshVersion} />}
+              {route === "categories" && <CategoriesScreen categories={data.categorias} imageVersion={imageRefreshVersion} onPick={(id) => { clearCatalogFilters(); setCategoryFilter(id); go("products"); }} />}
+              {route === "vehicleBrands" && <VehicleBrandsScreen montadoras={data.montadoras} applications={data.produtoModelosVeiculo} imageVersion={imageRefreshVersion} onPick={(id) => { clearCatalogFilters(); setMontadoraFilter(id); go("products"); }} />}
               {route === "products" && (
                 <ProductList
                   title="Produtos"
@@ -468,6 +535,7 @@ export default function App() {
                   onOpen={openProduct}
                   role={role}
                   catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
+                  imageVersion={imageRefreshVersion}
                 />
               )}
               {route === "promotions" && (
@@ -502,6 +570,7 @@ export default function App() {
                   onOpen={openProduct}
                   role={role}
                   catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
+                  imageVersion={imageRefreshVersion}
                   promo
                 />
               )}
@@ -537,10 +606,11 @@ export default function App() {
                   onOpen={openProduct}
                   role={role}
                   catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
+                  imageVersion={imageRefreshVersion}
                   launch
                 />
               )}
-              {route === "detail" && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} onQuote={() => createLead({ produtoId: selectedProduct.id, mensagem: `Tenho interesse no produto ${selectedProduct.codigoInterno} - ${selectedProduct.nome}.`, origem: "produto" })} />}
+              {route === "detail" && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} imageVersion={imageRefreshVersion} onQuote={() => createLead({ produtoId: selectedProduct.id, mensagem: `Tenho interesse no produto ${selectedProduct.codigoInterno} - ${selectedProduct.nome}.`, origem: "produto" })} />}
               {route === "contact" && <ContactScreen onSubmit={createLead} />}
               {route === "about" && <AboutScreen settings={aboutSettings} />}
               {route === "signup" && <SignupScreen links={socialLinks} onSubmit={requestRegistration} onLogin={() => go("login")} />}
@@ -603,14 +673,14 @@ function LogoPlate({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function InitialScreen({ media, onCatalog, onLogin }: { media: MediaSettings; onCatalog: () => void; onLogin: () => void }) {
+function InitialScreen({ media, imageVersion, onCatalog, onLogin }: { media: MediaSettings; imageVersion: number; onCatalog: () => void; onLogin: () => void }) {
   const { height } = useWindowDimensions();
   const compact = height < 760;
   const roomy = height > 890;
   return (
     <View style={styles.initialScreen}>
       {media.initialImage ? (
-        <Image source={{ uri: media.initialImage }} style={styles.initialBackgroundImage} resizeMode="cover" />
+        <Image source={{ uri: versionedRawUrl(media.initialImage, imageVersion) }} style={styles.initialBackgroundImage} resizeMode="cover" />
       ) : (
         <View style={styles.initialFallback}>
           <BrandedMedia title="Imagem inicial" subtitle="Recomendado 1080 x 1920 px" />
@@ -670,7 +740,7 @@ function SlideToEnter({ onComplete }: { onComplete: () => void }) {
     </View>
   );
 }
-function HomeScreen({ go, products, categories, montadoras, media, catalogPdfUrl }: { go: (route: Route) => void; products: Produto[]; categories: Categoria[]; montadoras: Montadora[]; media: MediaSettings; catalogPdfUrl: string }) {
+function HomeScreen({ go, products, categories, montadoras, media, catalogPdfUrl, imageVersion }: { go: (route: Route) => void; products: Produto[]; categories: Categoria[]; montadoras: Montadora[]; media: MediaSettings; catalogPdfUrl: string; imageVersion: number }) {
   const items: [Route, string, string, IconName][] = [
     ["categories", "Categorias", `${categories.length} categorias ativas`, "grid-outline"],
     ["vehicleBrands", "Filtrar por montadora", `${montadoras.length} montadoras disponíveis`, "car-sport-outline"],
@@ -682,7 +752,7 @@ function HomeScreen({ go, products, categories, montadoras, media, catalogPdfUrl
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <View style={styles.heroCard}>
-        {media.homeImage ? <Image source={{ uri: optimizedImageUrl(media.homeImage, imageSize.home) }} style={styles.heroImage} resizeMode="cover" /> : <BrandedMedia title="Home Briland" subtitle="Recomendado 1200 x 760 px" />}
+        {media.homeImage ? <Image source={{ uri: liveImageUrl(media.homeImage, imageSize.home, imageVersion) }} style={styles.heroImage} resizeMode="cover" /> : <BrandedMedia title="Home Briland" subtitle="Recomendado 1200 x 760 px" />}
         <Pressable style={styles.heroCta} onPress={() => go("products")}>
           <Text style={styles.heroCtaText}>Ver catálogo completo</Text>
           <Ionicons name="arrow-forward" size={25} color={colors.navy} />
@@ -701,7 +771,7 @@ function HomeScreen({ go, products, categories, montadoras, media, catalogPdfUrl
   );
 }
 
-function CategoriesScreen({ categories, onPick }: { categories: Categoria[]; onPick: (id: string) => void }) {
+function CategoriesScreen({ categories, imageVersion, onPick }: { categories: Categoria[]; imageVersion: number; onPick: (id: string) => void }) {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <PageTitle title="Categorias" subtitle="Explore todas as nossas linhas de produtos." />
@@ -710,7 +780,7 @@ function CategoriesScreen({ categories, onPick }: { categories: Categoria[]; onP
           {categories.map((item) => (
             <Pressable style={styles.categoryCard} key={item.id} onPress={() => onPick(item.id)}>
               <View style={styles.categoryIcon}>
-                {item.imagem ? <Image source={{ uri: optimizedImageUrl(item.imagem, imageSize.categoryIcon) }} style={styles.categoryImage} resizeMode="contain" /> : <Ionicons name="grid-outline" size={34} color={colors.navy} />}
+                {item.imagem ? <Image source={{ uri: liveImageUrl(item.imagem, imageSize.categoryIcon, imageVersion) }} style={styles.categoryImage} resizeMode="contain" /> : <Ionicons name="grid-outline" size={34} color={colors.navy} />}
               </View>
               <Text style={styles.categoryName} numberOfLines={2}>{item.nome}</Text>
               <Ionicons name="arrow-forward-outline" size={24} color={colors.navy} style={styles.categoryArrow} />
@@ -722,7 +792,7 @@ function CategoriesScreen({ categories, onPick }: { categories: Categoria[]; onP
   );
 }
 
-function VehicleBrandsScreen({ montadoras, applications, onPick }: { montadoras: Montadora[]; applications: ProdutoModeloVeiculoView[]; onPick: (id: string) => void }) {
+function VehicleBrandsScreen({ montadoras, applications, imageVersion, onPick }: { montadoras: Montadora[]; applications: ProdutoModeloVeiculoView[]; imageVersion: number; onPick: (id: string) => void }) {
   const productCountByBrand = useMemo(() => {
     const map = new Map<string, Set<string>>();
     for (const item of applications) {
@@ -743,7 +813,7 @@ function VehicleBrandsScreen({ montadoras, applications, onPick }: { montadoras:
             return (
               <Pressable style={styles.vehicleBrandCard} key={item.id} onPress={() => onPick(item.id)}>
                 <View style={styles.vehicleBrandIcon}>
-                  {item.imagem ? <Image source={{ uri: item.imagem }} style={styles.vehicleBrandImage} resizeMode="contain" /> : <Ionicons name="car-sport-outline" size={34} color={colors.navy} />}
+                  {item.imagem ? <Image source={{ uri: liveImageUrl(item.imagem, imageSize.categoryIcon, imageVersion) }} style={styles.vehicleBrandImage} resizeMode="contain" /> : <Ionicons name="car-sport-outline" size={34} color={colors.navy} />}
                 </View>
                 <Text style={styles.vehicleBrandName} numberOfLines={2}>{item.nome}</Text>
                 <Text style={styles.mutedSmall}>{count} produtos vinculados</Text>
@@ -788,6 +858,7 @@ function ProductList({
   onOpen,
   role,
   catalogPdfUrl,
+  imageVersion,
   promo,
   launch
 }: {
@@ -821,6 +892,7 @@ function ProductList({
   onOpen: (product: Produto) => void;
   role: Role;
   catalogPdfUrl: string;
+  imageVersion: number;
   promo?: boolean;
   launch?: boolean;
 }) {
@@ -859,7 +931,7 @@ function ProductList({
           {products.map((product) => (
             <Pressable key={product.id} style={[listMode === "grid" ? styles.productCard : styles.productListCard, promo && styles.promoCard, launch && styles.launchCard]} onPress={() => onOpen(product)}>
               <View style={listMode === "grid" ? undefined : styles.listImageWrap}>
-                {product.imagemPrincipal ? <Image source={{ uri: optimizedImageUrl(product.imagemPrincipal, imageSize.productCard) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : listMode === "grid" ? <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" /> : <View style={styles.productListPlaceholder}><Ionicons name="image-outline" size={28} color={colors.yellow} /></View>}
+                {product.imagemPrincipal ? <Image source={{ uri: liveImageUrl(product.imagemPrincipal, imageSize.productCard, imageVersion) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : listMode === "grid" ? <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" /> : <View style={styles.productListPlaceholder}><Ionicons name="image-outline" size={28} color={colors.yellow} /></View>}
                 {promo && <Ribbon text="DESTAQUE" color={colors.red} />}
                 {launch && <Ribbon text="NOVO" color={colors.yellow} />}
               </View>
@@ -905,7 +977,7 @@ function productPermission(product: Produto, key: string, fallback = true) {
   return fallback;
 }
 
-function ProductDetail({ product, role, category, brand, vehicleApplications, whatsappUrl, onQuote }: { product: Produto; role: Role; category?: Categoria; brand?: Marca; vehicleApplications: ProdutoModeloVeiculoView[]; whatsappUrl: string; onQuote: () => void }) {
+function ProductDetail({ product, role, category, brand, vehicleApplications, whatsappUrl, imageVersion, onQuote }: { product: Produto; role: Role; category?: Categoria; brand?: Marca; vehicleApplications: ProdutoModeloVeiculoView[]; whatsappUrl: string; imageVersion: number; onQuote: () => void }) {
   const gallery = [product.imagemPrincipal, ...(product.imagensExtras ?? [])].filter(Boolean) as string[];
   const showBrand = productPermission(product, "marca", true);
   const showCa = productPermission(product, "ca", role !== "VISITANTE" && role !== "NAO_CLIENTE");
@@ -916,7 +988,7 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <View style={styles.detailMedia}>
-        {gallery[0] ? <Image source={{ uri: optimizedImageUrl(gallery[0], imageSize.productDetail) }} style={styles.detailImage} resizeMode="contain" /> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Cadastre a imagem principal no painel admin" tall />}
+        {gallery[0] ? <Image source={{ uri: liveImageUrl(gallery[0], imageSize.productDetail, imageVersion) }} style={styles.detailImage} resizeMode="contain" /> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Cadastre a imagem principal no painel admin" tall />}
         <View style={styles.dotsOverlay}><View style={styles.dotActive} />{gallery.slice(1, 5).map((item) => <View key={item} style={styles.dotLight} />)}</View>
       </View>
       <Text style={styles.smallYellow}>{product.codigoInterno || "Sem código"}</Text>

@@ -32,6 +32,7 @@ type ImageTransformOptions = {
   height?: number;
   quality?: number;
   resize?: "cover" | "contain" | "fill";
+  version?: number;
 };
 
 export function optimizedImageUrl(url?: string | null, options?: ImageTransformOptions) {
@@ -44,6 +45,7 @@ export function optimizedImageUrl(url?: string | null, options?: ImageTransformO
     if (options.height) parsed.searchParams.set("height", String(options.height));
     parsed.searchParams.set("resize", options.resize || "contain");
     parsed.searchParams.set("quality", String(options.quality ?? 78));
+    if (options.version) parsed.searchParams.set("_v", String(options.version));
     return parsed.toString();
   } catch {
     return url;
