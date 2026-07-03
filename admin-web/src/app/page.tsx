@@ -1295,7 +1295,14 @@ function drawWrappedText(page: ReturnType<PDFDocument["addPage"]>, text: string,
 
 async function loadPdfImage(pdf: PDFDocument, url: string, maxWidth: number, maxHeight: number) {
   const response = await fetch(url);
+  const contentType = response.headers.get("content-type") || "";
+  if (!response.ok || !contentType.toLowerCase().startsWith("image/")) {
+    throw new Error("Arquivo ignorado porque nao e imagem.");
+  }
   const blob = await response.blob();
+  if (!blob.type.toLowerCase().startsWith("image/")) {
+    throw new Error("Arquivo ignorado porque nao e imagem.");
+  }
   const bitmap = await createImageBitmap(blob);
   const ratio = Math.min(maxWidth / bitmap.width, maxHeight / bitmap.height, 1);
   const width = Math.max(1, Math.round(bitmap.width * ratio));
@@ -1316,6 +1323,14 @@ async function loadPdfImage(pdf: PDFDocument, url: string, maxWidth: number, max
 
 function pdfBytesToArrayBuffer(bytes: Uint8Array) {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+function isImageFile(file: File) {
+  return file.type.toLowerCase().startsWith("image/");
+}
+
+function isPdfUrl(value?: string) {
+  return Boolean(value && /\.pdf($|\?)/i.test(value));
 }
 
 function Diagnostics({ data }: { data: AppData }) {
@@ -1477,6 +1492,10 @@ function newProduct(data: AppData): Produto {
 function UploadBox({ label, folder, value, onUploaded }: { label: string; folder: string; value?: string; onUploaded: (url: string) => void }) {
   const [uploading, setUploading] = useState(false);
   const upload = async (file: File) => {
+    if (!isImageFile(file)) {
+      alert("Este campo aceita apenas imagens. PDF deve ser cadastrado somente como link no campo Manual PDF URL.");
+      return;
+    }
     setUploading(true);
     try {
       onUploaded(await uploadCatalogMedia(file, folder));
@@ -1484,7 +1503,7 @@ function UploadBox({ label, folder, value, onUploaded }: { label: string; folder
       setUploading(false);
     }
   };
-  return <div className="rounded-2xl border border-line bg-white p-4"><div className="mb-3 text-sm font-black">{label}</div>{value ? <img src={value} alt="" className="mb-3 h-36 w-full rounded-xl bg-soft object-contain" /> : <div className="mb-3 flex h-36 items-center justify-center rounded-xl bg-soft text-sm text-muted">Sem imagem</div>}<label className="btn-white inline-flex cursor-pointer">{uploading ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />} Enviar arquivo<input className="hidden" type="file" accept="image/*,.pdf" onChange={(event) => event.target.files?.[0] && void upload(event.target.files[0])} /></label></div>;
+  return <div className="rounded-2xl border border-line bg-white p-4"><div className="mb-3 text-sm font-black">{label}</div>{value && !isPdfUrl(value) ? <img src={value} alt="" className="mb-3 h-36 w-full rounded-xl bg-soft object-contain" /> : <div className="mb-3 flex h-36 items-center justify-center rounded-xl bg-soft text-sm text-muted">{value ? "Arquivo atual nao e imagem" : "Sem imagem"}</div>}<label className="btn-white inline-flex cursor-pointer">{uploading ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />} Enviar imagem<input className="hidden" type="file" accept="image/*" onChange={(event) => event.target.files?.[0] && void upload(event.target.files[0])} /></label></div>;
 }
 
 function SettingsPanel({ title, children, onSave }: { title: string; children: React.ReactNode; onSave: () => void | Promise<void> }) {
