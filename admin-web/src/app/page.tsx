@@ -41,9 +41,12 @@ import type {
   Lead,
   Marca,
   MediaSettings,
+  ModeloVeiculo,
+  Montadora,
   Permission,
   Produto,
   ProdutoAplicacao,
+  ProdutoModeloVeiculo,
   Role,
   SocialLinks,
   AuditLog,
@@ -56,6 +59,7 @@ type Tab =
   | "Produtos"
   | "Categorias"
   | "Marcas"
+  | "Montadoras"
   | "Aplicações"
   | "Leads"
   | "Usuários"
@@ -70,6 +74,7 @@ const tabs: { id: Tab; icon: React.ElementType }[] = [
   { id: "Produtos", icon: Boxes },
   { id: "Categorias", icon: Tags },
   { id: "Marcas", icon: ShieldCheck },
+  { id: "Montadoras", icon: Building2 },
   { id: "Aplicações", icon: Building2 },
   { id: "Leads", icon: MessageCircle },
   { id: "Usuários", icon: Users },
@@ -85,6 +90,9 @@ const emptyData: AppData = {
   categorias: [],
   marcas: [],
   aplicacoes: [],
+  montadoras: [],
+  modelosVeiculo: [],
+  produtoModelosVeiculo: [],
   usuarios: [],
   leads: [],
   permissoes: [],
@@ -101,7 +109,7 @@ const isCollaborator = (role?: Role | null) => role === "ADMIN_COLABORADOR";
 const canUseAdminWeb = (role?: Role | null) => isMaster(role) || isCollaborator(role);
 const visibleTabsFor = (role?: Role | null) => {
   if (isMaster(role)) return tabs;
-  return tabs.filter(({ id }) => ["Dashboard", "Produtos", "Categorias", "Marcas", "Aplicações", "Leads"].includes(id));
+  return tabs.filter(({ id }) => ["Dashboard", "Produtos", "Categorias", "Marcas", "Montadoras", "Aplicações", "Leads"].includes(id));
 };
 
 function leadDepartment(lead: Lead) {
@@ -170,6 +178,9 @@ export default function Page() {
         produtos,
         categorias,
         marcas,
+        montadoras,
+        modelosVeiculo,
+        produtoModelosVeiculo,
         aplicacoes,
         leads,
         produtoAplicacoes,
@@ -182,6 +193,9 @@ export default function Page() {
         supabase.from("Produto").select("*").order("ordem", { ascending: true }).order("nome").returns<Produto[]>(),
         supabase.from("Categoria").select("*").order("ordem", { ascending: true }).returns<Categoria[]>(),
         supabase.from("Marca").select("*").order("nome").returns<Marca[]>(),
+        supabase.from("Montadora").select("*").order("nome").returns<Montadora[]>(),
+        supabase.from("ModeloVeiculo").select("*").order("nome").returns<ModeloVeiculo[]>(),
+        supabase.from("ProdutoModeloVeiculo").select("*").returns<ProdutoModeloVeiculo[]>(),
         supabase.from("Aplicacao").select("*").order("nome").returns<Aplicacao[]>(),
         supabase.from("LeadOrcamento").select("*").order("createdAt", { ascending: false }).limit(300).returns<Lead[]>(),
         supabase.from("ProdutoAplicacao").select("*").returns<ProdutoAplicacao[]>(),
@@ -192,13 +206,16 @@ export default function Page() {
         master ? supabase.from("AuditLog").select("*").order("createdAt", { ascending: false }).limit(500).returns<AuditLog[]>() : Promise.resolve({ data: [], error: null })
       ]);
 
-      const firstError = [produtos, categorias, marcas, aplicacoes, usuarios, leads, permissoes, produtoAplicacoes, settings, telemetry, auditLogs].find((item) => item.error);
+      const firstError = [produtos, categorias, marcas, montadoras, modelosVeiculo, produtoModelosVeiculo, aplicacoes, usuarios, leads, permissoes, produtoAplicacoes, settings, telemetry, auditLogs].find((item) => item.error);
       if (firstError?.error) throw firstError.error;
 
       setData({
         produtos: produtos.data || [],
         categorias: categorias.data || [],
         marcas: marcas.data || [],
+        montadoras: montadoras.data || [],
+        modelosVeiculo: modelosVeiculo.data || [],
+        produtoModelosVeiculo: produtoModelosVeiculo.data || [],
         aplicacoes: aplicacoes.data || [],
         usuarios: usuarios.data || [],
         leads: leads.data || [],
@@ -353,6 +370,7 @@ export default function Page() {
           {activeTab === "Produtos" && <Products data={data} query={query} reload={reload} notify={notify} />}
           {activeTab === "Categorias" && <CategoryBrandSection title="Categorias" table="Categoria" imageField="imagem" items={data.categorias} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Marcas" && <CategoryBrandSection title="Marcas" table="Marca" imageField="logo" items={data.marcas} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
+          {activeTab === "Montadoras" && <VehicleSection data={data} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Aplicações" && <Applications items={data.aplicacoes} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Leads" && <Leads leads={data.leads} products={data.produtos} query={query} reload={reload} notify={notify} />}
           {activeTab === "Usuários" && <UsersSection users={data.usuarios} query={query} reload={reload} notify={notify} adminUser={adminUser} />}
@@ -460,7 +478,11 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
     const rows = data.produtos.map((product) => ({
       ...product,
       categoria: data.categorias.find((item) => item.id === product.categoriaId)?.nome || "",
-      marca: data.marcas.find((item) => item.id === product.marcaId)?.nome || ""
+      marca: data.marcas.find((item) => item.id === product.marcaId)?.nome || "",
+      montadoraModelo: data.produtoModelosVeiculo
+        .filter((item) => item.produtoId === product.id)
+        .map((item) => `${data.montadoras.find((brand) => brand.id === item.montadoraId)?.nome || item.montadoraId}:${data.modelosVeiculo.find((model) => model.id === item.modeloId)?.nome || item.modeloId}`)
+        .join("|")
     }));
     if (format === "xlsx") {
       const sheet = XLSX.utils.json_to_sheet(rows);
@@ -486,6 +508,7 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
       const existing = data.produtos.find((item) => item.codigoInterno === codigoInterno);
       const categoriaText = String(row.categoriaId || row.categoria || row.Categoria || "").toLowerCase();
       const marcaText = String(row.marcaId || row.marca || row.Marca || "").toLowerCase();
+      const productId = existing?.id || createId("prod");
       const payload = {
         nome,
         slug: String(row.slug || slugify(`${codigoInterno}-${nome}`)),
@@ -506,9 +529,24 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
       };
       const request = existing
         ? supabase.from("Produto").update(payload).eq("id", existing.id)
-        : supabase.from("Produto").insert({ id: createId("prod"), ...payload, updatedAt: new Date().toISOString() });
+        : supabase.from("Produto").insert({ id: productId, ...payload, updatedAt: new Date().toISOString() });
       const { error } = await request;
       if (error) throw error;
+      const vehicleText = String(row.montadoraModelo || row.MontadoraModelo || "").trim();
+      if (vehicleText) {
+        const { error: deleteError } = await supabase.from("ProdutoModeloVeiculo").delete().eq("produtoId", productId);
+        if (deleteError) throw deleteError;
+        const pairs = vehicleText.split("|").map((item) => item.trim()).filter(Boolean);
+        for (const pair of pairs) {
+          const [brandName, modelName] = pair.split(":").map((item) => item?.trim().toLowerCase());
+          if (!brandName || !modelName) continue;
+          const brand = data.montadoras.find((item) => item.id.toLowerCase() === brandName || item.nome.toLowerCase() === brandName || item.slug?.toLowerCase() === brandName);
+          const model = data.modelosVeiculo.find((item) => item.montadoraId === brand?.id && (item.id.toLowerCase() === modelName || item.nome.toLowerCase() === modelName || item.slug?.toLowerCase() === modelName));
+          if (!brand || !model) continue;
+          const { error: linkError } = await supabase.from("ProdutoModeloVeiculo").insert({ id: createId("pmv"), produtoId: productId, montadoraId: brand.id, modeloId: model.id, updatedAt: new Date().toISOString() });
+          if (linkError) throw linkError;
+        }
+      }
       count += 1;
     }
     notify(`${count} produtos importados/atualizados.`);
@@ -549,6 +587,7 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
 
 function ProductModal({ product, data, onClose, reload, notify }: { product: Produto; data: AppData; onClose: () => void; reload: () => Promise<void>; notify: (message: string) => void }) {
   const [draft, setDraft] = useState<Produto>(product);
+  const [vehicleLinks, setVehicleLinks] = useState<ProdutoModeloVeiculo[]>(() => data.produtoModelosVeiculo.filter((item) => item.produtoId === product.id));
   const [saving, setSaving] = useState(false);
   const isNew = !data.produtos.some((item) => item.id === product.id);
   const extras = draft.imagensExtras || [];
@@ -587,6 +626,29 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
       };
       const { error } = isNew ? await supabase.from("Produto").insert({ id: draft.id, ...payload }) : await supabase.from("Produto").update(payload).eq("id", draft.id);
       if (error) throw error;
+      const existingLinks = data.produtoModelosVeiculo.filter((item) => item.produtoId === draft.id);
+      const currentIds = new Set(vehicleLinks.map((item) => item.id));
+      for (const item of existingLinks) {
+        if (!currentIds.has(item.id)) {
+          const { error: deleteError } = await supabase.from("ProdutoModeloVeiculo").delete().eq("id", item.id);
+          if (deleteError) throw deleteError;
+        }
+      }
+      for (const item of vehicleLinks) {
+        if (!item.montadoraId || !item.modeloId) continue;
+        const linkPayload = {
+          produtoId: draft.id,
+          montadoraId: item.montadoraId,
+          modeloId: item.modeloId,
+          observacaoComercial: item.observacaoComercial || null,
+          updatedAt: new Date().toISOString()
+        };
+        const exists = existingLinks.some((current) => current.id === item.id);
+        const { error: linkError } = exists
+          ? await supabase.from("ProdutoModeloVeiculo").update(linkPayload).eq("id", item.id)
+          : await supabase.from("ProdutoModeloVeiculo").insert({ id: item.id, ...linkPayload });
+        if (linkError) throw linkError;
+      }
       notify("Produto salvo.");
       await reload();
       onClose();
@@ -626,7 +688,7 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
         <Field label="Ordem"><input className="input" type="number" value={draft.ordem ?? 0} onChange={(event) => set("ordem", Number(event.target.value || 0))} /></Field>
         <Field label="Condição comercial"><input className="input" value={draft.condicaoComercial || ""} onChange={(event) => set("condicaoComercial", event.target.value)} /></Field>
         <Field label="Prazo de entrega"><input className="input" value={draft.prazoEntrega || ""} onChange={(event) => set("prazoEntrega", event.target.value)} /></Field>
-        <Field label="Manual PDF"><input className="input" value={draft.manualPdf || ""} onChange={(event) => set("manualPdf", event.target.value)} /></Field>
+        <Field label="Manual PDF URL"><input className="input" placeholder="Cole o link do PDF. No app aparecerá como download." value={draft.manualPdf || ""} onChange={(event) => set("manualPdf", event.target.value)} /></Field>
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Field label="Descrição curta"><textarea className="textarea" value={draft.descricaoCurta || ""} onChange={(event) => set("descricaoCurta", event.target.value)} /></Field>
@@ -638,6 +700,37 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
           <div className="mb-3 font-black">Status</div>
           <label className="mr-6 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(event) => set("ativo", event.target.checked)} /> Ativo</label>
           <label className="inline-flex items-center gap-2"><input type="checkbox" checked={Boolean(draft.destaque)} onChange={(event) => set("destaque", event.target.checked)} /> Destaque</label>
+        </div>
+      </div>
+      <div className="mt-4 rounded-2xl border border-line p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="font-black">Aplicação por Montadora</div>
+            <div className="text-xs text-muted">Vincule este produto a uma ou mais montadoras/modelos.</div>
+          </div>
+          <button className="btn-white" onClick={() => {
+            const montadoraId = data.montadoras[0]?.id || "";
+            const modeloId = data.modelosVeiculo.find((item) => item.montadoraId === montadoraId)?.id || "";
+            setVehicleLinks([...vehicleLinks, { id: createId("pmv"), produtoId: draft.id, montadoraId, modeloId, observacaoComercial: "" }]);
+          }}><Plus size={15} /> Adicionar</button>
+        </div>
+        <div className="space-y-3">
+          {vehicleLinks.length === 0 && <div className="rounded-xl bg-soft p-4 text-sm text-muted">Nenhuma aplicação por montadora cadastrada.</div>}
+          {vehicleLinks.map((link, index) => {
+            const models = data.modelosVeiculo.filter((item) => item.montadoraId === link.montadoraId);
+            return (
+              <div key={link.id} className="grid gap-3 rounded-xl bg-soft p-3 lg:grid-cols-[1fr_1fr_2fr_auto]">
+                <select className="input" value={link.montadoraId} onChange={(event) => {
+                  const montadoraId = event.target.value;
+                  const modeloId = data.modelosVeiculo.find((item) => item.montadoraId === montadoraId)?.id || "";
+                  setVehicleLinks(vehicleLinks.map((item, current) => current === index ? { ...item, montadoraId, modeloId } : item));
+                }}>{data.montadoras.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select>
+                <select className="input" value={link.modeloId} onChange={(event) => setVehicleLinks(vehicleLinks.map((item, current) => current === index ? { ...item, modeloId: event.target.value } : item))}>{models.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select>
+                <input className="input" placeholder="Observação comercial" value={link.observacaoComercial || ""} onChange={(event) => setVehicleLinks(vehicleLinks.map((item, current) => current === index ? { ...item, observacaoComercial: event.target.value } : item))} />
+                <button className="icon-btn" onClick={() => setVehicleLinks(vehicleLinks.filter((_, current) => current !== index))}><Trash2 size={16} /></button>
+              </div>
+            );
+          })}
         </div>
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -720,6 +813,82 @@ function CategoryBrandModal({ table, imageField, item, reload, notify, canDelete
       <ModalActions saving={saving} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} />
     </Modal>
   );
+}
+
+function VehicleSection({ data, query, reload, notify, canDelete }: { data: AppData; query: string; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean }) {
+  const [editingBrand, setEditingBrand] = useState<Montadora | null>(null);
+  const [editingModel, setEditingModel] = useState<ModeloVeiculo | null>(null);
+  const lower = query.toLowerCase();
+  const brands = data.montadoras.filter((item) => [item.nome, item.slug].join(" ").toLowerCase().includes(lower));
+  const models = data.modelosVeiculo.filter((item) => [item.nome, item.slug, data.montadoras.find((brand) => brand.id === item.montadoraId)?.nome].join(" ").toLowerCase().includes(lower));
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap gap-3">
+        <button onClick={() => setEditingBrand({ id: createId("mont"), nome: "Nova montadora", slug: "nova-montadora", ativo: true })} className="btn-yellow"><Plus size={17} /> Criar montadora</button>
+        <button onClick={() => setEditingModel({ id: createId("modelo"), nome: "Novo modelo", slug: "novo-modelo", montadoraId: data.montadoras[0]?.id || "", ativo: true })} className="btn-white"><Plus size={17} /> Criar modelo</button>
+      </div>
+      <Panel title={`${brands.length} montadoras`}>
+        <Table><thead><tr><Th>Nome</Th><Th>Slug</Th><Th>Status</Th><Th>Modelos</Th><Th /></tr></thead><tbody>{brands.map((brand) => <tr key={brand.id}><Td>{brand.nome}</Td><Td>{brand.slug}</Td><Td><Toggle checked={brand.ativo !== false} onChange={(checked) => updateRow("Montadora", brand.id, { ativo: checked, updatedAt: new Date().toISOString() }, reload, notify)} /></Td><Td>{data.modelosVeiculo.filter((item) => item.montadoraId === brand.id).length}</Td><Td><button className="icon-btn" onClick={() => setEditingBrand(brand)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table>
+      </Panel>
+      <Panel title={`${models.length} modelos`}>
+        <Table><thead><tr><Th>Modelo</Th><Th>Montadora</Th><Th>Slug</Th><Th>Status</Th><Th /></tr></thead><tbody>{models.map((model) => <tr key={model.id}><Td>{model.nome}</Td><Td>{data.montadoras.find((brand) => brand.id === model.montadoraId)?.nome || "-"}</Td><Td>{model.slug}</Td><Td><Toggle checked={model.ativo !== false} onChange={(checked) => updateRow("ModeloVeiculo", model.id, { ativo: checked, updatedAt: new Date().toISOString() }, reload, notify)} /></Td><Td><button className="icon-btn" onClick={() => setEditingModel(model)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table>
+      </Panel>
+      {editingBrand && <VehicleBrandModal item={editingBrand} reload={reload} notify={notify} canDelete={canDelete} onClose={() => setEditingBrand(null)} />}
+      {editingModel && <VehicleModelModal item={editingModel} brands={data.montadoras} reload={reload} notify={notify} canDelete={canDelete} onClose={() => setEditingModel(null)} />}
+    </div>
+  );
+}
+
+function VehicleBrandModal({ item, reload, notify, canDelete, onClose }: { item: Montadora; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean; onClose: () => void }) {
+  const [draft, setDraft] = useState(item);
+  const isNew = !item.createdAt;
+  const save = async () => {
+    const payload = { nome: draft.nome, slug: draft.slug || slugify(draft.nome), ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
+    const { error } = isNew ? await supabase.from("Montadora").insert({ id: draft.id, ...payload }) : await supabase.from("Montadora").update(payload).eq("id", item.id);
+    if (error) notify(error.message);
+    else {
+      notify("Montadora salva.");
+      await reload();
+      onClose();
+    }
+  };
+  const remove = async () => {
+    if (!confirm("Excluir montadora?")) return;
+    const { error } = await supabase.from("Montadora").delete().eq("id", item.id);
+    if (error) notify(error.message);
+    else {
+      notify("Montadora excluída.");
+      await reload();
+      onClose();
+    }
+  };
+  return <Modal title="Montadora" onClose={onClose}><div className="grid gap-4 lg:grid-cols-2"><Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value })} /></Field><Field label="Slug"><input className="input" value={draft.slug || ""} onChange={(e) => setDraft({ ...draft, slug: e.target.value })} /></Field></div><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativa</label><ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} /></Modal>;
+}
+
+function VehicleModelModal({ item, brands, reload, notify, canDelete, onClose }: { item: ModeloVeiculo; brands: Montadora[]; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean; onClose: () => void }) {
+  const [draft, setDraft] = useState(item);
+  const isNew = !item.createdAt;
+  const save = async () => {
+    const payload = { nome: draft.nome, slug: draft.slug || slugify(draft.nome), montadoraId: draft.montadoraId || brands[0]?.id || "", ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
+    const { error } = isNew ? await supabase.from("ModeloVeiculo").insert({ id: draft.id, ...payload }) : await supabase.from("ModeloVeiculo").update(payload).eq("id", item.id);
+    if (error) notify(error.message);
+    else {
+      notify("Modelo salvo.");
+      await reload();
+      onClose();
+    }
+  };
+  const remove = async () => {
+    if (!confirm("Excluir modelo?")) return;
+    const { error } = await supabase.from("ModeloVeiculo").delete().eq("id", item.id);
+    if (error) notify(error.message);
+    else {
+      notify("Modelo excluído.");
+      await reload();
+      onClose();
+    }
+  };
+  return <Modal title="Modelo de veículo" onClose={onClose}><div className="grid gap-4 lg:grid-cols-3"><Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value })} /></Field><Field label="Slug"><input className="input" value={draft.slug || ""} onChange={(e) => setDraft({ ...draft, slug: e.target.value })} /></Field><Field label="Montadora"><select className="input" value={draft.montadoraId} onChange={(e) => setDraft({ ...draft, montadoraId: e.target.value })}>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.nome}</option>)}</select></Field></div><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativo</label><ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} /></Modal>;
 }
 
 function Applications({ items, query, reload, notify, canDelete }: { items: Aplicacao[]; query: string; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean }) {
@@ -828,6 +997,7 @@ function PermissionsSectionV2({ permissions, query, reload, notify }: { permissi
 }
 
 function Diagnostics({ data }: { data: AppData }) {
+  const [selectedAudit, setSelectedAudit] = useState<AuditLog | null>(null);
   const now = Date.now();
   const last24h = now - 24 * 60 * 60 * 1000;
   const telemetry24h = data.telemetry.filter((event) => event.createdAt && Date.parse(event.createdAt) >= last24h);
@@ -877,12 +1047,41 @@ function Diagnostics({ data }: { data: AppData }) {
       </Panel>
       <Panel title="Alterações recentes">
         <Table>
-          <thead><tr><Th>Data</Th><Th>Admin</Th><Th>Ação</Th><Th>Entidade</Th><Th>ID</Th></tr></thead>
-          <tbody>{data.auditLogs.slice(0, 20).map((log) => <tr key={log.id}><Td>{log.createdAt ? new Date(log.createdAt).toLocaleString("pt-BR") : "-"}</Td><Td>{log.actorEmail || log.actorUserId || "-"}</Td><Td>{log.action}</Td><Td>{log.entityType}</Td><Td>{log.entityId || "-"}</Td></tr>)}</tbody>
+          <thead><tr><Th>Data</Th><Th>Admin</Th><Th>Ação</Th><Th>Entidade</Th><Th>ID</Th><Th /></tr></thead>
+          <tbody>{data.auditLogs.slice(0, 20).map((log) => <tr key={log.id}><Td>{log.createdAt ? new Date(log.createdAt).toLocaleString("pt-BR") : "-"}</Td><Td>{log.actorEmail || log.actorUserId || "-"}</Td><Td>{log.action}</Td><Td>{log.entityType}</Td><Td>{log.entityId || "-"}</Td><Td><button className="icon-btn" onClick={() => setSelectedAudit(log)}><Eye size={16} /></button></Td></tr>)}</tbody>
         </Table>
       </Panel>
+      {selectedAudit && <AuditDetailModal log={selectedAudit} onClose={() => setSelectedAudit(null)} />}
     </div>
   );
+}
+
+function AuditDetailModal({ log, onClose }: { log: AuditLog; onClose: () => void }) {
+  const before = (log.metadata?.before || null) as Record<string, unknown> | null;
+  const after = (log.metadata?.after || null) as Record<string, unknown> | null;
+  const keys = Array.from(new Set([...Object.keys(before || {}), ...Object.keys(after || {})])).filter((key) => JSON.stringify(before?.[key] ?? null) !== JSON.stringify(after?.[key] ?? null));
+  return (
+    <Modal title="Detalhe da alteração" onClose={onClose}>
+      <div className="grid gap-3 lg:grid-cols-4">
+        <Info label="Data" value={log.createdAt ? new Date(log.createdAt).toLocaleString("pt-BR") : "-"} />
+        <Info label="Admin" value={log.actorEmail || log.actorUserId || "-"} />
+        <Info label="Ação" value={log.action} />
+        <Info label="Entidade" value={`${log.entityType} / ${log.entityId || "-"}`} />
+      </div>
+      <Panel title={`${keys.length} campos alterados`}>
+        <Table>
+          <thead><tr><Th>Campo</Th><Th>Antes</Th><Th>Depois</Th></tr></thead>
+          <tbody>{keys.map((key) => <tr key={key}><Td className="font-black">{key}</Td><Td><pre className="whitespace-pre-wrap text-xs">{formatAuditValue(before?.[key])}</pre></Td><Td><pre className="whitespace-pre-wrap text-xs">{formatAuditValue(after?.[key])}</pre></Td></tr>)}</tbody>
+        </Table>
+      </Panel>
+    </Modal>
+  );
+}
+
+function formatAuditValue(value: unknown) {
+  if (value == null) return "-";
+  if (typeof value === "object") return JSON.stringify(value, null, 2);
+  return String(value);
 }
 
 function MediaSettingsSection({ settings, reload, notify }: { settings?: MediaSettings & { recommendations?: Record<string, string> }; reload: () => Promise<void>; notify: (message: string) => void }) {

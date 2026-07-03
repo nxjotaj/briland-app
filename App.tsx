@@ -27,7 +27,7 @@ import {
 
 import { CONFIG_STORAGE_KEY, signInWithPassword, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRpc, trackTelemetry, uploadStorageObject } from "./src/api/supabase";
 import { colors, defaultAbout, defaultSocialLinks } from "./src/config/brand";
-import type { AboutSettings, Aplicacao, AppData, Categoria, Lead, Marca, MediaSettings, Permission, Produto, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
+import type { AboutSettings, Aplicacao, AppData, Categoria, Lead, Marca, MediaSettings, ModeloVeiculo, Montadora, Permission, Produto, ProdutoModeloVeiculo, ProdutoModeloVeiculoView, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
 import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage, money, optimizedImageUrl, parseCsv, slugify } from "./src/utils/helpers";
 
 type IconName = keyof typeof Ionicons.glyphMap;
@@ -67,6 +67,8 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [brandFilter, setBrandFilter] = useState<string | null>(null);
+  const [montadoraFilter, setMontadoraFilter] = useState<string | null>(null);
+  const [modeloFilter, setModeloFilter] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive" | "featured" | "missingPhoto">("all");
   const [sortMode, setSortMode] = useState<"order" | "name" | "newest">("order");
   const [listMode, setListMode] = useState<"grid" | "list">("grid");
@@ -83,6 +85,9 @@ export default function App() {
     categorias: [],
     marcas: [],
     aplicacoes: [],
+    montadoras: [],
+    modelosVeiculo: [],
+    produtoModelosVeiculo: [],
     usuarios: [],
     leads: [],
     permissoes: []
@@ -94,11 +99,14 @@ export default function App() {
     setError(null);
     try {
       const isPanelRole = isAdminRole(nextRole);
-      const [produtos, categorias, marcas, aplicacoes, appSettings] = await Promise.all([
+      const [produtos, categorias, marcas, aplicacoes, montadoras, modelosVeiculo, produtoModelosVeiculo, appSettings] = await Promise.all([
         supabaseRpc<Produto[]>("get_visible_products", { requested_role: nextRole }, token),
         supabaseGet<Categoria>("Categoria", "select=*&order=ordem.asc", token),
         supabaseGet<Marca>("Marca", "select=*", token),
         supabaseGet<Aplicacao>("Aplicacao", "select=*", token),
+        supabaseGet<Montadora>("Montadora", "select=*&order=nome.asc", token),
+        supabaseGet<ModeloVeiculo>("ModeloVeiculo", "select=*&order=nome.asc", token),
+        supabaseRpc<ProdutoModeloVeiculoView[]>("get_visible_vehicle_applications", {}, token),
         supabaseRpc<Record<string, unknown>>("get_app_settings", {}, token)
       ]);
       const [usuarios, leads, permissoes] = isPanelRole
@@ -119,6 +127,9 @@ export default function App() {
         categorias,
         marcas,
         aplicacoes,
+        montadoras,
+        modelosVeiculo,
+        produtoModelosVeiculo,
         usuarios,
         leads,
         permissoes
@@ -199,26 +210,52 @@ export default function App() {
   const activeProducts = useMemo(() => data.produtos.filter((item) => item.ativo !== false), [data.produtos]);
   const categoryById = useMemo(() => new Map(data.categorias.map((item) => [item.id, item])), [data.categorias]);
   const brandById = useMemo(() => new Map(data.marcas.map((item) => [item.id, item])), [data.marcas]);
+  const montadoraById = useMemo(() => new Map(data.montadoras.map((item) => [item.id, item])), [data.montadoras]);
+  const modeloById = useMemo(() => new Map(data.modelosVeiculo.map((item) => [item.id, item])), [data.modelosVeiculo]);
+  const vehicleApplicationsByProduct = useMemo(() => {
+    const map = new Map<string, ProdutoModeloVeiculoView[]>();
+    for (const link of data.produtoModelosVeiculo) {
+      const montadora = montadoraById.get(link.montadoraId);
+      const modelo = modeloById.get(link.modeloId);
+      const view: ProdutoModeloVeiculoView = {
+        ...link,
+        montadoraNome: montadora?.nome,
+        montadoraSlug: montadora?.slug,
+        modeloNome: modelo?.nome,
+        modeloSlug: modelo?.slug
+      };
+      map.set(link.produtoId, [...(map.get(link.produtoId) || []), view]);
+    }
+    return map;
+  }, [data.produtoModelosVeiculo, montadoraById, modeloById]);
   const filteredProducts = useMemo(() => {
     const q = query.trim().toLowerCase();
     const filtered = activeProducts.filter((item) => {
       const categoria = categoryById.get(item.categoriaId ?? "")?.nome ?? "";
       const marca = brandById.get(item.marcaId ?? "")?.nome ?? "";
-      const text = [item.nome, item.codigoInterno, item.descricaoCurta, item.ean, item.ncm, categoria, marca].join(" ").toLowerCase();
+      const vehicleApplications = vehicleApplicationsByProduct.get(item.id) || item.aplicacoesVeiculo || [];
+      const vehicleText = vehicleApplications.map((app) => `${app.montadoraNome || ""} ${app.modeloNome || ""}`).join(" ");
+      const text = [item.nome, item.codigoInterno, item.descricaoCurta, item.ean, item.ncm, categoria, marca, vehicleText].join(" ").toLowerCase();
       const statusOk =
         statusFilter === "all" ||
         (statusFilter === "active" && item.ativo !== false) ||
         (statusFilter === "inactive" && item.ativo === false) ||
         (statusFilter === "featured" && Boolean(item.destaque)) ||
         (statusFilter === "missingPhoto" && !item.imagemPrincipal);
-      return (!q || text.includes(q)) && (!categoryFilter || item.categoriaId === categoryFilter) && (!brandFilter || item.marcaId === brandFilter) && statusOk;
+      const vehicleOk =
+        (!montadoraFilter && !modeloFilter) ||
+        vehicleApplications.some((app) =>
+          (!montadoraFilter || app.montadoraId === montadoraFilter) &&
+          (!modeloFilter || app.modeloId === modeloFilter)
+        );
+      return (!q || text.includes(q)) && (!categoryFilter || item.categoriaId === categoryFilter) && (!brandFilter || item.marcaId === brandFilter) && vehicleOk && statusOk;
     });
     return [...filtered].sort((a, b) => {
       if (sortMode === "name") return a.nome.localeCompare(b.nome);
       if (sortMode === "newest") return String(b.createdAt).localeCompare(String(a.createdAt));
       return (a.ordem ?? 0) - (b.ordem ?? 0);
     });
-  }, [activeProducts, query, categoryFilter, brandFilter, statusFilter, sortMode, categoryById, brandById]);
+  }, [activeProducts, query, categoryFilter, brandFilter, montadoraFilter, modeloFilter, statusFilter, sortMode, categoryById, brandById, vehicleApplicationsByProduct]);
 
   const go = (next: Route) => {
     if (next === route) {
@@ -366,11 +403,17 @@ export default function App() {
                   setCategoryFilter={setCategoryFilter}
                   brandFilter={brandFilter}
                   setBrandFilter={setBrandFilter}
+                  montadoraFilter={montadoraFilter}
+                  setMontadoraFilter={setMontadoraFilter}
+                  modeloFilter={modeloFilter}
+                  setModeloFilter={setModeloFilter}
                   statusFilter={statusFilter}
                   setStatusFilter={setStatusFilter}
                   sortMode={sortMode}
                   setSortMode={setSortMode}
                   brands={data.marcas}
+                  montadoras={data.montadoras}
+                  modelosVeiculo={data.modelosVeiculo}
                   filterOpen={filterOpen}
                   setFilterOpen={setFilterOpen}
                   listMode={listMode}
@@ -393,11 +436,17 @@ export default function App() {
                   setCategoryFilter={setCategoryFilter}
                   brandFilter={brandFilter}
                   setBrandFilter={setBrandFilter}
+                  montadoraFilter={montadoraFilter}
+                  setMontadoraFilter={setMontadoraFilter}
+                  modeloFilter={modeloFilter}
+                  setModeloFilter={setModeloFilter}
                   statusFilter={statusFilter}
                   setStatusFilter={setStatusFilter}
                   sortMode={sortMode}
                   setSortMode={setSortMode}
                   brands={data.marcas}
+                  montadoras={data.montadoras}
+                  modelosVeiculo={data.modelosVeiculo}
                   filterOpen={filterOpen}
                   setFilterOpen={setFilterOpen}
                   listMode={listMode}
@@ -421,11 +470,17 @@ export default function App() {
                   setCategoryFilter={setCategoryFilter}
                   brandFilter={brandFilter}
                   setBrandFilter={setBrandFilter}
+                  montadoraFilter={montadoraFilter}
+                  setMontadoraFilter={setMontadoraFilter}
+                  modeloFilter={modeloFilter}
+                  setModeloFilter={setModeloFilter}
                   statusFilter={statusFilter}
                   setStatusFilter={setStatusFilter}
                   sortMode={sortMode}
                   setSortMode={setSortMode}
                   brands={data.marcas}
+                  montadoras={data.montadoras}
+                  modelosVeiculo={data.modelosVeiculo}
                   filterOpen={filterOpen}
                   setFilterOpen={setFilterOpen}
                   listMode={listMode}
@@ -435,7 +490,7 @@ export default function App() {
                   launch
                 />
               )}
-              {route === "detail" && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} whatsappUrl={socialLinks.whatsapp} onQuote={() => createLead({ produtoId: selectedProduct.id, mensagem: `Tenho interesse no produto ${selectedProduct.codigoInterno} - ${selectedProduct.nome}.`, origem: "produto" })} />}
+              {route === "detail" && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} onQuote={() => createLead({ produtoId: selectedProduct.id, mensagem: `Tenho interesse no produto ${selectedProduct.codigoInterno} - ${selectedProduct.nome}.`, origem: "produto" })} />}
               {route === "contact" && <ContactScreen onSubmit={createLead} />}
               {route === "about" && <AboutScreen settings={aboutSettings} />}
               {route === "signup" && <SignupScreen links={socialLinks} onSubmit={requestRegistration} onLogin={() => go("login")} />}
@@ -628,11 +683,17 @@ function ProductList({
   setCategoryFilter,
   brandFilter,
   setBrandFilter,
+  montadoraFilter,
+  setMontadoraFilter,
+  modeloFilter,
+  setModeloFilter,
   statusFilter,
   setStatusFilter,
   sortMode,
   setSortMode,
   brands,
+  montadoras,
+  modelosVeiculo,
   filterOpen,
   setFilterOpen,
   listMode,
@@ -654,11 +715,17 @@ function ProductList({
   setCategoryFilter: (id: string | null) => void;
   brandFilter: string | null;
   setBrandFilter: (id: string | null) => void;
+  montadoraFilter: string | null;
+  setMontadoraFilter: (id: string | null) => void;
+  modeloFilter: string | null;
+  setModeloFilter: (id: string | null) => void;
   statusFilter: "all" | "active" | "inactive" | "featured" | "missingPhoto";
   setStatusFilter: (mode: "all" | "active" | "inactive" | "featured" | "missingPhoto") => void;
   sortMode: "order" | "name" | "newest";
   setSortMode: (mode: "order" | "name" | "newest") => void;
   brands: Marca[];
+  montadoras: Montadora[];
+  modelosVeiculo: ModeloVeiculo[];
   filterOpen: boolean;
   setFilterOpen: (open: boolean) => void;
   listMode: "grid" | "list";
@@ -670,6 +737,8 @@ function ProductList({
 }) {
   const activeCategory = categoryFilter ? categoryById.get(categoryFilter)?.nome : "Todas categorias";
   const activeBrand = brandFilter ? brands.find((item) => item.id === brandFilter)?.nome : "Todas marcas";
+  const activeMontadora = montadoraFilter ? montadoras.find((item) => item.id === montadoraFilter)?.nome : "Todas montadoras";
+  const activeModelo = modeloFilter ? modelosVeiculo.find((item) => item.id === modeloFilter)?.nome : "Todos modelos";
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <PageTitle title={title} subtitle={subtitle} badge={launch ? "NOVO" : undefined} />
@@ -680,7 +749,9 @@ function ProductList({
       <View style={styles.chips}>
         <Chip text={activeCategory ?? "Categorias"} onPress={() => setFilterOpen(true)} />
         <Chip text={activeBrand ?? "Marcas"} onPress={() => setFilterOpen(true)} />
-        <Chip text="Limpar" onPress={() => { setQuery(""); setCategoryFilter(null); setBrandFilter(null); setStatusFilter("all"); setSortMode("order"); }} />
+        <Chip text={activeMontadora ?? "Montadoras"} onPress={() => setFilterOpen(true)} />
+        {montadoraFilter && <Chip text={activeModelo ?? "Modelos"} onPress={() => setFilterOpen(true)} />}
+        <Chip text="Limpar" onPress={() => { setQuery(""); setCategoryFilter(null); setBrandFilter(null); setMontadoraFilter(null); setModeloFilter(null); setStatusFilter("all"); setSortMode("order"); }} />
       </View>
       <View style={styles.resultRow}><Text style={styles.muted}>{products.length} produtos encontrados</Text><Segmented value={listMode} setValue={setListMode} /></View>
       {products.length === 0 ? <EmptyState text="Nenhum produto encontrado com os filtros atuais." /> : (
@@ -695,10 +766,10 @@ function ProductList({
               <View style={styles.productBody}>
                 <Text style={styles.productCode}>{product.codigoInterno || "Sem código"}</Text>
                 <Text style={styles.productName} numberOfLines={3}>{product.nome}</Text>
-                <Text style={styles.mutedSmall}>{categoryById.get(product.categoriaId ?? "")?.nome || "Sem categoria"} • {brandById.get(product.marcaId ?? "")?.nome || "Sem marca"}</Text>
+                <Text style={styles.mutedSmall}>{categoryById.get(product.categoriaId ?? "")?.nome || "Sem categoria"}{productPermission(product, "marca", true) ? ` • ${brandById.get(product.marcaId ?? "")?.nome || "Sem marca"}` : ""}</Text>
                 <View style={styles.cardLine} />
                 <Meta icon="cube-outline" label="Caixa master" value={product.caixaMaster || "A cadastrar"} />
-                <Meta icon="document-text-outline" label="NCM" value={product.ncm || "A cadastrar"} />
+                {productPermission(product, "ncm", role !== "VISITANTE") && <Meta icon="document-text-outline" label="NCM" value={product.ncm || "A cadastrar"} />}
                 {role === "VISITANTE" ? <Text style={styles.loginHint}>Entrar para ver mais informações</Text> : <Text style={styles.price}>{money(product.preco)}</Text>}
               </View>
             </Pressable>
@@ -710,10 +781,16 @@ function ProductList({
         onClose={() => setFilterOpen(false)}
         categories={allCategories}
         brands={brands}
+        montadoras={montadoras}
+        modelosVeiculo={modelosVeiculo}
         categoryFilter={categoryFilter}
         setCategoryFilter={setCategoryFilter}
         brandFilter={brandFilter}
         setBrandFilter={setBrandFilter}
+        montadoraFilter={montadoraFilter}
+        setMontadoraFilter={(id) => { setMontadoraFilter(id); setModeloFilter(null); }}
+        modeloFilter={modeloFilter}
+        setModeloFilter={setModeloFilter}
         statusFilter={statusFilter}
         setStatusFilter={setStatusFilter}
         sortMode={sortMode}
@@ -723,8 +800,19 @@ function ProductList({
   );
 }
 
-function ProductDetail({ product, role, category, brand, whatsappUrl, onQuote }: { product: Produto; role: Role; category?: Categoria; brand?: Marca; whatsappUrl: string; onQuote: () => void }) {
+function productPermission(product: Produto, key: string, fallback = true) {
+  if (product.permissoesProduto && key in product.permissoesProduto) return Boolean(product.permissoesProduto[key]);
+  return fallback;
+}
+
+function ProductDetail({ product, role, category, brand, vehicleApplications, whatsappUrl, onQuote }: { product: Produto; role: Role; category?: Categoria; brand?: Marca; vehicleApplications: ProdutoModeloVeiculoView[]; whatsappUrl: string; onQuote: () => void }) {
   const gallery = [product.imagemPrincipal, ...(product.imagensExtras ?? [])].filter(Boolean) as string[];
+  const showBrand = productPermission(product, "marca", true);
+  const showCa = productPermission(product, "ca", role !== "VISITANTE" && role !== "NAO_CLIENTE");
+  const showManual = Boolean(product.manualPdf) && productPermission(product, "manualPdf", role !== "VISITANTE" && role !== "NAO_CLIENTE");
+  const showVehicleApplications = vehicleApplications.length > 0 && productPermission(product, "aplicacoesVeiculo", true);
+  const showQuote = productPermission(product, "botaoOrcamento", role !== "VISITANTE");
+  const showWhatsApp = productPermission(product, "botaoWhatsApp", role !== "VISITANTE");
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <View style={styles.detailMedia}>
@@ -741,25 +829,36 @@ function ProductDetail({ product, role, category, brand, whatsappUrl, onQuote }:
       <Accordion title="Informações principais" open>
         <View style={styles.detailGrid}>
           <DetailItem label="Categoria" value={category?.nome || "A cadastrar"} />
-          <DetailItem label="Marca" value={brand?.nome || "A cadastrar"} />
+          {showBrand && <DetailItem label="Marca" value={brand?.nome || "A cadastrar"} />}
           <DetailItem label="NCM" value={product.ncm || "A cadastrar"} />
           <DetailItem label="EAN" value={product.ean || "A cadastrar"} />
           <DetailItem label="Caixa Master" value={product.caixaMaster || "A cadastrar"} />
-          <DetailItem label="CA" value={product.ca || "A cadastrar"} />
+          {showCa && <DetailItem label="CA" value={product.ca || "A cadastrar"} />}
         </View>
       </Accordion>
       <Accordion title="Descrição completa" open={Boolean(product.descricaoCompleta)}>
         <Text style={styles.detailText}>{product.descricaoCompleta}</Text>
       </Accordion>
-      <Accordion title="Ficha técnica" open={Boolean(product.fichaTecnica)}>
-        <Text style={styles.detailText}>{product.fichaTecnica}</Text>
+      <Accordion title="Ficha técnica" open={Boolean(product.fichaTecnica) || showVehicleApplications || showManual}>
+        {product.fichaTecnica ? <Text style={styles.detailText}>{product.fichaTecnica}</Text> : null}
+        {showVehicleApplications && <View style={styles.vehicleApplicationBox}>
+          <Text style={styles.sheetLabel}>Montadora / Modelo</Text>
+          {vehicleApplications.map((app) => (
+            <View key={app.id} style={styles.vehicleApplicationItem}>
+              <DetailItem label="Montadora" value={app.montadoraNome || "A cadastrar"} />
+              <DetailItem label="Modelo" value={app.modeloNome || "A cadastrar"} />
+              {app.observacaoComercial ? <Text style={styles.detailText}>{app.observacaoComercial}</Text> : null}
+            </View>
+          ))}
+        </View>}
+        {showManual && <Pressable style={styles.downloadButton} onPress={() => Linking.openURL(product.manualPdf || "")}><Ionicons name="download-outline" size={18} color={colors.navy} /><Text style={styles.downloadText}>download</Text></Pressable>}
       </Accordion>
       <Accordion title="Observação comercial" open={Boolean(product.observacaoComercial)}>
         <Text style={styles.detailText}>{product.observacaoComercial}</Text>
       </Accordion>
       <View style={styles.actionRow}>
-        <Pressable style={styles.yellowButton} onPress={onQuote}><Ionicons name="document-text-outline" size={20} color={colors.navy} /><Text style={styles.yellowButtonText}>Solicitar orçamento</Text></Pressable>
-        <Pressable style={styles.whatsButton} onPress={() => Linking.openURL(`${whatsappUrl}${whatsappUrl.includes("?") ? "&" : "?"}text=${encodeURIComponent(`Tenho interesse no produto ${product.codigoInterno} - ${product.nome}`)}`)}><Ionicons name="logo-whatsapp" size={24} color={colors.green} /></Pressable>
+        {showQuote && <Pressable style={styles.yellowButton} onPress={onQuote}><Ionicons name="document-text-outline" size={20} color={colors.navy} /><Text style={styles.yellowButtonText}>Solicitar orçamento</Text></Pressable>}
+        {showWhatsApp && <Pressable style={styles.whatsButton} onPress={() => Linking.openURL(`${whatsappUrl}${whatsappUrl.includes("?") ? "&" : "?"}text=${encodeURIComponent(`Tenho interesse no produto ${product.codigoInterno} - ${product.nome}`)}`)}><Ionicons name="logo-whatsapp" size={24} color={colors.green} /></Pressable>}
       </View>
     </ScrollView>
   );
@@ -770,10 +869,16 @@ function FilterSheet({
   onClose,
   categories,
   brands,
+  montadoras,
+  modelosVeiculo,
   categoryFilter,
   setCategoryFilter,
   brandFilter,
   setBrandFilter,
+  montadoraFilter,
+  setMontadoraFilter,
+  modeloFilter,
+  setModeloFilter,
   statusFilter,
   setStatusFilter,
   sortMode,
@@ -783,10 +888,16 @@ function FilterSheet({
   onClose: () => void;
   categories: Categoria[];
   brands: Marca[];
+  montadoras: Montadora[];
+  modelosVeiculo: ModeloVeiculo[];
   categoryFilter: string | null;
   setCategoryFilter: (id: string | null) => void;
   brandFilter: string | null;
   setBrandFilter: (id: string | null) => void;
+  montadoraFilter: string | null;
+  setMontadoraFilter: (id: string | null) => void;
+  modeloFilter: string | null;
+  setModeloFilter: (id: string | null) => void;
   statusFilter: "all" | "active" | "inactive" | "featured" | "missingPhoto";
   setStatusFilter: (mode: "all" | "active" | "inactive" | "featured" | "missingPhoto") => void;
   sortMode: "order" | "name" | "newest";
@@ -800,6 +911,7 @@ function FilterSheet({
     ["missingPhoto", "Sem foto"]
   ];
   const sorts: Array<["order" | "name" | "newest", string]> = [["order", "Ordem"], ["name", "Nome"], ["newest", "Mais novos"]];
+  const filteredModels = montadoraFilter ? modelosVeiculo.filter((item) => item.montadoraId === montadoraFilter) : modelosVeiculo;
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.sheetOverlay} onPress={onClose} />
@@ -814,6 +926,16 @@ function FilterSheet({
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetOptions}>
           <OptionPill label="Todas" selected={!brandFilter} onPress={() => setBrandFilter(null)} />
           {brands.map((item) => <OptionPill key={item.id} label={item.nome} selected={brandFilter === item.id} onPress={() => setBrandFilter(item.id)} />)}
+        </ScrollView>
+        <Text style={styles.sheetLabel}>Filtrar por Montadora</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetOptions}>
+          <OptionPill label="Todas" selected={!montadoraFilter} onPress={() => { setMontadoraFilter(null); setModeloFilter(null); }} />
+          {montadoras.map((item) => <OptionPill key={item.id} label={item.nome} selected={montadoraFilter === item.id} onPress={() => setMontadoraFilter(item.id)} />)}
+        </ScrollView>
+        <Text style={styles.sheetLabel}>Modelo</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetOptions}>
+          <OptionPill label="Todos" selected={!modeloFilter} onPress={() => setModeloFilter(null)} />
+          {filteredModels.map((item) => <OptionPill key={item.id} label={item.nome} selected={modeloFilter === item.id} onPress={() => setModeloFilter(item.id)} />)}
         </ScrollView>
         <Text style={styles.sheetLabel}>Status</Text>
         <View style={styles.wrapOptions}>{statuses.map(([value, label]) => <OptionPill key={value} label={label} selected={statusFilter === value} onPress={() => setStatusFilter(value)} />)}</View>
@@ -1637,6 +1759,10 @@ const styles = StyleSheet.create({
   detailItem: { width: "50%", borderTopWidth: 1, borderColor: colors.line, paddingVertical: 12 },
   detailSub: { color: colors.muted, fontSize: 13, marginTop: 10 },
   detailText: { color: colors.navy, fontSize: 14, lineHeight: 21, marginTop: 8 },
+  vehicleApplicationBox: { marginTop: 14, gap: 10 },
+  vehicleApplicationItem: { borderTopWidth: 1, borderColor: colors.line, paddingTop: 10 },
+  downloadButton: { alignSelf: "flex-start", minHeight: 44, borderRadius: 12, backgroundColor: colors.yellow, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, marginTop: 14 },
+  downloadText: { color: colors.navy, fontWeight: "900", fontSize: 15 },
   actionRow: { flexDirection: "row", gap: 10, marginTop: 8 },
   yellowButton: { minHeight: 58, borderRadius: 13, backgroundColor: colors.yellow, flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
   yellowButtonText: { color: colors.navy, fontWeight: "900", fontSize: 17 },

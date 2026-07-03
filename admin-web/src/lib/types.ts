@@ -29,11 +29,17 @@ export type Produto = {
   ordem?: number | null;
   createdAt?: string | null;
   updatedAt?: string | null;
+  aplicacoesVeiculo?: ProdutoModeloVeiculoView[] | null;
+  permissoesProduto?: Record<string, boolean> | null;
 };
 
 export type Categoria = { id: string; nome: string; slug?: string | null; descricao?: string | null; imagem?: string | null; ordem?: number | null; ativo?: boolean | null };
 export type Marca = { id: string; nome: string; slug?: string | null; logo?: string | null; ativo?: boolean | null };
 export type Aplicacao = { id: string; nome: string; slug?: string | null; tipo?: string | null; ativo?: boolean | null };
+export type Montadora = { id: string; nome: string; slug?: string | null; ativo?: boolean | null; createdAt?: string | null; updatedAt?: string | null };
+export type ModeloVeiculo = { id: string; nome: string; slug?: string | null; montadoraId: string; ativo?: boolean | null; createdAt?: string | null; updatedAt?: string | null };
+export type ProdutoModeloVeiculo = { id: string; produtoId: string; montadoraId: string; modeloId: string; observacaoComercial?: string | null; createdAt?: string | null; updatedAt?: string | null };
+export type ProdutoModeloVeiculoView = ProdutoModeloVeiculo & { montadoraNome?: string | null; montadoraSlug?: string | null; modeloNome?: string | null; modeloSlug?: string | null };
 export type Usuario = { id: string; name: string; company?: string | null; email: string; role: Role; status: "PENDING" | "ACTIVE" | "INACTIVE"; notes?: string | null; phone?: string | null; cnpj?: string | null; address?: string | null; city?: string | null; state?: string | null; registrationNotes?: string | null; approvedAt?: string | null; approvedBy?: string | null; lastLoginAt?: string | null; createdAt?: string | null; updatedAt?: string | null; authUserId?: string | null };
 export type Lead = { id: string; nome: string; empresa?: string | null; telefone?: string | null; email?: string | null; cidade?: string | null; estado?: string | null; produtoId?: string | null; mensagem?: string | null; origem?: string | null; status?: string | null; createdAt?: string | null };
 export type Permission = { id: string; fieldKey: string; fieldLabel: string; visibleToVisitor: boolean; visibleToNonClient: boolean; visibleToClient: boolean; visibleToRepresentative: boolean; visibleToAdmin: boolean };
@@ -56,6 +62,9 @@ export type AppData = {
   categorias: Categoria[];
   marcas: Marca[];
   aplicacoes: Aplicacao[];
+  montadoras: Montadora[];
+  modelosVeiculo: ModeloVeiculo[];
+  produtoModelosVeiculo: ProdutoModeloVeiculo[];
   usuarios: Usuario[];
   leads: Lead[];
   permissoes: Permission[];
