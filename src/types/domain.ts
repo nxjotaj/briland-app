@@ -2,6 +2,7 @@ export type Route =
   | "initial"
   | "home"
   | "categories"
+  | "vehicleBrands"
   | "products"
   | "promotions"
   | "launches"

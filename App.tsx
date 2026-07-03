@@ -387,8 +387,9 @@ export default function App() {
             <>
               <Header back={route !== "home"} onBack={() => go("home")} onMenu={() => setMenuOpen(true)} whatsappUrl={socialLinks.whatsapp} />
               {error && <ErrorBanner message={error} onRetry={reload} />}
-              {route === "home" && <HomeScreen go={go} products={activeProducts} categories={data.categorias} media={mediaSettings} />}
+              {route === "home" && <HomeScreen go={go} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} />}
               {route === "categories" && <CategoriesScreen categories={data.categorias} onPick={(id) => { setCategoryFilter(id); go("products"); }} />}
+              {route === "vehicleBrands" && <VehicleBrandsScreen montadoras={data.montadoras} applications={data.produtoModelosVeiculo} onPick={(id) => { setQuery(""); setCategoryFilter(null); setBrandFilter(null); setMontadoraFilter(id); setModeloFilter(null); setStatusFilter("all"); setSortMode("order"); go("products"); }} />}
               {route === "products" && (
                 <ProductList
                   title="Produtos"
@@ -620,9 +621,10 @@ function SlideToEnter({ onComplete }: { onComplete: () => void }) {
     </View>
   );
 }
-function HomeScreen({ go, products, categories, media }: { go: (route: Route) => void; products: Produto[]; categories: Categoria[]; media: MediaSettings }) {
+function HomeScreen({ go, products, categories, montadoras, media }: { go: (route: Route) => void; products: Produto[]; categories: Categoria[]; montadoras: Montadora[]; media: MediaSettings }) {
   const items: [Route, string, string, IconName][] = [
     ["categories", "Categorias", `${categories.length} categorias ativas`, "grid-outline"],
+    ["vehicleBrands", "Filtrar por montadora", `${montadoras.length} montadoras disponíveis`, "car-sport-outline"],
     ["products", "Produtos", `${products.length} produtos no catálogo`, "cube-outline"],
     ["launches", "Lançamentos", "Lançamentos Briland", "star-outline"],
     ["promotions", "Promoções", "Produtos em destaque", "pricetag-outline"],
@@ -664,6 +666,41 @@ function CategoriesScreen({ categories, onPick }: { categories: Categoria[]; onP
               </View>
             </Pressable>
           ))}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+function VehicleBrandsScreen({ montadoras, applications, onPick }: { montadoras: Montadora[]; applications: ProdutoModeloVeiculoView[]; onPick: (id: string) => void }) {
+  const productCountByBrand = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const item of applications) {
+      if (!item.montadoraId || !item.produtoId) continue;
+      const products = map.get(item.montadoraId) || new Set<string>();
+      products.add(item.produtoId);
+      map.set(item.montadoraId, products);
+    }
+    return map;
+  }, [applications]);
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
+      <PageTitle title="Filtrar por montadora" subtitle="Selecione uma montadora para ver todos os produtos vinculados." />
+      {montadoras.length === 0 ? <EmptyState text="Nenhuma montadora disponível." /> : (
+        <View style={styles.grid}>
+          {montadoras.map((item) => {
+            const count = productCountByBrand.get(item.id)?.size ?? 0;
+            return (
+              <Pressable style={styles.vehicleBrandCard} key={item.id} onPress={() => onPick(item.id)}>
+                <View style={styles.vehicleBrandIcon}>
+                  <Ionicons name="car-sport-outline" size={34} color={colors.navy} />
+                </View>
+                <Text style={styles.vehicleBrandName} numberOfLines={2}>{item.nome}</Text>
+                <Text style={styles.mutedSmall}>{count} produtos vinculados</Text>
+                <Ionicons name="arrow-forward" size={24} color={colors.yellow} style={styles.vehicleBrandArrow} />
+              </Pressable>
+            );
+          })}
         </View>
       )}
     </ScrollView>
@@ -739,6 +776,7 @@ function ProductList({
   const activeBrand = brandFilter ? brands.find((item) => item.id === brandFilter)?.nome : "Todas marcas";
   const activeMontadora = montadoraFilter ? montadoras.find((item) => item.id === montadoraFilter)?.nome : "Todas montadoras";
   const activeModelo = modeloFilter ? modelosVeiculo.find((item) => item.id === modeloFilter)?.nome : "Todos modelos";
+  const availableModels = montadoraFilter ? modelosVeiculo.filter((item) => item.montadoraId === montadoraFilter) : [];
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <PageTitle title={title} subtitle={subtitle} badge={launch ? "NOVO" : undefined} />
@@ -753,6 +791,15 @@ function ProductList({
         {montadoraFilter && <Chip text={activeModelo ?? "Modelos"} onPress={() => setFilterOpen(true)} />}
         <Chip text="Limpar" onPress={() => { setQuery(""); setCategoryFilter(null); setBrandFilter(null); setMontadoraFilter(null); setModeloFilter(null); setStatusFilter("all"); setSortMode("order"); }} />
       </View>
+      {montadoraFilter && availableModels.length > 0 && (
+        <View style={styles.modelFilterPanel}>
+          <Text style={styles.sheetLabel}>Modelo do veículo</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetOptions}>
+            <OptionPill label="Todos" selected={!modeloFilter} onPress={() => setModeloFilter(null)} />
+            {availableModels.map((item) => <OptionPill key={item.id} label={item.nome} selected={modeloFilter === item.id} onPress={() => setModeloFilter(item.id)} />)}
+          </ScrollView>
+        </View>
+      )}
       <View style={styles.resultRow}><Text style={styles.muted}>{products.length} produtos encontrados</Text><Segmented value={listMode} setValue={setListMode} /></View>
       {products.length === 0 ? <EmptyState text="Nenhum produto encontrado com os filtros atuais." /> : (
         <View style={listMode === "grid" ? styles.grid : styles.list}>
@@ -1555,7 +1602,7 @@ function AdminTextInput({ label, value, onChangeText, keyboard, multiline }: { l
 }
 
 function SideMenu({ visible, onClose, go, role, user, setRole, setCurrentUser }: { visible: boolean; onClose: () => void; go: (route: Route) => void; role: Role; user: Usuario | null; setRole: (role: Role) => void; setCurrentUser: (user: Usuario | null) => void }) {
-  const items: [Route, string, IconName][] = [["home", "Início", "home-outline"], ["categories", "Categorias", "grid-outline"], ["products", "Produtos", "bag-outline"], ["launches", "Lançamentos", "star-outline"], ["promotions", "Promoções", "pricetag-outline"], ["contact", "Contatos", "headset-outline"], ["about", "Sobre a Briland", "business-outline"]];
+  const items: [Route, string, IconName][] = [["home", "Início", "home-outline"], ["categories", "Categorias", "grid-outline"], ["vehicleBrands", "Montadoras", "car-sport-outline"], ["products", "Produtos", "bag-outline"], ["launches", "Lançamentos", "star-outline"], ["promotions", "Promoções", "pricetag-outline"], ["contact", "Contatos", "headset-outline"], ["about", "Sobre a Briland", "business-outline"]];
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.menuOverlay} onPress={onClose}><BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} /></Pressable>
@@ -1713,6 +1760,10 @@ const styles = StyleSheet.create({
   categoryImage: { width: "100%", height: "100%" },
   categoryFooter: { position: "absolute", left: 0, right: 0, bottom: 0, minHeight: 50, backgroundColor: colors.white, paddingHorizontal: 14, flexDirection: "row", alignItems: "center" },
   categoryName: { fontSize: 17, color: colors.navy, fontWeight: "900" },
+  vehicleBrandCard: { width: "47.4%", minHeight: 158, borderRadius: 14, backgroundColor: colors.white, padding: 15, overflow: "hidden", ...shadow },
+  vehicleBrandIcon: { width: 56, height: 56, borderRadius: 16, backgroundColor: colors.soft, alignItems: "center", justifyContent: "center", marginBottom: 14 },
+  vehicleBrandName: { color: colors.navy, fontSize: 21, lineHeight: 25, fontWeight: "900", marginBottom: 6 },
+  vehicleBrandArrow: { position: "absolute", right: 14, bottom: 14 },
   searchRow: { flexDirection: "row", gap: 12 },
   searchBox: { flex: 1, height: 58, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 15, flexDirection: "row", alignItems: "center", gap: 10, ...shadow },
   searchInput: { flex: 1, fontSize: 15, color: colors.navy },
@@ -1721,6 +1772,7 @@ const styles = StyleSheet.create({
   chips: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginVertical: 14 },
   chip: { borderRadius: 14, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 14, paddingVertical: 11, flexDirection: "row", alignItems: "center", gap: 8, ...shadow },
   chipText: { color: colors.navy, fontWeight: "600" },
+  modelFilterPanel: { borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, padding: 14, marginBottom: 14, ...shadow },
   resultRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
   segment: { flexDirection: "row", borderRadius: 22, backgroundColor: colors.white, padding: 4, ...shadow },
   segmentActive: { width: 42, height: 36, borderRadius: 18, backgroundColor: colors.navy, alignItems: "center", justifyContent: "center" },
