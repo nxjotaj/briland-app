@@ -58,7 +58,7 @@ const isMasterRole = (value: Role) => value === "ADMIN_MASTER" || value === "ADM
 
 export default function App() {
   const [route, setRoute] = useState<Route>("initial");
-  const [productOrigin, setProductOrigin] = useState<Route>("home");
+  const [routeHistory, setRouteHistory] = useState<Route[]>([]);
   const [role, setRole] = useState<Role>("VISITANTE");
   const [currentUser, setCurrentUser] = useState<Usuario | null>(null);
   const [authToken, setAuthToken] = useState<string | undefined>();
@@ -258,7 +258,7 @@ export default function App() {
     });
   }, [activeProducts, query, categoryFilter, brandFilter, montadoraFilter, modeloFilter, statusFilter, sortMode, categoryById, brandById, vehicleApplicationsByProduct]);
 
-  const go = (next: Route) => {
+  const transitionTo = (next: Route) => {
     if (next === route) {
       setMenuOpen(false);
       return;
@@ -271,20 +271,38 @@ export default function App() {
     }, 320);
   };
 
+  const go = (next: Route, options?: { replace?: boolean; resetHistory?: boolean }) => {
+    if (next === route) {
+      setMenuOpen(false);
+      return;
+    }
+    setRouteHistory((history) => {
+      if (options?.resetHistory) return [];
+      if (options?.replace) return history;
+      return [...history, route];
+    });
+    transitionTo(next);
+  };
+
+  const clearCatalogFilters = () => {
+    setQuery("");
+    setCategoryFilter(null);
+    setBrandFilter(null);
+    setMontadoraFilter(null);
+    setModeloFilter(null);
+    setStatusFilter("all");
+    setSortMode("order");
+  };
+
+  const openDirectCatalogRoute = (target: Route) => {
+    if (target === "products" || target === "promotions" || target === "launches") clearCatalogFilters();
+    go(target);
+  };
+
   const goBack = () => {
-    if (route === "detail") {
-      go("products");
-      return;
-    }
-    if (route === "products" && productOrigin === "vehicleBrands") {
-      go("vehicleBrands");
-      return;
-    }
-    if (route === "products" && productOrigin === "categories") {
-      go("categories");
-      return;
-    }
-    go("home");
+    const previous = routeHistory[routeHistory.length - 1] || "home";
+    setRouteHistory((history) => history.slice(0, -1));
+    transitionTo(previous);
   };
 
   const openProduct = (product: Produto) => {
@@ -404,9 +422,9 @@ export default function App() {
             <>
               <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} whatsappUrl={socialLinks.whatsapp} />
               {error && <ErrorBanner message={error} onRetry={reload} />}
-              {route === "home" && <HomeScreen go={(target) => { if (target === "products") { setProductOrigin("home"); setQuery(""); setCategoryFilter(null); setBrandFilter(null); setMontadoraFilter(null); setModeloFilter(null); setStatusFilter("all"); setSortMode("order"); } go(target); }} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} />}
-              {route === "categories" && <CategoriesScreen categories={data.categorias} onPick={(id) => { setProductOrigin("categories"); setCategoryFilter(id); go("products"); }} />}
-              {route === "vehicleBrands" && <VehicleBrandsScreen montadoras={data.montadoras} applications={data.produtoModelosVeiculo} onPick={(id) => { setProductOrigin("vehicleBrands"); setQuery(""); setCategoryFilter(null); setBrandFilter(null); setMontadoraFilter(id); setModeloFilter(null); setStatusFilter("all"); setSortMode("order"); go("products"); }} />}
+              {route === "home" && <HomeScreen go={openDirectCatalogRoute} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} />}
+              {route === "categories" && <CategoriesScreen categories={data.categorias} onPick={(id) => { clearCatalogFilters(); setCategoryFilter(id); go("products"); }} />}
+              {route === "vehicleBrands" && <VehicleBrandsScreen montadoras={data.montadoras} applications={data.produtoModelosVeiculo} onPick={(id) => { clearCatalogFilters(); setMontadoraFilter(id); go("products"); }} />}
               {route === "products" && (
                 <ProductList
                   title="Produtos"
@@ -517,7 +535,7 @@ export default function App() {
           )}
         </SafeAreaView>
       )}
-      <SideMenu visible={menuOpen} role={role} user={currentUser} onClose={() => setMenuOpen(false)} go={(target) => { if (target === "products") { setProductOrigin("home"); setQuery(""); setCategoryFilter(null); setBrandFilter(null); setMontadoraFilter(null); setModeloFilter(null); setStatusFilter("all"); setSortMode("order"); } go(target); }} setRole={setRole} setCurrentUser={(user) => { setCurrentUser(user); if (!user) setAuthToken(undefined); }} />
+      <SideMenu visible={menuOpen} role={role} user={currentUser} onClose={() => setMenuOpen(false)} go={openDirectCatalogRoute} setRole={setRole} setCurrentUser={(user) => { setCurrentUser(user); if (!user) setAuthToken(undefined); }} />
     </View>
   );
 }
@@ -710,7 +728,7 @@ function VehicleBrandsScreen({ montadoras, applications, onPick }: { montadoras:
             return (
               <Pressable style={styles.vehicleBrandCard} key={item.id} onPress={() => onPick(item.id)}>
                 <View style={styles.vehicleBrandIcon}>
-                  {item.imagem ? <Image source={{ uri: optimizedImageUrl(item.imagem, imageSize.thumb) }} style={styles.vehicleBrandImage} resizeMode="contain" /> : <Ionicons name="car-sport-outline" size={34} color={colors.navy} />}
+                  {item.imagem ? <Image source={{ uri: item.imagem }} style={styles.vehicleBrandImage} resizeMode="contain" /> : <Ionicons name="car-sport-outline" size={34} color={colors.navy} />}
                 </View>
                 <Text style={styles.vehicleBrandName} numberOfLines={2}>{item.nome}</Text>
                 <Text style={styles.mutedSmall}>{count} produtos vinculados</Text>
@@ -1777,10 +1795,10 @@ const styles = StyleSheet.create({
   categoryImage: { width: "100%", height: "100%" },
   categoryFooter: { position: "absolute", left: 0, right: 0, bottom: 0, minHeight: 50, backgroundColor: colors.white, paddingHorizontal: 14, flexDirection: "row", alignItems: "center" },
   categoryName: { fontSize: 17, color: colors.navy, fontWeight: "900" },
-  vehicleBrandCard: { width: "47.4%", minHeight: 158, borderRadius: 14, backgroundColor: colors.white, padding: 15, overflow: "hidden", ...shadow },
+  vehicleBrandCard: { width: "47.4%", minHeight: 168, borderRadius: 14, backgroundColor: colors.white, padding: 15, paddingRight: 42, overflow: "hidden", ...shadow },
   vehicleBrandIcon: { width: 56, height: 56, borderRadius: 16, backgroundColor: colors.soft, alignItems: "center", justifyContent: "center", marginBottom: 14 },
   vehicleBrandImage: { width: 44, height: 44 },
-  vehicleBrandName: { color: colors.navy, fontSize: 21, lineHeight: 25, fontWeight: "900", marginBottom: 6 },
+  vehicleBrandName: { color: colors.navy, fontSize: 19, lineHeight: 23, fontWeight: "900", marginBottom: 6 },
   vehicleBrandArrow: { position: "absolute", right: 14, bottom: 14 },
   searchRow: { flexDirection: "row", gap: 12 },
   searchBox: { flex: 1, height: 58, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 15, flexDirection: "row", alignItems: "center", gap: 10, ...shadow },
