@@ -824,11 +824,11 @@ function VehicleSection({ data, query, reload, notify, canDelete }: { data: AppD
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap gap-3">
-        <button onClick={() => setEditingBrand({ id: createId("mont"), nome: "Nova montadora", slug: "nova-montadora", ativo: true })} className="btn-yellow"><Plus size={17} /> Criar montadora</button>
+        <button onClick={() => setEditingBrand({ id: createId("mont"), nome: "Nova montadora", slug: "nova-montadora", imagem: "", ativo: true })} className="btn-yellow"><Plus size={17} /> Criar montadora</button>
         <button onClick={() => setEditingModel({ id: createId("modelo"), nome: "Novo modelo", slug: "novo-modelo", montadoraId: data.montadoras[0]?.id || "", ativo: true })} className="btn-white"><Plus size={17} /> Criar modelo</button>
       </div>
       <Panel title={`${brands.length} montadoras`}>
-        <Table><thead><tr><Th>Nome</Th><Th>Slug</Th><Th>Status</Th><Th>Modelos</Th><Th /></tr></thead><tbody>{brands.map((brand) => <tr key={brand.id}><Td>{brand.nome}</Td><Td>{brand.slug}</Td><Td><Toggle checked={brand.ativo !== false} onChange={(checked) => updateRow("Montadora", brand.id, { ativo: checked, updatedAt: new Date().toISOString() }, reload, notify)} /></Td><Td>{data.modelosVeiculo.filter((item) => item.montadoraId === brand.id).length}</Td><Td><button className="icon-btn" onClick={() => setEditingBrand(brand)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table>
+        <Table><thead><tr><Th>Imagem</Th><Th>Nome</Th><Th>Slug</Th><Th>Status</Th><Th>Modelos</Th><Th /></tr></thead><tbody>{brands.map((brand) => <tr key={brand.id}><Td>{brand.imagem ? <img src={brand.imagem} alt="" className="h-12 w-12 rounded-xl object-contain" /> : <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-soft"><ImageIcon size={18} /></div>}</Td><Td>{brand.nome}</Td><Td>{brand.slug}</Td><Td><Toggle checked={brand.ativo !== false} onChange={(checked) => updateRow("Montadora", brand.id, { ativo: checked, updatedAt: new Date().toISOString() }, reload, notify)} /></Td><Td>{data.modelosVeiculo.filter((item) => item.montadoraId === brand.id).length}</Td><Td><button className="icon-btn" onClick={() => setEditingBrand(brand)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table>
       </Panel>
       <Panel title={`${models.length} modelos`}>
         <Table><thead><tr><Th>Modelo</Th><Th>Montadora</Th><Th>Slug</Th><Th>Status</Th><Th /></tr></thead><tbody>{models.map((model) => <tr key={model.id}><Td>{model.nome}</Td><Td>{data.montadoras.find((brand) => brand.id === model.montadoraId)?.nome || "-"}</Td><Td>{model.slug}</Td><Td><Toggle checked={model.ativo !== false} onChange={(checked) => updateRow("ModeloVeiculo", model.id, { ativo: checked, updatedAt: new Date().toISOString() }, reload, notify)} /></Td><Td><button className="icon-btn" onClick={() => setEditingModel(model)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table>
@@ -841,15 +841,30 @@ function VehicleSection({ data, query, reload, notify, canDelete }: { data: AppD
 
 function VehicleBrandModal({ item, reload, notify, canDelete, onClose }: { item: Montadora; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean; onClose: () => void }) {
   const [draft, setDraft] = useState(item);
+  const [uploading, setUploading] = useState(false);
   const isNew = !item.createdAt;
   const save = async () => {
-    const payload = { nome: draft.nome, slug: draft.slug || slugify(draft.nome), ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
+    const payload = { nome: draft.nome, slug: slugify(draft.nome), imagem: draft.imagem || null, ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
     const { error } = isNew ? await supabase.from("Montadora").insert({ id: draft.id, ...payload }) : await supabase.from("Montadora").update(payload).eq("id", item.id);
     if (error) notify(error.message);
     else {
       notify("Montadora salva.");
       await reload();
       onClose();
+    }
+  };
+  const uploadImage = async (file?: File) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const optimizedFile = await compressIconImage(file);
+      const url = await uploadCatalogMedia(optimizedFile, "montadoras");
+      setDraft({ ...draft, imagem: url });
+      notify("Imagem enviada.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Falha ao enviar imagem.");
+    } finally {
+      setUploading(false);
     }
   };
   const remove = async () => {
@@ -862,14 +877,37 @@ function VehicleBrandModal({ item, reload, notify, canDelete, onClose }: { item:
       onClose();
     }
   };
-  return <Modal title="Montadora" onClose={onClose}><div className="grid gap-4 lg:grid-cols-2"><Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value })} /></Field><Field label="Slug"><input className="input" value={draft.slug || ""} onChange={(e) => setDraft({ ...draft, slug: e.target.value })} /></Field></div><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativa</label><ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} /></Modal>;
+  return (
+    <Modal title="Montadora" onClose={onClose}>
+      <div className="grid gap-4 lg:grid-cols-[1fr_220px]">
+        <div className="space-y-4">
+          <Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value, slug: slugify(e.target.value) })} /></Field>
+          <Field label="Slug automático"><input className="input bg-soft text-muted" value={slugify(draft.nome)} readOnly /></Field>
+          <label className="inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativa</label>
+        </div>
+        <div className="rounded-2xl border border-line bg-soft p-4">
+          <div className="mb-3 text-sm font-black text-navy">Imagem do card</div>
+          <div className="mb-3 flex h-28 items-center justify-center rounded-xl bg-white">
+            {draft.imagem ? <img src={draft.imagem} alt="" className="max-h-24 max-w-24 object-contain" /> : <ImageIcon className="text-muted" size={32} />}
+          </div>
+          <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-navy px-3 py-2 text-sm font-black text-white">
+            {uploading ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />}
+            Enviar imagem
+            <input type="file" accept="image/*" className="hidden" onChange={(event) => void uploadImage(event.target.files?.[0])} />
+          </label>
+          <p className="mt-2 text-xs text-muted">Recomendado: PNG/WebP quadrado, 256 x 256 px. O app carrega como ícone leve.</p>
+        </div>
+      </div>
+      <ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} />
+    </Modal>
+  );
 }
 
 function VehicleModelModal({ item, brands, reload, notify, canDelete, onClose }: { item: ModeloVeiculo; brands: Montadora[]; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean; onClose: () => void }) {
   const [draft, setDraft] = useState(item);
   const isNew = !item.createdAt;
   const save = async () => {
-    const payload = { nome: draft.nome, slug: draft.slug || slugify(draft.nome), montadoraId: draft.montadoraId || brands[0]?.id || "", ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
+    const payload = { nome: draft.nome, slug: slugify(draft.nome), montadoraId: draft.montadoraId || brands[0]?.id || "", ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
     const { error } = isNew ? await supabase.from("ModeloVeiculo").insert({ id: draft.id, ...payload }) : await supabase.from("ModeloVeiculo").update(payload).eq("id", item.id);
     if (error) notify(error.message);
     else {
@@ -888,7 +926,7 @@ function VehicleModelModal({ item, brands, reload, notify, canDelete, onClose }:
       onClose();
     }
   };
-  return <Modal title="Modelo de veículo" onClose={onClose}><div className="grid gap-4 lg:grid-cols-3"><Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value })} /></Field><Field label="Slug"><input className="input" value={draft.slug || ""} onChange={(e) => setDraft({ ...draft, slug: e.target.value })} /></Field><Field label="Montadora"><select className="input" value={draft.montadoraId} onChange={(e) => setDraft({ ...draft, montadoraId: e.target.value })}>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.nome}</option>)}</select></Field></div><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativo</label><ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} /></Modal>;
+  return <Modal title="Modelo de veículo" onClose={onClose}><div className="grid gap-4 lg:grid-cols-3"><Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value, slug: slugify(e.target.value) })} /></Field><Field label="Slug automático"><input className="input bg-soft text-muted" value={slugify(draft.nome)} readOnly /></Field><Field label="Montadora"><select className="input" value={draft.montadoraId} onChange={(e) => setDraft({ ...draft, montadoraId: e.target.value })}>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.nome}</option>)}</select></Field></div><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativo</label><ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} /></Modal>;
 }
 
 function Applications({ items, query, reload, notify, canDelete }: { items: Aplicacao[]; query: string; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean }) {
@@ -1118,6 +1156,23 @@ async function updateRow(table: string, id: string, payload: Record<string, unkn
     notify("Registro atualizado.");
     await reload();
   }
+}
+
+async function compressIconImage(file: File, maxSize = 256, quality = 0.78) {
+  const bitmap = await createImageBitmap(file);
+  const ratio = Math.min(maxSize / bitmap.width, maxSize / bitmap.height, 1);
+  const width = Math.max(1, Math.round(bitmap.width * ratio));
+  const height = Math.max(1, Math.round(bitmap.height * ratio));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) return file;
+  context.drawImage(bitmap, 0, 0, width, height);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", quality));
+  if (!blob) return file;
+  const name = file.name.replace(/\.[^.]+$/, "") || "montadora";
+  return new File([blob], `${name}.webp`, { type: "image/webp" });
 }
 
 function newProduct(data: AppData): Produto {

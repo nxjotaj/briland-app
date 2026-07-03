@@ -58,6 +58,7 @@ const isMasterRole = (value: Role) => value === "ADMIN_MASTER" || value === "ADM
 
 export default function App() {
   const [route, setRoute] = useState<Route>("initial");
+  const [productOrigin, setProductOrigin] = useState<Route>("home");
   const [role, setRole] = useState<Role>("VISITANTE");
   const [currentUser, setCurrentUser] = useState<Usuario | null>(null);
   const [authToken, setAuthToken] = useState<string | undefined>();
@@ -270,6 +271,22 @@ export default function App() {
     }, 320);
   };
 
+  const goBack = () => {
+    if (route === "detail") {
+      go("products");
+      return;
+    }
+    if (route === "products" && productOrigin === "vehicleBrands") {
+      go("vehicleBrands");
+      return;
+    }
+    if (route === "products" && productOrigin === "categories") {
+      go("categories");
+      return;
+    }
+    go("home");
+  };
+
   const openProduct = (product: Produto) => {
     setSelectedProduct(product);
     go("detail");
@@ -385,11 +402,11 @@ export default function App() {
             <AdminScreen role={role} data={data} active={adminTab} setActive={setAdminTab} onBack={() => go("home")} onLogout={logout} reload={() => reload(role, authToken)} authToken={authToken} socialLinks={socialLinks} setSocialLinks={(links) => void saveAdminConfig(links, mediaSettings, aboutSettings)} mediaSettings={mediaSettings} setMediaSettings={(settings) => void saveAdminConfig(socialLinks, settings, aboutSettings)} aboutSettings={aboutSettings} setAboutSettings={(settings) => void saveAdminConfig(socialLinks, mediaSettings, settings)} onAction={(text) => notify("Painel admin", text)} />
           ) : (
             <>
-              <Header back={route !== "home"} onBack={() => go("home")} onMenu={() => setMenuOpen(true)} whatsappUrl={socialLinks.whatsapp} />
+              <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} whatsappUrl={socialLinks.whatsapp} />
               {error && <ErrorBanner message={error} onRetry={reload} />}
-              {route === "home" && <HomeScreen go={go} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} />}
-              {route === "categories" && <CategoriesScreen categories={data.categorias} onPick={(id) => { setCategoryFilter(id); go("products"); }} />}
-              {route === "vehicleBrands" && <VehicleBrandsScreen montadoras={data.montadoras} applications={data.produtoModelosVeiculo} onPick={(id) => { setQuery(""); setCategoryFilter(null); setBrandFilter(null); setMontadoraFilter(id); setModeloFilter(null); setStatusFilter("all"); setSortMode("order"); go("products"); }} />}
+              {route === "home" && <HomeScreen go={(target) => { if (target === "products") { setProductOrigin("home"); setQuery(""); setCategoryFilter(null); setBrandFilter(null); setMontadoraFilter(null); setModeloFilter(null); setStatusFilter("all"); setSortMode("order"); } go(target); }} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} />}
+              {route === "categories" && <CategoriesScreen categories={data.categorias} onPick={(id) => { setProductOrigin("categories"); setCategoryFilter(id); go("products"); }} />}
+              {route === "vehicleBrands" && <VehicleBrandsScreen montadoras={data.montadoras} applications={data.produtoModelosVeiculo} onPick={(id) => { setProductOrigin("vehicleBrands"); setQuery(""); setCategoryFilter(null); setBrandFilter(null); setMontadoraFilter(id); setModeloFilter(null); setStatusFilter("all"); setSortMode("order"); go("products"); }} />}
               {route === "products" && (
                 <ProductList
                   title="Produtos"
@@ -500,7 +517,7 @@ export default function App() {
           )}
         </SafeAreaView>
       )}
-      <SideMenu visible={menuOpen} role={role} user={currentUser} onClose={() => setMenuOpen(false)} go={go} setRole={setRole} setCurrentUser={(user) => { setCurrentUser(user); if (!user) setAuthToken(undefined); }} />
+      <SideMenu visible={menuOpen} role={role} user={currentUser} onClose={() => setMenuOpen(false)} go={(target) => { if (target === "products") { setProductOrigin("home"); setQuery(""); setCategoryFilter(null); setBrandFilter(null); setMontadoraFilter(null); setModeloFilter(null); setStatusFilter("all"); setSortMode("order"); } go(target); }} setRole={setRole} setCurrentUser={(user) => { setCurrentUser(user); if (!user) setAuthToken(undefined); }} />
     </View>
   );
 }
@@ -693,7 +710,7 @@ function VehicleBrandsScreen({ montadoras, applications, onPick }: { montadoras:
             return (
               <Pressable style={styles.vehicleBrandCard} key={item.id} onPress={() => onPick(item.id)}>
                 <View style={styles.vehicleBrandIcon}>
-                  <Ionicons name="car-sport-outline" size={34} color={colors.navy} />
+                  {item.imagem ? <Image source={{ uri: optimizedImageUrl(item.imagem, imageSize.thumb) }} style={styles.vehicleBrandImage} resizeMode="contain" /> : <Ionicons name="car-sport-outline" size={34} color={colors.navy} />}
                 </View>
                 <Text style={styles.vehicleBrandName} numberOfLines={2}>{item.nome}</Text>
                 <Text style={styles.mutedSmall}>{count} produtos vinculados</Text>
@@ -1762,6 +1779,7 @@ const styles = StyleSheet.create({
   categoryName: { fontSize: 17, color: colors.navy, fontWeight: "900" },
   vehicleBrandCard: { width: "47.4%", minHeight: 158, borderRadius: 14, backgroundColor: colors.white, padding: 15, overflow: "hidden", ...shadow },
   vehicleBrandIcon: { width: 56, height: 56, borderRadius: 16, backgroundColor: colors.soft, alignItems: "center", justifyContent: "center", marginBottom: 14 },
+  vehicleBrandImage: { width: 44, height: 44 },
   vehicleBrandName: { color: colors.navy, fontSize: 21, lineHeight: 25, fontWeight: "900", marginBottom: 6 },
   vehicleBrandArrow: { position: "absolute", right: 14, bottom: 14 },
   searchRow: { flexDirection: "row", gap: 12 },
