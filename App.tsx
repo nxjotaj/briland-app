@@ -27,7 +27,7 @@ import {
 
 import { CONFIG_STORAGE_KEY, signInWithPassword, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRpc, trackTelemetry, uploadStorageObject } from "./src/api/supabase";
 import { colors, defaultAbout, defaultSocialLinks } from "./src/config/brand";
-import type { AboutSettings, Aplicacao, AppData, Categoria, Lead, Marca, MediaSettings, ModeloVeiculo, Montadora, Permission, Produto, ProdutoModeloVeiculo, ProdutoModeloVeiculoView, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
+import type { AboutSettings, Aplicacao, AppData, CatalogPdfRole, CatalogPdfSettings, Categoria, Lead, Marca, MediaSettings, ModeloVeiculo, Montadora, Permission, Produto, ProdutoModeloVeiculo, ProdutoModeloVeiculoView, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
 import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage, money, optimizedImageUrl, parseCsv, slugify } from "./src/utils/helpers";
 
 type IconName = keyof typeof Ionicons.glyphMap;
@@ -55,6 +55,11 @@ function notify(title: string, message: string) {
 
 const isAdminRole = (value: Role) => value === "ADMIN_MASTER" || value === "ADMIN_COLABORADOR" || value === "ADMIN";
 const isMasterRole = (value: Role) => value === "ADMIN_MASTER" || value === "ADMIN";
+const catalogPdfRoleFor = (value: Role): CatalogPdfRole => {
+  if (value === "NAO_CLIENTE" || value === "CLIENTE" || value === "REPRESENTANTE") return value;
+  if (value === "VISITANTE") return "VISITANTE";
+  return "REPRESENTANTE";
+};
 
 export default function App() {
   const [route, setRoute] = useState<Route>("initial");
@@ -77,6 +82,7 @@ export default function App() {
   const [selectedProduct, setSelectedProduct] = useState<Produto | null>(null);
   const [socialLinks, setSocialLinks] = useState<SocialLinks>(defaultSocialLinks);
   const [mediaSettings, setMediaSettings] = useState<MediaSettings>({ initialImage: "", homeImage: "" });
+  const [catalogPdfSettings, setCatalogPdfSettings] = useState<CatalogPdfSettings>({});
   const [aboutSettings, setAboutSettings] = useState<AboutSettings>(defaultAbout);
   const [loading, setLoading] = useState(true);
   const [routeSplash, setRouteSplash] = useState(false);
@@ -118,9 +124,10 @@ export default function App() {
           ])
         : [[], [], []] as [Usuario[], Lead[], Permission[]];
 
-      const settings = appSettings as { media?: MediaSettings; socialLinks?: SocialLinks; about?: AboutSettings };
+      const settings = appSettings as { media?: MediaSettings; socialLinks?: SocialLinks; about?: AboutSettings; catalogPdf?: CatalogPdfSettings };
       if (settings.socialLinks) setSocialLinks({ ...defaultSocialLinks, ...settings.socialLinks });
       if (settings.media) setMediaSettings({ initialImage: settings.media.initialImage || "", homeImage: settings.media.homeImage || "" });
+      if (settings.catalogPdf) setCatalogPdfSettings(settings.catalogPdf);
       if (settings.about) setAboutSettings({ ...defaultAbout, ...settings.about });
 
       setData({
@@ -209,6 +216,9 @@ export default function App() {
   };
 
   const activeProducts = useMemo(() => data.produtos.filter((item) => item.ativo !== false), [data.produtos]);
+  const catalogPdfRole = catalogPdfRoleFor(role);
+  const catalogPdfUrl = catalogPdfSettings[catalogPdfRole]?.url || "";
+  const catalogPdfAllowed = Boolean(catalogPdfUrl) && (activeProducts[0]?.permissoesProduto?.catalogPdfDownload ?? role !== "VISITANTE");
   const categoryById = useMemo(() => new Map(data.categorias.map((item) => [item.id, item])), [data.categorias]);
   const brandById = useMemo(() => new Map(data.marcas.map((item) => [item.id, item])), [data.marcas]);
   const montadoraById = useMemo(() => new Map(data.montadoras.map((item) => [item.id, item])), [data.montadoras]);
@@ -422,7 +432,7 @@ export default function App() {
             <>
               <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} whatsappUrl={socialLinks.whatsapp} />
               {error && <ErrorBanner message={error} onRetry={reload} />}
-              {route === "home" && <HomeScreen go={openDirectCatalogRoute} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} />}
+              {route === "home" && <HomeScreen go={openDirectCatalogRoute} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""} />}
               {route === "categories" && <CategoriesScreen categories={data.categorias} onPick={(id) => { clearCatalogFilters(); setCategoryFilter(id); go("products"); }} />}
               {route === "vehicleBrands" && <VehicleBrandsScreen montadoras={data.montadoras} applications={data.produtoModelosVeiculo} onPick={(id) => { clearCatalogFilters(); setMontadoraFilter(id); go("products"); }} />}
               {route === "products" && (
@@ -456,6 +466,7 @@ export default function App() {
                   setListMode={setListMode}
                   onOpen={openProduct}
                   role={role}
+                  catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
                 />
               )}
               {route === "promotions" && (
@@ -489,6 +500,7 @@ export default function App() {
                   setListMode={setListMode}
                   onOpen={openProduct}
                   role={role}
+                  catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
                   promo
                 />
               )}
@@ -523,6 +535,7 @@ export default function App() {
                   setListMode={setListMode}
                   onOpen={openProduct}
                   role={role}
+                  catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
                   launch
                 />
               )}
@@ -656,7 +669,7 @@ function SlideToEnter({ onComplete }: { onComplete: () => void }) {
     </View>
   );
 }
-function HomeScreen({ go, products, categories, montadoras, media }: { go: (route: Route) => void; products: Produto[]; categories: Categoria[]; montadoras: Montadora[]; media: MediaSettings }) {
+function HomeScreen({ go, products, categories, montadoras, media, catalogPdfUrl }: { go: (route: Route) => void; products: Produto[]; categories: Categoria[]; montadoras: Montadora[]; media: MediaSettings; catalogPdfUrl: string }) {
   const items: [Route, string, string, IconName][] = [
     ["categories", "Categorias", `${categories.length} categorias ativas`, "grid-outline"],
     ["vehicleBrands", "Filtrar por montadora", `${montadoras.length} montadoras disponíveis`, "car-sport-outline"],
@@ -675,6 +688,7 @@ function HomeScreen({ go, products, categories, montadoras, media }: { go: (rout
         </Pressable>
       </View>
       <View style={styles.dots}><View style={styles.dotActive} /><View style={styles.dot} /><View style={styles.dot} /></View>
+      {catalogPdfUrl ? <CatalogPdfButton url={catalogPdfUrl} /> : null}
       {items.map(([target, title, subtitle, icon]) => (
         <Pressable key={title} style={styles.menuCard} onPress={() => go(target)}>
           <View style={styles.menuIcon}><Ionicons name={icon} size={29} color={colors.navy} /></View>
@@ -772,6 +786,7 @@ function ProductList({
   setListMode,
   onOpen,
   role,
+  catalogPdfUrl,
   promo,
   launch
 }: {
@@ -804,6 +819,7 @@ function ProductList({
   setListMode: (mode: "grid" | "list") => void;
   onOpen: (product: Produto) => void;
   role: Role;
+  catalogPdfUrl: string;
   promo?: boolean;
   launch?: boolean;
 }) {
@@ -819,6 +835,7 @@ function ProductList({
         <View style={styles.searchBox}><Ionicons name="search" size={22} color={colors.navy} /><TextInput value={query} onChangeText={setQuery} placeholder="Buscar código, EAN, NCM ou descricao..." placeholderTextColor="#9BA0AA" style={styles.searchInput} /></View>
         <Pressable style={styles.filterButton} onPress={() => setFilterOpen(true)}><Ionicons name="filter" size={22} color={colors.navy} /><Text style={styles.filterText}>Filtros</Text></Pressable>
       </View>
+      {catalogPdfUrl ? <CatalogPdfButton url={catalogPdfUrl} /> : null}
       <View style={styles.chips}>
         <Chip text={activeCategory ?? "Categorias"} onPress={() => setFilterOpen(true)} />
         <Chip text={activeBrand ?? "Marcas"} onPress={() => setFilterOpen(true)} />
@@ -1661,6 +1678,19 @@ function Chip({ text, onPress }: { text: string; onPress: () => void }) {
   return <Pressable style={styles.chip} onPress={onPress}><Text style={styles.chipText}>{text}</Text><Ionicons name="chevron-down" size={16} color={colors.navy} /></Pressable>;
 }
 
+function CatalogPdfButton({ url }: { url: string }) {
+  return (
+    <Pressable style={styles.catalogPdfButton} onPress={() => Linking.openURL(url)}>
+      <View style={styles.catalogPdfIcon}><Ionicons name="document-text-outline" size={22} color={colors.navy} /></View>
+      <View style={styles.flex}>
+        <Text style={styles.catalogPdfTitle}>Download PDF do catálogo</Text>
+        <Text style={styles.mutedSmall}>Catálogo organizado por categorias</Text>
+      </View>
+      <Ionicons name="download-outline" size={24} color={colors.navy} />
+    </Pressable>
+  );
+}
+
 function Segmented({ value, setValue }: { value: "grid" | "list"; setValue: (mode: "grid" | "list") => void }) {
   return <View style={styles.segment}><Pressable style={value === "grid" ? styles.segmentActive : styles.segmentLight} onPress={() => setValue("grid")}><Ionicons name="grid" size={20} color={value === "grid" ? colors.white : colors.navy} /></Pressable><Pressable style={value === "list" ? styles.segmentActive : styles.segmentLight} onPress={() => setValue("list")}><Ionicons name="list" size={20} color={value === "list" ? colors.white : colors.navy} /></Pressable></View>;
 }
@@ -1782,6 +1812,9 @@ const styles = StyleSheet.create({
   menuIcon: { width: 54, height: 54, borderRadius: 14, backgroundColor: colors.soft, alignItems: "center", justifyContent: "center" },
   flex: { flex: 1 },
   menuTitle: { fontSize: 22, color: colors.navy, fontWeight: "900" },
+  catalogPdfButton: { minHeight: 74, borderRadius: 18, backgroundColor: colors.white, padding: 14, marginBottom: 14, flexDirection: "row", alignItems: "center", gap: 13, borderWidth: 1, borderColor: colors.line, ...shadow },
+  catalogPdfIcon: { width: 46, height: 46, borderRadius: 13, backgroundColor: colors.yellow, alignItems: "center", justifyContent: "center" },
+  catalogPdfTitle: { color: colors.navy, fontSize: 16, fontWeight: "900" },
   muted: { color: colors.muted, fontSize: 15, lineHeight: 22 },
   titleBlock: { marginTop: 14, marginBottom: 20 },
   titleRow: { flexDirection: "row", alignItems: "center", gap: 10 },

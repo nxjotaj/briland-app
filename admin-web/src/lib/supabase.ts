@@ -23,3 +23,12 @@ export async function uploadCatalogMedia(file: File, folder: string) {
   if (error) throw error;
   return supabase.storage.from("catalog-media").getPublicUrl(path).data.publicUrl;
 }
+
+export async function uploadCatalogBlob(path: string, blob: Blob, contentType: string) {
+  const { error } = await supabase.storage.from("catalog-media").upload(path, blob, {
+    contentType,
+    upsert: true
+  });
+  if (error) throw error;
+  return supabase.storage.from("catalog-media").getPublicUrl(path).data.publicUrl;
+}

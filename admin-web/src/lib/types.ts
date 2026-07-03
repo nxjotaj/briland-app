@@ -48,12 +48,16 @@ export type AuditLog = { id: string; actorUserId?: string | null; actorEmail?: s
 export type SocialLinks = { instagram: string; linkedin: string; whatsapp: string; site: string };
 export type MediaSettings = { initialImage: string; homeImage: string };
 export type AboutSettings = { title: string; subtitle: string; body: string };
+export type CatalogPdfRole = "VISITANTE" | "NAO_CLIENTE" | "CLIENTE" | "REPRESENTANTE";
+export type CatalogPdfEntry = { url: string; generatedAt: string; role: CatalogPdfRole; productCount: number };
+export type CatalogPdfSettings = Partial<Record<CatalogPdfRole, CatalogPdfEntry>>;
 export type ProdutoAplicacao = { id?: string; produtoId?: string | null; aplicacaoId?: string | null };
 
 export type AppSettings = {
   media?: MediaSettings & { recommendations?: Record<string, string> };
   socialLinks?: SocialLinks;
   about?: AboutSettings;
+  catalogPdf?: CatalogPdfSettings;
   contact?: Record<string, unknown>;
 };
 

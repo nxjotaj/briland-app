@@ -16,6 +16,27 @@ export function money(value?: number | null) {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+export function formatLocalDateTime(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    dateStyle: "short",
+    timeStyle: "short"
+  }).format(date);
+}
+
+export function formatLocalDate(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    dateStyle: "short"
+  }).format(date);
+}
+
 export function numberOrNull(value: FormDataEntryValue | null) {
   const text = String(value ?? "").trim();
   if (!text) return null;

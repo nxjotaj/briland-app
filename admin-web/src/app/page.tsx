@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import * as XLSX from "xlsx";
 import {
   BarChart3,
@@ -30,8 +31,8 @@ import {
   Upload,
   Users
 } from "lucide-react";
-import { supabase, uploadCatalogMedia } from "@/lib/supabase";
-import { createId, csvEscape, downloadBlob, money, numberOrNull, slugify } from "@/lib/helpers";
+import { supabase, uploadCatalogBlob, uploadCatalogMedia } from "@/lib/supabase";
+import { createId, csvEscape, downloadBlob, formatLocalDate, formatLocalDateTime, money, numberOrNull, slugify } from "@/lib/helpers";
 import type {
   AboutSettings,
   Aplicacao,
@@ -50,6 +51,7 @@ import type {
   Role,
   SocialLinks,
   AuditLog,
+  CatalogPdfRole,
   TelemetryEvent,
   Usuario
 } from "@/lib/types";
@@ -65,6 +67,7 @@ type Tab =
   | "Usuários"
   | "Permissões"
   | "Diagnóstico"
+  | "Catálogo PDF"
   | "Mídia"
   | "Links"
   | "Conteúdo";
@@ -80,6 +83,7 @@ const tabs: { id: Tab; icon: React.ElementType }[] = [
   { id: "Usuários", icon: Users },
   { id: "Permissões", icon: Lock },
   { id: "Diagnóstico", icon: Activity },
+  { id: "Catálogo PDF", icon: Download },
   { id: "Mídia", icon: ImageIcon },
   { id: "Links", icon: LinkIcon },
   { id: "Conteúdo", icon: Settings }
@@ -121,6 +125,30 @@ function leadDepartment(lead: Lead) {
 
 function leadMessageBody(message?: string | null) {
   return (message || "").replace(/^\[(Comercial|Suporte)\]\s*/i, "").trim();
+}
+
+const catalogPdfRoles: CatalogPdfRole[] = ["VISITANTE", "NAO_CLIENTE", "CLIENTE", "REPRESENTANTE"];
+const catalogPdfRoleLabel: Record<CatalogPdfRole, string> = {
+  VISITANTE: "Visitante",
+  NAO_CLIENTE: "Não cliente",
+  CLIENTE: "Cliente",
+  REPRESENTANTE: "Representante"
+};
+
+function permissionAllowed(permission: Permission | undefined, role: CatalogPdfRole) {
+  if (!permission) return true;
+  if (role === "VISITANTE") return permission.visibleToVisitor;
+  if (role === "NAO_CLIENTE") return permission.visibleToNonClient;
+  if (role === "CLIENTE") return permission.visibleToClient;
+  return permission.visibleToRepresentative;
+}
+
+function permissionMapForRole(permissions: Permission[], role: CatalogPdfRole) {
+  return Object.fromEntries(permissions.map((permission) => [permission.fieldKey, permissionAllowed(permission, role)]));
+}
+
+function canShowField(map: Record<string, boolean>, key: string, fallback = true) {
+  return key in map ? Boolean(map[key]) : fallback;
 }
 
 async function trackAdminTelemetry(payload: Omit<TelemetryEvent, "id" | "createdAt">) {
@@ -376,6 +404,7 @@ export default function Page() {
           {activeTab === "Usuários" && <UsersSection users={data.usuarios} query={query} reload={reload} notify={notify} adminUser={adminUser} />}
           {activeTab === "Permissões" && <PermissionsSectionV2 permissions={data.permissoes} query={query} reload={reload} notify={notify} />}
           {activeTab === "Diagnóstico" && <Diagnostics data={data} />}
+          {activeTab === "Catálogo PDF" && <CatalogPdfSection data={data} reload={reload} notify={notify} />}
           {activeTab === "Mídia" && <MediaSettingsSection settings={data.settings.media} reload={reload} notify={notify} />}
           {activeTab === "Links" && <LinksSection settings={data.settings.socialLinks} reload={reload} notify={notify} />}
           {activeTab === "Conteúdo" && <ContentSection settings={data.settings.about} reload={reload} notify={notify} />}
@@ -975,7 +1004,7 @@ function Leads({ leads, products, query, reload, notify }: { leads: Lead[]; prod
   return (
     <>
       <Panel title={`${filtered.length} leads`}>
-        <Table><thead><tr><Th>Nome</Th><Th>Área</Th><Th>Empresa</Th><Th>Produto</Th><Th>Status</Th><Th>Data</Th><Th /></tr></thead><tbody>{filtered.map((lead) => <tr key={lead.id}><Td>{lead.nome}</Td><Td>{leadDepartment(lead)}</Td><Td>{lead.empresa}</Td><Td>{products.find((p) => p.id === lead.produtoId)?.codigoInterno || "-"}</Td><Td><select className="input h-9" value={lead.status || "NOVO"} onChange={async (event) => updateRow("LeadOrcamento", lead.id, { status: event.target.value }, reload, notify)}><option>NOVO</option><option>EM_ATENDIMENTO</option><option>CONCLUIDO</option><option>ARQUIVADO</option></select></Td><Td>{lead.createdAt ? new Date(lead.createdAt).toLocaleDateString("pt-BR") : "-"}</Td><Td><button className="icon-btn" onClick={() => setSelected(lead)}><Eye size={16} /></button></Td></tr>)}</tbody></Table>
+        <Table><thead><tr><Th>Nome</Th><Th>Área</Th><Th>Empresa</Th><Th>Produto</Th><Th>Status</Th><Th>Data</Th><Th /></tr></thead><tbody>{filtered.map((lead) => <tr key={lead.id}><Td>{lead.nome}</Td><Td>{leadDepartment(lead)}</Td><Td>{lead.empresa}</Td><Td>{products.find((p) => p.id === lead.produtoId)?.codigoInterno || "-"}</Td><Td><select className="input h-9" value={lead.status || "NOVO"} onChange={async (event) => updateRow("LeadOrcamento", lead.id, { status: event.target.value }, reload, notify)}><option>NOVO</option><option>EM_ATENDIMENTO</option><option>CONCLUIDO</option><option>ARQUIVADO</option></select></Td><Td>{formatLocalDate(lead.createdAt)}</Td><Td><button className="icon-btn" onClick={() => setSelected(lead)}><Eye size={16} /></button></Td></tr>)}</tbody></Table>
       </Panel>
       {selected && <Modal title="Lead recebido" onClose={() => setSelected(null)}><div className="grid gap-3 lg:grid-cols-2"><Info label="Nome" value={selected.nome} /><Info label="Área" value={leadDepartment(selected)} /><Info label="Empresa" value={selected.empresa} /><Info label="Telefone" value={selected.telefone} /><Info label="E-mail" value={selected.email} /><Info label="Cidade/UF" value={`${selected.cidade || "-"} / ${selected.estado || "-"}`} /><Info label="Origem" value={selected.origem} /></div><div className="mt-4 rounded-2xl bg-soft p-4 text-sm leading-6">{leadMessageBody(selected.mensagem) || "Sem mensagem"}</div>{selected.telefone && <a href={`https://wa.me/${selected.telefone.replace(/\D/g, "")}`} target="_blank" className="btn-yellow mt-5 inline-flex"><MessageCircle size={17} /> Abrir WhatsApp</a>}</Modal>}
     </>
@@ -1034,6 +1063,261 @@ function PermissionsSectionV2({ permissions, query, reload, notify }: { permissi
   );
 }
 
+function CatalogPdfSection({ data, reload, notify }: { data: AppData; reload: () => Promise<void>; notify: (message: string) => void }) {
+  const [generating, setGenerating] = useState<CatalogPdfRole | "all" | null>(null);
+  const settings = data.settings.catalogPdf || {};
+  const generate = async (role: CatalogPdfRole) => {
+    setGenerating(role);
+    try {
+      const pdfBytes = await buildCatalogPdf(data, role);
+      const blob = new Blob([pdfBytesToArrayBuffer(pdfBytes)], { type: "application/pdf" });
+      const path = `catalogo/catalogo-${role.toLowerCase().replace("_", "-")}.pdf`;
+      const url = await uploadCatalogBlob(path, blob, "application/pdf");
+      await saveSetting("catalogPdf", {
+        ...settings,
+        [role]: {
+          url,
+          generatedAt: new Date().toISOString(),
+          role,
+          productCount: data.produtos.filter((product) => product.ativo !== false).length
+        }
+      }, reload, notify);
+      notify(`PDF ${catalogPdfRoleLabel[role]} gerado.`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Falha ao gerar PDF.");
+    } finally {
+      setGenerating(null);
+    }
+  };
+  const generateAll = async () => {
+    setGenerating("all");
+    try {
+      let nextSettings = { ...settings };
+      for (const role of catalogPdfRoles) {
+        const pdfBytes = await buildCatalogPdf(data, role);
+        const blob = new Blob([pdfBytesToArrayBuffer(pdfBytes)], { type: "application/pdf" });
+        const path = `catalogo/catalogo-${role.toLowerCase().replace("_", "-")}.pdf`;
+        const url = await uploadCatalogBlob(path, blob, "application/pdf");
+        nextSettings = {
+          ...nextSettings,
+          [role]: {
+            url,
+            generatedAt: new Date().toISOString(),
+            role,
+            productCount: data.produtos.filter((product) => product.ativo !== false).length
+          }
+        };
+      }
+      await saveSetting("catalogPdf", nextSettings, reload, notify);
+      notify("PDFs do catálogo gerados.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Falha ao gerar PDFs.");
+    } finally {
+      setGenerating(null);
+    }
+  };
+  return (
+    <div className="space-y-6">
+      <Panel title="Download PDF do catálogo">
+        <div className="grid gap-4 lg:grid-cols-[1fr_260px]">
+          <div className="text-sm leading-6 text-muted">
+            O PDF é gerado no painel e salvo no Supabase Storage. O app só exibe o botão e baixa o arquivo conforme a permissão <strong>catalogPdfDownload</strong>, sem pesar o celular do cliente.
+          </div>
+          <button onClick={() => void generateAll()} disabled={generating != null} className="btn-yellow justify-center">
+            {generating === "all" ? <Loader2 className="animate-spin" size={17} /> : <Download size={17} />}
+            Gerar todos os perfis
+          </button>
+        </div>
+      </Panel>
+      <div className="grid gap-4 lg:grid-cols-2">
+        {catalogPdfRoles.map((role) => {
+          const entry = settings[role];
+          return (
+            <Panel key={role} title={catalogPdfRoleLabel[role]}>
+              <div className="space-y-3 text-sm">
+                <Info label="Última geração" value={entry?.generatedAt ? formatLocalDateTime(entry.generatedAt) : "Nunca gerado"} />
+                <Info label="Produtos no PDF" value={entry?.productCount != null ? String(entry.productCount) : "-"} />
+                {entry?.url ? <a className="btn-white inline-flex" href={entry.url} target="_blank"><Eye size={17} /> Abrir PDF</a> : <div className="rounded-xl bg-soft p-3 text-muted">Nenhum PDF salvo para este perfil.</div>}
+              </div>
+              <button onClick={() => void generate(role)} disabled={generating != null} className="btn-yellow mt-5">
+                {generating === role ? <Loader2 className="animate-spin" size={17} /> : <Download size={17} />}
+                Gerar PDF
+              </button>
+            </Panel>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+async function buildCatalogPdf(data: AppData, role: CatalogPdfRole) {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const permissions = permissionMapForRole(data.permissoes, role);
+  const products = data.produtos.filter((product) => product.ativo !== false);
+  const categoryProducts = data.categorias
+    .filter((category) => category.ativo !== false)
+    .map((category) => ({
+      category,
+      products: products.filter((product) => product.categoriaId === category.id).sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0) || a.nome.localeCompare(b.nome))
+    }))
+    .filter((group) => group.products.length > 0);
+  const uncategorized = products.filter((product) => !data.categorias.some((category) => category.id === product.categoriaId));
+  if (uncategorized.length) categoryProducts.push({ category: { id: "sem-categoria", nome: "Sem categoria", ativo: true }, products: uncategorized });
+
+  let page = pdf.addPage([595.28, 841.89]);
+  let y = 790;
+  const navy = rgb(0.008, 0.067, 0.149);
+  const yellow = rgb(0.988, 0.727, 0);
+  const muted = rgb(0.42, 0.44, 0.5);
+  const line = rgb(0.9, 0.91, 0.94);
+
+  const addPage = () => {
+    page = pdf.addPage([595.28, 841.89]);
+    y = 790;
+    drawPdfHeader(page, bold, font, role);
+  };
+  drawPdfHeader(page, bold, font, role);
+
+  for (const group of categoryProducts) {
+    if (y < 230) addPage();
+    page.drawRectangle({ x: 34, y: y - 72, width: 527, height: 82, color: navy, borderColor: yellow, borderWidth: 1 });
+    page.drawText(group.category.nome, { x: 52, y: y - 32, size: 21, font: bold, color: rgb(1, 1, 1) });
+    page.drawText(`${group.products.length} produtos`, { x: 52, y: y - 54, size: 10, font, color: rgb(0.86, 0.88, 0.92) });
+    if (group.category.imagem) {
+      const image = await loadPdfImage(pdf, group.category.imagem, 440, 150).catch(() => null);
+      if (image) page.drawImage(image.image, { x: 410, y: y - 66, width: 120, height: 66 });
+    }
+    y -= 104;
+
+    for (let index = 0; index < group.products.length; index += 2) {
+      if (y < 190) addPage();
+      const row = group.products.slice(index, index + 2);
+      for (let column = 0; column < row.length; column += 1) {
+        await drawProductCard(pdf, page, row[column], data, permissions, {
+          x: 34 + column * 264,
+          y: y - 170,
+          width: 250,
+          height: 170,
+          font,
+          bold,
+          navy,
+          yellow,
+          muted,
+          line
+        });
+      }
+      y -= 186;
+    }
+  }
+  return pdf.save();
+}
+
+function drawPdfHeader(page: ReturnType<PDFDocument["addPage"]>, bold: Awaited<ReturnType<PDFDocument["embedFont"]>>, font: Awaited<ReturnType<PDFDocument["embedFont"]>>, role: CatalogPdfRole) {
+  const navy = rgb(0.008, 0.067, 0.149);
+  const yellow = rgb(0.988, 0.727, 0);
+  page.drawRectangle({ x: 0, y: 802, width: 595.28, height: 39.89, color: navy });
+  page.drawText("BRILAND", { x: 34, y: 815, size: 17, font: bold, color: rgb(1, 1, 1) });
+  page.drawText("Catálogo de produtos", { x: 126, y: 817, size: 10, font, color: rgb(0.86, 0.88, 0.92) });
+  page.drawText(catalogPdfRoleLabel[role], { x: 492, y: 816, size: 10, font: bold, color: yellow });
+}
+
+async function drawProductCard(
+  pdf: PDFDocument,
+  page: ReturnType<PDFDocument["addPage"]>,
+  product: Produto,
+  data: AppData,
+  permissions: Record<string, boolean>,
+  box: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    font: Awaited<ReturnType<PDFDocument["embedFont"]>>;
+    bold: Awaited<ReturnType<PDFDocument["embedFont"]>>;
+    navy: ReturnType<typeof rgb>;
+    yellow: ReturnType<typeof rgb>;
+    muted: ReturnType<typeof rgb>;
+    line: ReturnType<typeof rgb>;
+  }
+) {
+  page.drawRectangle({ x: box.x, y: box.y, width: box.width, height: box.height, color: rgb(1, 1, 1), borderColor: box.line, borderWidth: 1 });
+  if (product.imagemPrincipal) {
+    const image = await loadPdfImage(pdf, product.imagemPrincipal, 330, 210).catch(() => null);
+    if (image) page.drawImage(image.image, { x: box.x + 9, y: box.y + 92, width: 82, height: 66 });
+  }
+  page.drawText(product.codigoInterno || "Sem código", { x: box.x + 100, y: box.y + 142, size: 10, font: box.bold, color: box.navy });
+  drawWrappedText(page, product.nome || "Produto", box.x + 100, box.y + 126, 136, 9, box.bold, box.navy, 2);
+  const details: string[] = [];
+  if (canShowField(permissions, "caixaMaster")) details.push(`Caixa master: ${product.caixaMaster || "A cadastrar"}`);
+  if (canShowField(permissions, "ncm")) details.push(`NCM: ${product.ncm || "A cadastrar"}`);
+  if (canShowField(permissions, "ean")) details.push(`EAN: ${product.ean || "A cadastrar"}`);
+  if (canShowField(permissions, "ca", false)) details.push(`CA: ${product.ca || "A cadastrar"}`);
+  if (canShowField(permissions, "fichaTecnica") && product.fichaTecnica) details.push(`Ficha técnica: ${product.fichaTecnica}`);
+  if (canShowField(permissions, "aplicacoesVeiculo")) {
+    const applications = data.produtoModelosVeiculo.filter((item) => item.produtoId === product.id);
+    if (applications.length) {
+      details.push(`Montadora/modelo: ${applications.map((item) => {
+        const brand = data.montadoras.find((brandItem) => brandItem.id === item.montadoraId)?.nome || "Montadora";
+        const model = data.modelosVeiculo.find((modelItem) => modelItem.id === item.modeloId)?.nome || "Modelo";
+        return `${brand} ${model}`;
+      }).join(", ")}`);
+    }
+  }
+  if (canShowField(permissions, "observacaoComercial") && product.observacaoComercial) details.push(`Obs.: ${product.observacaoComercial}`);
+  let cursor = box.y + 82;
+  for (const detail of details.slice(0, 8)) {
+    cursor = drawWrappedText(page, detail, box.x + 10, cursor, box.width - 20, 7.5, box.font, box.muted, 2) - 5;
+    if (cursor < box.y + 10) break;
+  }
+  page.drawRectangle({ x: box.x, y: box.y + box.height - 4, width: box.width, height: 4, color: box.yellow });
+}
+
+function drawWrappedText(page: ReturnType<PDFDocument["addPage"]>, text: string, x: number, y: number, maxWidth: number, size: number, font: Awaited<ReturnType<PDFDocument["embedFont"]>>, color: ReturnType<typeof rgb>, maxLines = 3) {
+  const words = String(text).replace(/\s+/g, " ").trim().split(" ");
+  const lines: string[] = [];
+  let line = "";
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (font.widthOfTextAtSize(next, size) <= maxWidth) line = next;
+    else {
+      if (line) lines.push(line);
+      line = word;
+    }
+    if (lines.length >= maxLines) break;
+  }
+  if (line && lines.length < maxLines) lines.push(line);
+  lines.forEach((lineText, index) => page.drawText(lineText, { x, y: y - index * (size + 3), size, font, color }));
+  return y - lines.length * (size + 3);
+}
+
+async function loadPdfImage(pdf: PDFDocument, url: string, maxWidth: number, maxHeight: number) {
+  const response = await fetch(url);
+  const blob = await response.blob();
+  const bitmap = await createImageBitmap(blob);
+  const ratio = Math.min(maxWidth / bitmap.width, maxHeight / bitmap.height, 1);
+  const width = Math.max(1, Math.round(bitmap.width * ratio));
+  const height = Math.max(1, Math.round(bitmap.height * ratio));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Não foi possível preparar imagem do PDF.");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(bitmap, 0, 0, width, height);
+  const jpegBlob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.72));
+  if (!jpegBlob) throw new Error("Não foi possível converter imagem do PDF.");
+  const image = await pdf.embedJpg(await jpegBlob.arrayBuffer());
+  return { image, width, height };
+}
+
+function pdfBytesToArrayBuffer(bytes: Uint8Array) {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 function Diagnostics({ data }: { data: AppData }) {
   const [selectedAudit, setSelectedAudit] = useState<AuditLog | null>(null);
   const now = Date.now();
@@ -1068,7 +1352,7 @@ function Diagnostics({ data }: { data: AppData }) {
           <Info label="Eventos monitorados" value={String(data.telemetry.length)} />
           <Info label="Falhas de login 24h" value={String(failedLogins24h.length)} />
           <Info label="Admins legados" value={String(legacyAdmins.length)} />
-          <Info label="Última alteração" value={data.auditLogs[0]?.createdAt ? new Date(data.auditLogs[0].createdAt).toLocaleString("pt-BR") : "-"} />
+          <Info label="Última alteração" value={formatLocalDateTime(data.auditLogs[0]?.createdAt)} />
         </div>
       </Panel>
       <Panel title="Telas mais lentas">
@@ -1080,13 +1364,13 @@ function Diagnostics({ data }: { data: AppData }) {
       <Panel title="Últimos erros">
         <Table>
           <thead><tr><Th>Data</Th><Th>Tipo</Th><Th>Tela</Th><Th>Mensagem</Th></tr></thead>
-          <tbody>{errors24h.slice(0, 12).map((event) => <tr key={event.id}><Td>{event.createdAt ? new Date(event.createdAt).toLocaleString("pt-BR") : "-"}</Td><Td>{event.eventType}</Td><Td>{event.screen || event.route || "-"}</Td><Td>{event.message || "-"}</Td></tr>)}</tbody>
+          <tbody>{errors24h.slice(0, 12).map((event) => <tr key={event.id}><Td>{formatLocalDateTime(event.createdAt)}</Td><Td>{event.eventType}</Td><Td>{event.screen || event.route || "-"}</Td><Td>{event.message || "-"}</Td></tr>)}</tbody>
         </Table>
       </Panel>
       <Panel title="Alterações recentes">
         <Table>
           <thead><tr><Th>Data</Th><Th>Admin</Th><Th>Ação</Th><Th>Entidade</Th><Th>ID</Th><Th /></tr></thead>
-          <tbody>{data.auditLogs.slice(0, 20).map((log) => <tr key={log.id}><Td>{log.createdAt ? new Date(log.createdAt).toLocaleString("pt-BR") : "-"}</Td><Td>{log.actorEmail || log.actorUserId || "-"}</Td><Td>{log.action}</Td><Td>{log.entityType}</Td><Td>{log.entityId || "-"}</Td><Td><button className="icon-btn" onClick={() => setSelectedAudit(log)}><Eye size={16} /></button></Td></tr>)}</tbody>
+          <tbody>{data.auditLogs.slice(0, 20).map((log) => <tr key={log.id}><Td>{formatLocalDateTime(log.createdAt)}</Td><Td>{log.actorEmail || log.actorUserId || "-"}</Td><Td>{log.action}</Td><Td>{log.entityType}</Td><Td>{log.entityId || "-"}</Td><Td><button className="icon-btn" onClick={() => setSelectedAudit(log)}><Eye size={16} /></button></Td></tr>)}</tbody>
         </Table>
       </Panel>
       {selectedAudit && <AuditDetailModal log={selectedAudit} onClose={() => setSelectedAudit(null)} />}
@@ -1101,7 +1385,7 @@ function AuditDetailModal({ log, onClose }: { log: AuditLog; onClose: () => void
   return (
     <Modal title="Detalhe da alteração" onClose={onClose}>
       <div className="grid gap-3 lg:grid-cols-4">
-        <Info label="Data" value={log.createdAt ? new Date(log.createdAt).toLocaleString("pt-BR") : "-"} />
+        <Info label="Data" value={formatLocalDateTime(log.createdAt)} />
         <Info label="Admin" value={log.actorEmail || log.actorUserId || "-"} />
         <Info label="Ação" value={log.action} />
         <Info label="Entidade" value={`${log.entityType} / ${log.entityId || "-"}`} />
