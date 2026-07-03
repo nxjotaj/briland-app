@@ -43,6 +43,7 @@ function Image({ resizeMode, contentFit, transition = 160, cachePolicy = "memory
 const imageSize = {
   home: { width: 960, height: 610, resize: "cover", quality: 78 } as const,
   category: { width: 480, height: 360, resize: "cover", quality: 72 } as const,
+  categoryIcon: { width: 256, height: 256, resize: "contain", quality: 70 } as const,
   productCard: { width: 460, height: 340, resize: "contain", quality: 72 } as const,
   productDetail: { width: 1280, height: 960, resize: "contain", quality: 88 } as const,
   thumb: { width: 180, height: 140, resize: "contain", quality: 68 } as const
@@ -184,7 +185,7 @@ export default function App() {
   useEffect(() => {
     const urls = [
       optimizedImageUrl(mediaSettings.homeImage, imageSize.home),
-      ...data.categorias.slice(0, 12).map((item) => optimizedImageUrl(item.imagem, imageSize.category)),
+      ...data.categorias.slice(0, 12).map((item) => optimizedImageUrl(item.imagem, imageSize.categoryIcon)),
       ...data.produtos.slice(0, 30).map((item) => optimizedImageUrl(item.imagemPrincipal, imageSize.productCard))
     ].filter(Boolean);
     if (urls.length) void ExpoImage.prefetch(urls);
@@ -708,11 +709,11 @@ function CategoriesScreen({ categories, onPick }: { categories: Categoria[]; onP
         <View style={styles.grid}>
           {categories.map((item) => (
             <Pressable style={styles.categoryCard} key={item.id} onPress={() => onPick(item.id)}>
-              {item.imagem ? <Image source={{ uri: optimizedImageUrl(item.imagem, imageSize.category) }} style={styles.categoryImage} resizeMode="cover" /> : <BrandedMedia title={item.nome} subtitle="Imagem da categoria" />}
-              <LinearGradient colors={["transparent", "rgba(252,185,0,0.35)"]} style={StyleSheet.absoluteFill} />
-              <View style={styles.categoryFooter}>
-                <Text style={styles.categoryName}>{item.nome}</Text>
+              <View style={styles.categoryIcon}>
+                {item.imagem ? <Image source={{ uri: optimizedImageUrl(item.imagem, imageSize.categoryIcon) }} style={styles.categoryImage} resizeMode="contain" /> : <Ionicons name="grid-outline" size={34} color={colors.navy} />}
               </View>
+              <Text style={styles.categoryName} numberOfLines={2}>{item.nome}</Text>
+              <Ionicons name="arrow-forward-outline" size={24} color={colors.navy} style={styles.categoryArrow} />
             </Pressable>
           ))}
         </View>
@@ -858,7 +859,7 @@ function ProductList({
           {products.map((product) => (
             <Pressable key={product.id} style={[listMode === "grid" ? styles.productCard : styles.productListCard, promo && styles.promoCard, launch && styles.launchCard]} onPress={() => onOpen(product)}>
               <View style={listMode === "grid" ? undefined : styles.listImageWrap}>
-                {product.imagemPrincipal ? <Image source={{ uri: optimizedImageUrl(product.imagemPrincipal, imageSize.productCard) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" compact={listMode === "list"} />}
+                {product.imagemPrincipal ? <Image source={{ uri: optimizedImageUrl(product.imagemPrincipal, imageSize.productCard) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : listMode === "grid" ? <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" /> : <View style={styles.productListPlaceholder}><Ionicons name="image-outline" size={28} color={colors.yellow} /></View>}
                 {promo && <Ribbon text="DESTAQUE" color={colors.red} />}
                 {launch && <Ribbon text="NOVO" color={colors.yellow} />}
               </View>
@@ -1824,10 +1825,11 @@ const styles = StyleSheet.create({
   badge: { backgroundColor: colors.yellow, color: colors.white, overflow: "hidden", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 5, fontWeight: "900" },
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 14 },
   list: { gap: 12 },
-  categoryCard: { width: "47.4%", height: 166, borderRadius: 12, backgroundColor: colors.white, overflow: "hidden", ...shadow },
-  categoryImage: { width: "100%", height: "100%" },
-  categoryFooter: { position: "absolute", left: 0, right: 0, bottom: 0, minHeight: 50, backgroundColor: colors.white, paddingHorizontal: 14, flexDirection: "row", alignItems: "center" },
-  categoryName: { fontSize: 17, color: colors.navy, fontWeight: "900" },
+  categoryCard: { width: "47.4%", minHeight: 168, borderRadius: 14, backgroundColor: colors.white, padding: 15, paddingRight: 42, overflow: "hidden", ...shadow },
+  categoryIcon: { width: 56, height: 56, borderRadius: 16, backgroundColor: colors.soft, alignItems: "center", justifyContent: "center", marginBottom: 14 },
+  categoryImage: { width: 44, height: 44 },
+  categoryName: { color: colors.navy, fontSize: 19, lineHeight: 23, fontWeight: "900", marginBottom: 6 },
+  categoryArrow: { position: "absolute", right: 14, bottom: 14 },
   vehicleBrandCard: { width: "47.4%", minHeight: 168, borderRadius: 14, backgroundColor: colors.white, padding: 15, paddingRight: 42, overflow: "hidden", ...shadow },
   vehicleBrandIcon: { width: 56, height: 56, borderRadius: 16, backgroundColor: colors.soft, alignItems: "center", justifyContent: "center", marginBottom: 14 },
   vehicleBrandImage: { width: 44, height: 44 },
@@ -1847,12 +1849,13 @@ const styles = StyleSheet.create({
   segmentActive: { width: 42, height: 36, borderRadius: 18, backgroundColor: colors.navy, alignItems: "center", justifyContent: "center" },
   segmentLight: { width: 42, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   productCard: { width: "47.4%", minHeight: 324, borderRadius: 12, backgroundColor: colors.white, overflow: "hidden", borderWidth: 1, borderColor: colors.line, ...shadow },
-  productListCard: { width: "100%", borderRadius: 14, backgroundColor: colors.white, overflow: "hidden", borderWidth: 1, borderColor: colors.line, flexDirection: "row", ...shadow },
+  productListCard: { width: "100%", minHeight: 154, borderRadius: 14, backgroundColor: colors.white, overflow: "hidden", borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "stretch", ...shadow },
   promoCard: { borderColor: "#F4A7B1" },
   launchCard: { borderColor: colors.yellow },
-  listImageWrap: { width: 132 },
+  listImageWrap: { width: 118, padding: 10, justifyContent: "flex-start", alignItems: "center", backgroundColor: colors.white },
   productImage: { width: "100%", height: 136, backgroundColor: colors.white },
-  productListImage: { width: 132, height: "100%", backgroundColor: colors.white },
+  productListImage: { width: 98, height: 98, backgroundColor: colors.white },
+  productListPlaceholder: { width: 98, height: 98, borderRadius: 14, backgroundColor: colors.soft, alignItems: "center", justifyContent: "center" },
   ribbon: { position: "absolute", left: 8, top: 8, borderRadius: 4, paddingHorizontal: 8, paddingVertical: 3, transform: [{ rotate: "-9deg" }] },
   ribbonText: { color: colors.white, fontWeight: "900", fontSize: 11 },
   productBody: { flex: 1, padding: 13 },

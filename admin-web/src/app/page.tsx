@@ -837,7 +837,7 @@ function CategoryBrandModal({ table, imageField, item, reload, notify, canDelete
         {table === "Categoria" && <Field label="Ordem"><input className="input" type="number" value={String(draft.ordem ?? 0)} onChange={(event) => setDraft({ ...draft, ordem: Number(event.target.value || 0) })} /></Field>}
         {table === "Categoria" && <Field label="Descrição"><textarea className="textarea" value={String(draft.descricao || "")} onChange={(event) => setDraft({ ...draft, descricao: event.target.value })} /></Field>}
       </div>
-      <div className="mt-4"><UploadBox label={imageField === "imagem" ? "Imagem da categoria" : "Logo da marca"} folder={imageField === "imagem" ? "categorias" : "marcas"} value={String(draft[imageField] || "")} onUploaded={(url) => setDraft({ ...draft, [imageField]: url })} /></div>
+      <div className="mt-4"><UploadBox label={imageField === "imagem" ? "Imagem da categoria" : "Logo da marca"} folder={imageField === "imagem" ? "categorias" : "marcas"} value={String(draft[imageField] || "")} iconMode={imageField === "imagem"} onUploaded={(url) => setDraft({ ...draft, [imageField]: url })} /></div>
       <label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(event) => setDraft({ ...draft, ativo: event.target.checked })} /> Ativo</label>
       <ModalActions saving={saving} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} />
     </Modal>
@@ -1489,7 +1489,7 @@ function newProduct(data: AppData): Produto {
   };
 }
 
-function UploadBox({ label, folder, value, onUploaded }: { label: string; folder: string; value?: string; onUploaded: (url: string) => void }) {
+function UploadBox({ label, folder, value, iconMode = false, onUploaded }: { label: string; folder: string; value?: string; iconMode?: boolean; onUploaded: (url: string) => void }) {
   const [uploading, setUploading] = useState(false);
   const upload = async (file: File) => {
     if (!isImageFile(file)) {
@@ -1498,12 +1498,13 @@ function UploadBox({ label, folder, value, onUploaded }: { label: string; folder
     }
     setUploading(true);
     try {
-      onUploaded(await uploadCatalogMedia(file, folder));
+      const uploadFile = iconMode ? await compressIconImage(file) : file;
+      onUploaded(await uploadCatalogMedia(uploadFile, folder));
     } finally {
       setUploading(false);
     }
   };
-  return <div className="rounded-2xl border border-line bg-white p-4"><div className="mb-3 text-sm font-black">{label}</div>{value && !isPdfUrl(value) ? <img src={value} alt="" className="mb-3 h-36 w-full rounded-xl bg-soft object-contain" /> : <div className="mb-3 flex h-36 items-center justify-center rounded-xl bg-soft text-sm text-muted">{value ? "Arquivo atual nao e imagem" : "Sem imagem"}</div>}<label className="btn-white inline-flex cursor-pointer">{uploading ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />} Enviar imagem<input className="hidden" type="file" accept="image/*" onChange={(event) => event.target.files?.[0] && void upload(event.target.files[0])} /></label></div>;
+  return <div className="rounded-2xl border border-line bg-white p-4"><div className="mb-3 text-sm font-black">{label}</div>{value && !isPdfUrl(value) ? <img src={value} alt="" className="mb-3 h-36 w-full rounded-xl bg-soft object-contain" /> : <div className="mb-3 flex h-36 items-center justify-center rounded-xl bg-soft text-sm text-muted">{value ? "Arquivo atual nao e imagem" : "Sem imagem"}</div>}<label className="btn-white inline-flex cursor-pointer">{uploading ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />} Enviar imagem<input className="hidden" type="file" accept="image/*" onChange={(event) => event.target.files?.[0] && void upload(event.target.files[0])} /></label>{iconMode && <p className="mt-2 text-xs text-muted">A imagem sera comprimida para 256 x 256 px e usada como icone leve no app.</p>}</div>;
 }
 
 function SettingsPanel({ title, children, onSave }: { title: string; children: React.ReactNode; onSave: () => void | Promise<void> }) {
