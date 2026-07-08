@@ -151,6 +151,132 @@ function canShowField(map: Record<string, boolean>, key: string, fallback = true
   return key in map ? Boolean(map[key]) : fallback;
 }
 
+function normalizeImportKey(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\(.*/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function importValue(row: Record<string, unknown>, aliases: string[]) {
+  const normalizedAliases = aliases.map(normalizeImportKey);
+  for (const [key, value] of Object.entries(row)) {
+    if (normalizedAliases.includes(normalizeImportKey(key))) return String(value ?? "").trim();
+  }
+  return "";
+}
+
+function splitImportList(value: string) {
+  return value.split(/[|;,]/).map((item) => item.trim()).filter(Boolean);
+}
+
+async function importProductsFromTemplate(file: File, data: AppData) {
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer);
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[workbook.SheetNames[0]]);
+  const headers = Object.keys(rows[0] || {}).map(normalizeImportKey);
+  const requiredHeaders = ["codigointerno", "categoria", "marca", "nome", "ean", "ncm", "caixamaster"];
+  const missingHeaders = requiredHeaders.filter((key) => !headers.includes(key));
+  if (missingHeaders.length) {
+    throw new Error("A planilha precisa seguir o modelo enviado. Colunas obrigatórias: Código interno, Categoria, Marca, Nome, EAN, NCM e Caixa Master.");
+  }
+
+  const categorias = [...data.categorias];
+  const marcas = [...data.marcas];
+  const aplicacoes = [...data.aplicacoes];
+  const findByNameOrId = <T extends { id: string; nome: string; slug?: string | null }>(items: T[], value: string) => {
+    const normalized = normalizeImportKey(value);
+    return items.find((item) => normalizeImportKey(item.id) === normalized || normalizeImportKey(item.nome) === normalized || normalizeImportKey(item.slug) === normalized);
+  };
+  const ensureCategoria = async (nome: string) => {
+    const existing = findByNameOrId(categorias, nome);
+    if (existing) return existing;
+    const created = { id: createId("cat"), nome, slug: slugify(nome), ativo: true, ordem: categorias.length + 1 };
+    const { error } = await supabase.from("Categoria").insert(created);
+    if (error) throw error;
+    categorias.push(created);
+    return created;
+  };
+  const ensureMarca = async (nome: string) => {
+    const existing = findByNameOrId(marcas, nome);
+    if (existing) return existing;
+    const created = { id: createId("marca"), nome, slug: slugify(nome), ativo: true };
+    const { error } = await supabase.from("Marca").insert(created);
+    if (error) throw error;
+    marcas.push(created);
+    return created;
+  };
+  const ensureAplicacao = async (nome: string) => {
+    const existing = findByNameOrId(aplicacoes, nome);
+    if (existing) return existing;
+    const created = { id: createId("apl"), nome, slug: slugify(nome), tipo: null, ativo: true };
+    const { error } = await supabase.from("Aplicacao").insert(created);
+    if (error) throw error;
+    aplicacoes.push(created);
+    return created;
+  };
+
+  let count = 0;
+  for (const row of rows) {
+    const codigoInterno = importValue(row, ["Código interno", "codigoInterno", "codigo"]);
+    const categoriaText = importValue(row, ["Categoria", "categoriaId"]);
+    const marcaText = importValue(row, ["Marca", "marcaId"]);
+    const nome = importValue(row, ["Nome", "Descrição do produto", "Nome Descrição do produto"]);
+    const ncm = importValue(row, ["NCM", "NCM Com os pontos"]);
+    const caixaMaster = importValue(row, ["Caixa Master", "caixaMaster"]);
+    if (!codigoInterno && !nome && !categoriaText && !marcaText) continue;
+    if (!codigoInterno || !categoriaText || !marcaText || !nome || !ncm || !caixaMaster) {
+      throw new Error(`Linha ${count + 2}: preencha Código interno, Categoria, Marca, Nome, NCM e Caixa Master.`);
+    }
+
+    const existing = data.produtos.find((item) => item.codigoInterno === codigoInterno);
+    const categoria = await ensureCategoria(categoriaText);
+    const marca = await ensureMarca(marcaText);
+    const productId = existing?.id || createId("prod");
+    const payload = {
+      nome,
+      slug: importValue(row, ["slug"]) || slugify(`${codigoInterno}-${nome}`),
+      codigoInterno,
+      categoriaId: categoria.id,
+      marcaId: marca.id,
+      descricaoCurta: importValue(row, ["Descrição curta", "descricaoCurta"]) || null,
+      descricaoCompleta: importValue(row, ["Descrição completa", "descricaoCompleta"]) || null,
+      ean: importValue(row, ["EAN"]) || null,
+      ncm,
+      caixaMaster,
+      ca: importValue(row, ["CA"]) || null,
+      preco: numberOrNull(importValue(row, ["Preço", "preco"])),
+      estoque: numberOrNull(importValue(row, ["Estoque", "estoque"])),
+      condicaoComercial: importValue(row, ["Condição Comercial", "condicaoComercial"]) || null,
+      observacaoComercial: importValue(row, ["Observação Comercial", "observacaoComercial"]) || null,
+      ativo: true,
+      destaque: false,
+      ordem: existing?.ordem ?? 0,
+      updatedAt: new Date().toISOString()
+    };
+    const request = existing
+      ? supabase.from("Produto").update(payload).eq("id", existing.id)
+      : supabase.from("Produto").insert({ id: productId, ...payload });
+    const { error } = await request;
+    if (error) throw error;
+
+    const applicationText = importValue(row, ["Aplicações", "Aplicacao", "Aplicacoes"]);
+    if (applicationText) {
+      const { error: deleteApplicationError } = await supabase.from("ProdutoAplicacao").delete().eq("produtoId", productId);
+      if (deleteApplicationError) throw deleteApplicationError;
+      for (const applicationName of splitImportList(applicationText)) {
+        const application = await ensureAplicacao(applicationName);
+        const { error: applicationError } = await supabase.from("ProdutoAplicacao").insert({ id: createId("pa"), produtoId: productId, aplicacaoId: application.id });
+        if (applicationError) throw applicationError;
+      }
+    }
+    count += 1;
+  }
+  return count;
+}
+
 async function trackAdminTelemetry(payload: Omit<TelemetryEvent, "id" | "createdAt">) {
   try {
     await supabase.from("AppTelemetryEvent").insert({
@@ -508,6 +634,11 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
       ...product,
       categoria: data.categorias.find((item) => item.id === product.categoriaId)?.nome || "",
       marca: data.marcas.find((item) => item.id === product.marcaId)?.nome || "",
+      aplicacoes: data.produtoAplicacoes
+        .filter((item) => item.produtoId === product.id)
+        .map((item) => data.aplicacoes.find((application) => application.id === item.aplicacaoId)?.nome || item.aplicacaoId)
+        .filter(Boolean)
+        .join("|"),
       montadoraModelo: data.produtoModelosVeiculo
         .filter((item) => item.produtoId === product.id)
         .map((item) => `${data.montadoras.find((brand) => brand.id === item.montadoraId)?.nome || item.montadoraId}:${data.modelosVeiculo.find((model) => model.id === item.modeloId)?.nome || item.modeloId}`)
@@ -582,11 +713,21 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
     await reload();
   };
 
+  const importOfficialTemplate = async (file: File) => {
+    try {
+      const count = await importProductsFromTemplate(file, data);
+      notify(`${count} produtos importados/atualizados pelo modelo oficial.`);
+      await reload();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Falha ao importar a planilha modelo.");
+    }
+  };
+
   return (
     <>
       <div className="mb-5 flex flex-wrap gap-3">
         <button onClick={() => setEditing(newProduct(data))} className="btn-yellow"><PackagePlus size={17} /> Criar produto</button>
-        <label className="btn-white cursor-pointer"><Upload size={17} /> Importar CSV/XLSX<input type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={(event) => event.target.files?.[0] && void importProducts(event.target.files[0])} /></label>
+        <label className="btn-white cursor-pointer"><Upload size={17} /> Importar CSV/XLSX<input type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={(event) => event.target.files?.[0] && void importOfficialTemplate(event.target.files[0])} /></label>
         <button onClick={() => exportProducts("csv")} className="btn-white"><Download size={17} /> Exportar CSV</button>
         <button onClick={() => exportProducts("xlsx")} className="btn-white"><FileSpreadsheet size={17} /> Exportar XLSX</button>
       </div>
@@ -617,6 +758,7 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
 function ProductModal({ product, data, onClose, reload, notify }: { product: Produto; data: AppData; onClose: () => void; reload: () => Promise<void>; notify: (message: string) => void }) {
   const [draft, setDraft] = useState<Produto>(product);
   const [vehicleLinks, setVehicleLinks] = useState<ProdutoModeloVeiculo[]>(() => data.produtoModelosVeiculo.filter((item) => item.produtoId === product.id));
+  const [applicationLinks, setApplicationLinks] = useState<ProdutoAplicacao[]>(() => data.produtoAplicacoes.filter((item) => item.produtoId === product.id));
   const [saving, setSaving] = useState(false);
   const isNew = !data.produtos.some((item) => item.id === product.id);
   const extras = draft.imagensExtras || [];
@@ -655,6 +797,22 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
       };
       const { error } = isNew ? await supabase.from("Produto").insert({ id: draft.id, ...payload }) : await supabase.from("Produto").update(payload).eq("id", draft.id);
       if (error) throw error;
+      const existingApplicationLinks = data.produtoAplicacoes.filter((item) => item.produtoId === draft.id);
+      const currentApplicationIds = new Set(applicationLinks.map((item) => item.id).filter(Boolean));
+      for (const item of existingApplicationLinks) {
+        if (item.id && !currentApplicationIds.has(item.id)) {
+          const { error: deleteError } = await supabase.from("ProdutoAplicacao").delete().eq("id", item.id);
+          if (deleteError) throw deleteError;
+        }
+      }
+      for (const item of applicationLinks) {
+        if (!item.aplicacaoId) continue;
+        const exists = Boolean(item.id && existingApplicationLinks.some((current) => current.id === item.id));
+        if (!exists) {
+          const { error: applicationError } = await supabase.from("ProdutoAplicacao").insert({ id: item.id || createId("pa"), produtoId: draft.id, aplicacaoId: item.aplicacaoId });
+          if (applicationError) throw applicationError;
+        }
+      }
       const existingLinks = data.produtoModelosVeiculo.filter((item) => item.produtoId === draft.id);
       const currentIds = new Set(vehicleLinks.map((item) => item.id));
       for (const item of existingLinks) {
@@ -729,6 +887,31 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
           <div className="mb-3 font-black">Status</div>
           <label className="mr-6 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(event) => set("ativo", event.target.checked)} /> Ativo</label>
           <label className="inline-flex items-center gap-2"><input type="checkbox" checked={Boolean(draft.destaque)} onChange={(event) => set("destaque", event.target.checked)} /> Destaque</label>
+        </div>
+      </div>
+      <div className="mt-4 rounded-2xl border border-line p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <div className="font-black">Aplicações</div>
+            <div className="text-xs text-muted">Vincule o produto a aplicações comerciais como Linha leve, Linha pesada ou outras.</div>
+          </div>
+          <button className="btn-white" disabled={data.aplicacoes.length === 0} onClick={() => {
+            const aplicacaoId = data.aplicacoes.find((application) => !applicationLinks.some((link) => link.aplicacaoId === application.id))?.id || data.aplicacoes[0]?.id || "";
+            if (!aplicacaoId) return;
+            setApplicationLinks([...applicationLinks, { id: createId("pa"), produtoId: draft.id, aplicacaoId }]);
+          }}><Plus size={15} /> Adicionar</button>
+        </div>
+        <div className="space-y-3">
+          {data.aplicacoes.length === 0 && <div className="rounded-xl bg-soft p-4 text-sm text-muted">Cadastre aplicações na aba Aplicações antes de vincular produtos.</div>}
+          {applicationLinks.length === 0 && data.aplicacoes.length > 0 && <div className="rounded-xl bg-soft p-4 text-sm text-muted">Nenhuma aplicação vinculada.</div>}
+          {applicationLinks.map((link, index) => (
+            <div key={link.id || `${link.aplicacaoId}-${index}`} className="grid gap-3 rounded-xl bg-soft p-3 lg:grid-cols-[1fr_auto]">
+              <select className="input" value={link.aplicacaoId || ""} onChange={(event) => setApplicationLinks(applicationLinks.map((item, current) => current === index ? { ...item, aplicacaoId: event.target.value } : item))}>
+                {data.aplicacoes.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}
+              </select>
+              <button className="icon-btn" onClick={() => setApplicationLinks(applicationLinks.filter((_, current) => current !== index))}><Trash2 size={16} /></button>
+            </div>
+          ))}
         </div>
       </div>
       <div className="mt-4 rounded-2xl border border-line p-4">
