@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import ExcelJS from "exceljs";
+import brilandLogo from "../../../assets/briland-logo.png";
 import {
   BarChart3,
   Boxes,
@@ -179,6 +180,45 @@ function importValue(row: Record<string, unknown>, aliases: string[]) {
   return "";
 }
 
+const importColumns = {
+  codigo: ["Código interno", "Código", "Codigo", "Cód.", "Cod", "SKU", "Referência", "Referencia"],
+  nome: ["Nome", "Descrição", "Descricao", "Descrição do produto", "Nome do produto", "Produto"],
+  categoria: ["Categoria", "Nome da categoria", "Grupo", "Linha"],
+  marca: ["Marca", "Fabricante"],
+  ean: ["EAN", "Código de barras", "Codigo de barras", "GTIN"],
+  ncm: ["NCM", "NCM com os pontos", "Classificação fiscal", "Classificacao fiscal"],
+  caixa: ["Caixa Master", "Caixa master", "Quantidade por caixa", "Qtd caixa", "Embalagem"],
+  preco: ["Preço", "Preco", "Valor"],
+  estoque: ["Estoque", "Quantidade em estoque", "Saldo"],
+  aplicacoes: ["Aplicações", "Aplicacoes", "Aplicação", "Aplicacao"]
+} as const;
+
+function spreadsheetCellText(value: ExcelJS.CellValue | undefined) {
+  if (value == null) return "";
+  if (value instanceof Date) return value.toLocaleDateString("pt-BR");
+  if (typeof value === "object") {
+    if ("result" in value) return String(value.result ?? "").trim();
+    if ("richText" in value) return value.richText.map((part) => part.text).join("").trim();
+    if ("text" in value) return String(value.text ?? "").trim();
+  }
+  return String(value).trim();
+}
+
+class SpreadsheetImportError extends Error {
+  constructor(public details: string[], public imported = 0) { super("A planilha contém informações que precisam ser corrigidas."); }
+}
+
+function friendlySpreadsheetError(error: unknown, line: number, code?: string) {
+  const raw = error instanceof Error ? error.message : String(error || "Erro desconhecido");
+  const prefix = `Linha ${line}${code ? ` — produto ${code}` : ""}: `;
+  if (/duplicate|unique|already exists/i.test(raw)) return `${prefix}o código já está cadastrado e não pôde ser atualizado.`;
+  if (/foreign key|violates.*constraint/i.test(raw)) return `${prefix}a categoria, marca ou aplicação informada não pôde ser vinculada.`;
+  if (/permission|policy|row-level|rls|not allowed|forbidden/i.test(raw)) return `${prefix}sua conta não tem permissão para cadastrar esse item.`;
+  if (/invalid input|numeric|integer|number/i.test(raw)) return `${prefix}há um número em formato inválido. Confira preço, estoque, ordem e caixa master.`;
+  if (/network|fetch|timeout/i.test(raw)) return `${prefix}houve uma falha de conexão. Tente novamente.`;
+  return `${prefix}não foi possível salvar. Confira Código, Descrição, Categoria, Marca, EAN, NCM e Caixa Master.`;
+}
+
 function splitImportList(value: string) {
   return value.split(/[|;,]/).map((item) => item.trim()).filter(Boolean);
 }
@@ -212,12 +252,12 @@ async function readSpreadsheetRows(file: File): Promise<Record<string, unknown>[
   await workbook.xlsx.load(await file.arrayBuffer());
   const sheet = workbook.worksheets[0];
   if (!sheet) throw new Error("A planilha não contém nenhuma aba.");
-  const headers = (sheet.getRow(1).values as ExcelJS.CellValue[]).slice(1).map((value) => String(value ?? "").trim());
+  const headers = (sheet.getRow(1).values as ExcelJS.CellValue[]).slice(1).map(spreadsheetCellText);
   const rows: Record<string, unknown>[] = [];
   sheet.eachRow((sheetRow, rowNumber) => {
     if (rowNumber === 1) return;
     const values = (sheetRow.values as ExcelJS.CellValue[]).slice(1);
-    if (values.some((value) => value != null && String(value).trim())) rows.push(Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""])));
+    if (values.some((value) => spreadsheetCellText(value))) rows.push(Object.fromEntries(headers.map((header, index) => [header, spreadsheetCellText(values[index])])));
   });
   return rows;
 }
@@ -231,11 +271,11 @@ async function importProductsFromTemplate(file: File, data: AppData) {
   }
   if (!rows.length) throw new Error("A primeira aba da planilha está vazia.");
   const headers = Object.keys(rows[0] || {}).map(normalizeImportKey);
-  const requiredHeaders = ["codigointerno", "categoria", "marca", "nome", "ean", "ncm", "caixamaster"];
-  const missingHeaders = requiredHeaders.filter((key) => !headers.includes(key));
+  const requiredColumns = (["codigo", "nome", "categoria", "marca", "ean", "ncm", "caixa"] as const);
+  const missingHeaders = requiredColumns.filter((key) => !importColumns[key].some((alias) => headers.includes(normalizeImportKey(alias))));
   if (missingHeaders.length) {
-    const labels: Record<string, string> = { codigointerno: "Código interno", categoria: "Categoria", marca: "Marca", nome: "Nome", ean: "EAN", ncm: "NCM", caixamaster: "Caixa Master" };
-    throw new Error(`Cabeçalhos ausentes: ${missingHeaders.map((key) => labels[key]).join(", ")}. Não renomeie as colunas do modelo.`);
+    const labels = { codigo: "Código", nome: "Descrição", categoria: "Categoria", marca: "Marca", ean: "EAN / Código de barras", ncm: "NCM", caixa: "Caixa Master" };
+    throw new SpreadsheetImportError(missingHeaders.map((key) => `Coluna não encontrada: “${labels[key]}”. Confira o título na primeira linha da planilha.`));
   }
 
   const validationErrors: string[] = [];
@@ -243,27 +283,22 @@ async function importProductsFromTemplate(file: File, data: AppData) {
   rows.forEach((row, index) => {
     const line = index + 2;
     const values = {
-      codigo: importValue(row, ["Código interno", "codigoInterno", "codigo"]),
-      categoria: importValue(row, ["Categoria", "categoriaId"]),
-      marca: importValue(row, ["Marca", "marcaId"]),
-      nome: importValue(row, ["Nome", "Descrição do produto", "Nome Descrição do produto"]),
-      ncm: importValue(row, ["NCM", "NCM Com os pontos"]),
-      caixa: importValue(row, ["Caixa Master", "caixaMaster"])
+      codigo: importValue(row, [...importColumns.codigo]), categoria: importValue(row, [...importColumns.categoria]), marca: importValue(row, [...importColumns.marca]),
+      nome: importValue(row, [...importColumns.nome]), ean: importValue(row, [...importColumns.ean]), ncm: importValue(row, [...importColumns.ncm]), caixa: importValue(row, [...importColumns.caixa])
     };
     if (!Object.values(values).some(Boolean)) return;
-    const missing = Object.entries(values).filter(([, value]) => !value).map(([key]) => ({ codigo: "Código interno", categoria: "Categoria", marca: "Marca", nome: "Nome", ncm: "NCM", caixa: "Caixa Master" }[key]));
+    const missing = Object.entries(values).filter(([, value]) => !value).map(([key]) => ({ codigo: "Código", categoria: "Categoria", marca: "Marca", nome: "Descrição", ean: "EAN / Código de barras", ncm: "NCM", caixa: "Caixa Master" }[key]));
     if (missing.length) validationErrors.push(`Linha ${line}: campos vazios — ${missing.join(", ")}.`);
     const normalizedCode = values.codigo.toLocaleLowerCase("pt-BR");
     if (normalizedCode && seenCodes.has(normalizedCode)) validationErrors.push(`Linha ${line}: Código interno duplicado (também aparece na linha ${seenCodes.get(normalizedCode)}).`);
     else if (normalizedCode) seenCodes.set(normalizedCode, line);
-    for (const [label, aliases] of [["Preço", ["Preço", "preco"]], ["Estoque", ["Estoque", "estoque"]]] as const) {
+    for (const [label, aliases] of [["Preço", importColumns.preco], ["Estoque", importColumns.estoque]] as const) {
       const value = importValue(row, [...aliases]);
       if (value && numberOrNull(value) == null) validationErrors.push(`Linha ${line}: ${label} deve ser numérico; valor recebido: “${value}”.`);
     }
   });
   if (validationErrors.length) {
-    const shown = validationErrors.slice(0, 12);
-    throw new Error(`A planilha tem ${validationErrors.length} erro(s):\n${shown.join("\n")}${validationErrors.length > shown.length ? `\n… e mais ${validationErrors.length - shown.length}.` : ""}`);
+    throw new SpreadsheetImportError(validationErrors);
   }
 
   const categorias = [...data.categorias];
@@ -301,24 +336,20 @@ async function importProductsFromTemplate(file: File, data: AppData) {
     return created;
   };
 
-  let count = 0;
-  for (const row of rows) {
-    const codigoInterno = importValue(row, ["Código interno", "codigoInterno", "codigo"]);
-    const categoriaText = importValue(row, ["Categoria", "categoriaId"]);
-    const marcaText = importValue(row, ["Marca", "marcaId"]);
-    const nome = importValue(row, ["Nome", "Descrição do produto", "Nome Descrição do produto"]);
-    const ncm = importValue(row, ["NCM", "NCM Com os pontos"]);
-    const caixaMaster = importValue(row, ["Caixa Master", "caixaMaster"]);
+  let count = 0; const saveErrors: string[] = [];
+  for (const [rowIndex, row] of rows.entries()) {
+    const line = rowIndex + 2;
+    const codigoInterno = importValue(row, [...importColumns.codigo]); const categoriaText = importValue(row, [...importColumns.categoria]); const marcaText = importValue(row, [...importColumns.marca]);
+    const nome = importValue(row, [...importColumns.nome]); const ean = importValue(row, [...importColumns.ean]); const ncm = importValue(row, [...importColumns.ncm]); const caixaMaster = importValue(row, [...importColumns.caixa]);
     if (!codigoInterno && !nome && !categoriaText && !marcaText) continue;
     if (!codigoInterno || !categoriaText || !marcaText || !nome || !ncm || !caixaMaster) {
       throw new Error(`Linha ${count + 2}: preencha Código interno, Categoria, Marca, Nome, NCM e Caixa Master.`);
     }
 
-    const existing = data.produtos.find((item) => item.codigoInterno === codigoInterno);
-    const categoria = await ensureCategoria(categoriaText);
-    const marca = await ensureMarca(marcaText);
-    const productId = existing?.id || createId("prod");
-    const payload = {
+    try {
+      const existing = data.produtos.find((item) => (item.codigoInterno || "").trim().toLocaleLowerCase("pt-BR") === codigoInterno.trim().toLocaleLowerCase("pt-BR"));
+      const categoria = await ensureCategoria(categoriaText); const marca = await ensureMarca(marcaText); const productId = existing?.id || createId("prod");
+      const payload = {
       nome,
       slug: importValue(row, ["slug"]) || slugify(`${codigoInterno}-${nome}`),
       codigoInterno,
@@ -326,12 +357,11 @@ async function importProductsFromTemplate(file: File, data: AppData) {
       marcaId: marca.id,
       descricaoCurta: importValue(row, ["Descrição curta", "descricaoCurta"]) || null,
       descricaoCompleta: importValue(row, ["Descrição completa", "descricaoCompleta"]) || null,
-      ean: importValue(row, ["EAN"]) || null,
+      ean,
       ncm,
       caixaMaster,
       ca: importValue(row, ["CA"]) || null,
-      preco: numberOrNull(importValue(row, ["Preço", "preco"])),
-      estoque: numberOrNull(importValue(row, ["Estoque", "estoque"])),
+      preco: numberOrNull(importValue(row, [...importColumns.preco])), estoque: numberOrNull(importValue(row, [...importColumns.estoque])),
       condicaoComercial: importValue(row, ["Condição Comercial", "condicaoComercial"]) || null,
       observacaoComercial: importValue(row, ["Observação Comercial", "observacaoComercial"]) || null,
       ativo: true,
@@ -339,24 +369,25 @@ async function importProductsFromTemplate(file: File, data: AppData) {
       ordem: existing?.ordem ?? 0,
       updatedAt: new Date().toISOString()
     };
-    const request = existing
+      const request = existing
       ? supabase.from("Produto").update(payload).eq("id", existing.id)
       : supabase.from("Produto").insert({ id: productId, ...payload });
-    const { error } = await request;
-    if (error) throw new Error(`Linha ${count + 2} (${codigoInterno}): não foi possível salvar o produto — ${error.message}`);
+      const { error } = await request; if (error) throw error;
 
-    const applicationText = importValue(row, ["Aplicações", "Aplicacao", "Aplicacoes"]);
-    if (applicationText) {
+      const applicationText = importValue(row, [...importColumns.aplicacoes]);
+      if (applicationText) {
       const { error: deleteApplicationError } = await supabase.from("ProdutoAplicacao").delete().eq("produtoId", productId);
       if (deleteApplicationError) throw deleteApplicationError;
       for (const applicationName of splitImportList(applicationText)) {
         const application = await ensureAplicacao(applicationName);
-        const { error: applicationError } = await supabase.from("ProdutoAplicacao").insert({ id: createId("pa"), produtoId: productId, aplicacaoId: application.id });
+        const { error: applicationError } = await supabase.from("ProdutoAplicacao").insert({ produtoId: productId, aplicacaoId: application.id });
         if (applicationError) throw applicationError;
       }
-    }
-    count += 1;
+      }
+      count += 1;
+    } catch (error) { saveErrors.push(friendlySpreadsheetError(error, line, codigoInterno)); }
   }
+  if (saveErrors.length) throw new SpreadsheetImportError(saveErrors, count);
   return count;
 }
 
@@ -557,8 +588,7 @@ export default function Page() {
       <aside className={`admin-sidebar fixed inset-y-0 left-0 z-40 flex w-[286px] flex-col overflow-hidden p-5 transition-transform duration-300 ${mobileNavOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0`}>
         <div className="brand-block mb-6 shrink-0 p-4">
           <div className="flex items-center gap-3">
-            <div className="brand-mark">B</div>
-            <div><div className="text-xl font-black tracking-[.08em]">BRILAND</div><div className="text-[11px] font-bold uppercase tracking-[.18em] text-muted">Central de gestão</div></div>
+            <img src={brilandLogo.src} alt="Briland" className="h-12 w-full max-w-[170px] object-contain object-left" />
           </div>
         </div>
         <div className="mb-3 px-3 text-[10px] font-black uppercase tracking-[.22em] text-muted">Menu principal</div>
@@ -579,7 +609,7 @@ export default function Page() {
           <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <button aria-label="Abrir menu" onClick={() => setMobileNavOpen(true)} className="icon-btn lg:hidden"><Menu size={19} /></button>
-              <div><div className="text-[10px] font-black uppercase tracking-[.24em] text-amber-500">Briland Admin</div><h1 className="text-xl font-black lg:text-2xl">{active}</h1></div>
+              <div><div className="text-[10px] font-black uppercase tracking-[.24em] text-blue-800">Briland Admin</div><h1 className="text-xl font-black lg:text-2xl">{active}</h1></div>
             </div>
             <div className="flex items-center gap-2 lg:gap-3">
               <label className="search-control hidden h-11 min-w-[280px] items-center gap-2 px-4 text-sm md:flex">
@@ -620,7 +650,7 @@ function FullLoader({ label }: { label: string }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-navy text-white">
       <div className="text-center">
-        <Loader2 className="mx-auto mb-4 animate-spin text-yellow" size={34} />
+        <Loader2 className="mx-auto mb-4 animate-spin text-white" size={34} />
         <div className="font-bold">{label}</div>
       </div>
     </div>
@@ -654,7 +684,7 @@ function LoginScreen({ onLogin, error, loading }: { onLogin: (email: string, pas
           <Field label="E-mail"><input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required className="input" /></Field>
           <Field label="Senha"><input value={password} onChange={(event) => setPassword(event.target.value)} type="password" required className="input" /></Field>
           {error && <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{error}</div>}
-          <button disabled={loading} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-yellow font-black text-navy disabled:opacity-60">
+          <button disabled={loading} className="btn-primary h-12 w-full">
             {loading && <Loader2 className="animate-spin" size={18} />}
             Entrar
           </button>
@@ -687,7 +717,7 @@ function Dashboard({ data, setActive, role }: { data: AppData; setActive: (tab: 
   return (
     <div className="space-y-6">
       <section className="hero-dashboard relative overflow-hidden p-6 lg:p-8">
-        <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between"><div><div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white/75 px-3 py-1.5 text-xs font-black text-navy"><Sparkles size={14} className="text-amber-500" /> Visão geral em tempo real</div><h2 className="max-w-2xl text-3xl font-black leading-tight lg:text-4xl">Tudo que importa para o catálogo, em um só lugar.</h2><p className="mt-3 max-w-xl text-sm font-semibold text-slate-600 lg:text-base">Acompanhe produtos, oportunidades e a saúde operacional da plataforma Briland.</p></div><div className="flex flex-wrap gap-3"><button onClick={() => setActive("Produtos")} className="btn-primary"><Plus size={17} /> Novo produto</button><button onClick={() => setActive("Leads")} className="btn-glass">Ver oportunidades <ArrowUpRight size={16} /></button></div></div>
+        <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between"><div><div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white/75 px-3 py-1.5 text-xs font-black text-navy"><Sparkles size={14} className="text-blue-800" /> Visão geral em tempo real</div><h2 className="max-w-2xl text-3xl font-black leading-tight lg:text-4xl">Tudo que importa para o catálogo, em um só lugar.</h2><p className="mt-3 max-w-xl text-sm font-semibold text-slate-600 lg:text-base">Acompanhe produtos, oportunidades e a saúde operacional da plataforma Briland.</p></div><div className="flex flex-wrap gap-3"><button onClick={() => setActive("Produtos")} className="btn-primary"><Plus size={17} /> Novo produto</button><button onClick={() => setActive("Leads")} className="btn-glass">Ver oportunidades <ArrowUpRight size={16} /></button></div></div>
       </section>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {cards.map(({ label, value, helper, tab, icon: Icon, tone }) => (
@@ -710,6 +740,8 @@ function Dashboard({ data, setActive, role }: { data: AppData; setActive: (tab: 
 
 function Products({ data, query, reload, notify }: { data: AppData; query: string; reload: () => Promise<void>; notify: (message: string) => void }) {
   const [editing, setEditing] = useState<Produto | null>(null);
+  const [importReport, setImportReport] = useState<{ fileName: string; imported: number; errors: string[] } | null>(null);
+  const [importing, setImporting] = useState(false);
   const lower = query.toLowerCase();
   const products = data.produtos.filter((item) => [item.nome, item.codigoInterno, item.ean, item.ncm].join(" ").toLowerCase().includes(lower));
 
@@ -798,23 +830,26 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
   };
 
   const importOfficialTemplate = async (file: File) => {
+    setImporting(true);
     try {
       const count = await importProductsFromTemplate(file, data);
       notify(`${count} produtos importados/atualizados pelo modelo oficial.`);
       await reload();
+      setImportReport({ fileName: file.name, imported: count, errors: [] });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Falha ao importar a planilha modelo.";
-      notify("Importação não concluída. Veja o relatório aberto na tela.");
-      window.alert(`Erro na importação de ${file.name}\n\n${message}\n\nCorrija os itens indicados e envie novamente.`);
+      const errors = error instanceof SpreadsheetImportError ? error.details : [friendlySpreadsheetError(error, 2)];
+      const message = errors.join("\n");
+      notify("A planilha precisa de correções. O relatório foi aberto.");
+      setImportReport({ fileName: file.name, imported: error instanceof SpreadsheetImportError ? error.imported : 0, errors });
       void trackAdminTelemetry({ eventType: "import_error", screen: "Produtos", route: "admin-web", success: false, message, metadata: { fileName: file.name, fileSize: file.size } });
-    }
+    } finally { setImporting(false); }
   };
 
   return (
     <>
       <div className="mb-5 flex flex-wrap gap-3">
         <button onClick={() => setEditing(newProduct(data))} className="btn-yellow"><PackagePlus size={17} /> Criar produto</button>
-        <label className="btn-white cursor-pointer"><Upload size={17} /> Importar CSV/XLSX<input type="file" accept=".csv,.xlsx" className="hidden" onChange={(event) => event.target.files?.[0] && void importOfficialTemplate(event.target.files[0])} /></label>
+        <label className={`btn-white cursor-pointer ${importing ? "pointer-events-none opacity-60" : ""}`}>{importing ? <Loader2 className="animate-spin" size={17} /> : <Upload size={17} />} {importing ? "Analisando planilha..." : "Importar CSV/XLSX"}<input type="file" accept=".csv,.xlsx" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importOfficialTemplate(file); event.target.value = ""; }} /></label>
         <button onClick={() => exportProducts("csv")} className="btn-white"><Download size={17} /> Exportar CSV</button>
         <button onClick={() => void exportProducts("xlsx")} className="btn-white"><FileSpreadsheet size={17} /> Exportar XLSX</button>
       </div>
@@ -838,8 +873,14 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
         </Table>
       </Panel>
       {editing && <ProductModal product={editing} data={data} onClose={() => setEditing(null)} reload={reload} notify={notify} />}
+      {importReport && <ImportReportModal report={importReport} onClose={() => setImportReport(null)} />}
     </>
   );
+}
+
+function ImportReportModal({ report, onClose }: { report: { fileName: string; imported: number; errors: string[] }; onClose: () => void }) {
+  const ok = report.errors.length === 0;
+  return <div className="fixed inset-0 z-[70] flex items-center justify-center bg-navy/45 p-4 backdrop-blur-sm"><div className="max-h-[88vh] w-full max-w-3xl overflow-hidden rounded-[28px] bg-white shadow-2xl"><div className={`p-6 text-white ${ok ? "bg-emerald-600" : "bg-navy"}`}><div className="flex items-start justify-between gap-4"><div><div className="text-xs font-black uppercase tracking-[.2em] text-white/60">Relatório da planilha</div><h2 className="mt-2 text-2xl font-black">{ok ? "Importação concluída" : `${report.errors.length} correção(ões) necessária(s)`}</h2><p className="mt-2 text-sm text-white/70">{report.fileName}</p></div><button onClick={onClose} className="rounded-full bg-white/10 px-4 py-2 text-sm font-black hover:bg-white/20">Fechar</button></div></div><div className="max-h-[58vh] overflow-y-auto p-6">{ok ? <div className="rounded-2xl bg-emerald-50 p-5 text-emerald-800"><div className="text-3xl font-black">{report.imported}</div><div className="mt-1 font-bold">produto(s) cadastrado(s) ou atualizado(s).</div></div> : <>{report.imported > 0 && <div className="mb-4 rounded-2xl bg-blue-50 p-4 text-sm font-bold text-blue-900">{report.imported} produto(s) foram salvos. Os itens abaixo não foram cadastrados.</div>}<p className="mb-5 text-sm font-semibold text-muted">Corrija os pontos abaixo na planilha e envie o arquivo novamente. As linhas são contadas exatamente como aparecem no Excel.</p><ol className="space-y-3">{report.errors.map((error, index) => <li key={`${error}-${index}`} className="flex gap-3 rounded-2xl border border-red-100 bg-red-50 p-4 text-sm text-red-900"><span className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-red-600 text-xs font-black text-white">{index + 1}</span><span className="pt-1 font-bold leading-relaxed">{error}</span></li>)}</ol></>}</div><div className="border-t border-line bg-slate-50 p-4 text-right"><button onClick={onClose} className="btn-primary">Entendi, vou corrigir</button></div></div></div>;
 }
 
 function ProductModal({ product, data, onClose, reload, notify }: { product: Produto; data: AppData; onClose: () => void; reload: () => Promise<void>; notify: (message: string) => void }) {

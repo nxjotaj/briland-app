@@ -6,7 +6,7 @@ const config: Config = {
     extend: {
       colors: {
         navy: "#021126",
-        yellow: "#FCB900",
+        yellow: "#021126",
         soft: "#F4F6FA",
         ink: "#111827",
         muted: "#667085",
