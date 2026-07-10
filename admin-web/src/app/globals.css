@@ -22,7 +22,9 @@ input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-o
 .nav-icon { display:flex; width:34px; height:34px; align-items:center; justify-content:center; border-radius:11px; background:#f3f5f8; color:#687386; transition:.2s ease; }
 .nav-item-active .nav-icon { background:#fff; color:#021126; box-shadow:0 7px 16px rgba(2,17,38,.18); }
 .user-card { border:1px solid #e9ecf1; border-radius:18px; background:#fafbfc; }
-.user-avatar,.lead-avatar { display:flex; align-items:center; justify-content:center; flex:none; border-radius:13px; background:linear-gradient(145deg,#071b38,#0d3a6a); color:#fff; font-weight:950; }
+.user-avatar,.lead-avatar { display:flex; align-items:center; justify-content:center; flex:none; border-radius:13px; font-weight:950; }
+.user-avatar { background:linear-gradient(145deg,#071b38,#0d3a6a); color:#fff; }
+.lead-avatar { background:linear-gradient(145deg,#fcb900,#ffda58); color:#021126; box-shadow:0 7px 16px rgba(252,185,0,.20); }
 .user-avatar { width:38px; height:38px; }.lead-avatar { width:40px; height:40px; }
 .admin-header { border-bottom:1px solid rgba(228,231,236,.85); background:rgba(255,255,255,.82); backdrop-filter:blur(18px); }
 .search-control { border:1px solid #e4e7ec; border-radius:14px; background:#fff; box-shadow:0 5px 18px rgba(2,17,38,.04); transition:.2s ease; }
@@ -38,15 +40,17 @@ input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-o
 .metric-blue { background:#e9f2ff; color:#2369c8; }.metric-yellow { background:#e6f0fb; color:#174f85; }.metric-violet { background:#f2eaff; color:#8150cb; }.metric-green { background:#e3f8ed; color:#21885a; }
 .panel-card { border-radius:24px; }
 .panel-more { width:35px; height:30px; border-radius:10px; color:#98a2b3; letter-spacing:2px; transition:.2s ease; }.panel-more:hover { background:#f4f6f8; color:#021126; }
+.panel-menu { position:absolute; right:0; top:36px; z-index:20; min-width:175px; overflow:hidden; border:1px solid #e4e7ec; border-radius:14px; background:#fff; padding:6px; box-shadow:0 16px 38px rgba(2,17,38,.14); }
+.panel-menu button { width:100%; border-radius:10px; padding:9px 11px; color:#344054; font-size:12px; font-weight:800; text-align:left; }.panel-menu button:hover { background:#f4f6f8; color:#021126; }
 .summary-card { border:1px solid #edf0f4; border-radius:18px; background:linear-gradient(145deg,#fbfcfd,#f5f7f9); }
 
 .chart-bars { display:flex; height:260px; align-items:flex-end; gap:10px; padding-top:28px; }
 .chart-column { display:flex; min-width:0; height:100%; flex:1; flex-direction:column; align-items:center; gap:8px; }
 .chart-value { height:18px; font-size:11px; font-weight:900; color:#667085; }
 .chart-track { display:flex; width:100%; max-width:46px; flex:1; align-items:flex-end; overflow:hidden; border-radius:14px; background:linear-gradient(180deg,#f5f6f8,#fafafa); }
-.chart-fill { width:100%; border-radius:14px; background:linear-gradient(180deg,#3981c5,#0e4b83 70%,#021126); box-shadow:0 8px 18px rgba(2,17,38,.20); transition:height .45s ease; }
+.chart-fill { width:100%; border-radius:14px; background:linear-gradient(180deg,#ffdc66,#fcb900 70%,#d99f00); box-shadow:0 8px 18px rgba(252,185,0,.24); transition:height .45s ease; }
 .chart-label { text-transform:capitalize; font-size:11px; font-weight:800; color:#98a2b3; }
-.progress-track { height:9px; overflow:hidden; border-radius:999px; background:#f0f2f5; }.progress-fill { height:100%; border-radius:999px; background:linear-gradient(90deg,#021126,#15518d); }.progress-1{background:linear-gradient(90deg,#164f86,#4d92d1)}.progress-2{background:linear-gradient(90deg,#7557d3,#aa8cff)}.progress-3{background:linear-gradient(90deg,#27a66b,#63d29a)}.progress-4{background:linear-gradient(90deg,#f26b50,#ff9b84)}
+.progress-track { height:9px; overflow:hidden; border-radius:999px; background:#f0f2f5; }.progress-fill,.progress-1,.progress-2,.progress-3,.progress-4 { height:100%; border-radius:999px; background:linear-gradient(90deg,#e3a500,#fcb900 55%,#ffda58); box-shadow:0 3px 9px rgba(252,185,0,.18); }
 .status-pill { border-radius:999px; padding:5px 9px; font-size:9px; font-weight:950; letter-spacing:.06em; }.status-novo{background:#fff2bd;color:#8d6500}.status-em_atendimento{background:#e7f1ff;color:#2369c8}.status-convertido{background:#e3f8ed;color:#21885a}.status-perdido{background:#ffebe7;color:#c34935}
 
 .table-wrap { margin:0 -5px -5px; border-radius:18px; }

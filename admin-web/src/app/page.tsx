@@ -1928,7 +1928,9 @@ function ModalActions({ saving, onSave, onDelete }: { saving: boolean; onSave: (
 }
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="panel-card p-5 lg:p-6"><div className="mb-5 flex items-center justify-between gap-3"><h2 className="text-base font-black lg:text-lg">{title}</h2><button className="panel-more" aria-label={`Mais opções de ${title}`}>•••</button></div>{children}</section>;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  return <section className="panel-card p-5 lg:p-6"><div className={`${collapsed ? "mb-0" : "mb-5"} flex items-center justify-between gap-3`}><h2 className="text-base font-black lg:text-lg">{title}</h2><div className="relative"><button onClick={() => setMenuOpen((value) => !value)} className="panel-more" aria-expanded={menuOpen} aria-label={`Opções de ${title}`}>•••</button>{menuOpen && <div className="panel-menu"><button onClick={() => { setCollapsed((value) => !value); setMenuOpen(false); }}>{collapsed ? "Expandir conteúdo" : "Recolher conteúdo"}</button></div>}</div></div>{!collapsed && children}</section>;
 }
 
 function Table({ children }: { children: React.ReactNode }) {
