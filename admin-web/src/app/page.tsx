@@ -9,6 +9,11 @@ import {
   Building2,
   CheckCircle2,
   Activity,
+  ArrowUpRight,
+  Bell,
+  ChevronRight,
+  CircleUserRound,
+  Clock3,
   Download,
   Eye,
   FileSpreadsheet,
@@ -18,6 +23,7 @@ import {
   Lock,
   LogOut,
   MessageCircle,
+  Menu,
   PackagePlus,
   Pencil,
   Plus,
@@ -26,8 +32,10 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Sparkles,
   Tags,
   Trash2,
+  TrendingUp,
   Upload,
   Users
 } from "lucide-react";
@@ -374,6 +382,7 @@ export default function Page() {
   const [active, setActive] = useState<Tab>("Dashboard");
   const [query, setQuery] = useState("");
   const [toast, setToast] = useState("");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const notify = (message: string) => {
     setToast(message);
@@ -543,58 +552,47 @@ export default function Page() {
   const activeTab = canSeeTab ? active : "Dashboard";
 
   return (
-    <div className="min-h-screen bg-soft text-navy">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-72 flex-col overflow-hidden bg-navy p-5 text-white lg:flex">
-        <div className="mb-5 shrink-0 rounded-2xl bg-white/8 p-5">
-          <div className="text-3xl font-black tracking-wide">BRILAND</div>
-          <div className="mt-2 text-sm text-white/60">Painel administrativo web</div>
+    <div className="admin-shell min-h-screen text-navy">
+      {mobileNavOpen && <button aria-label="Fechar menu" className="fixed inset-0 z-30 bg-navy/30 backdrop-blur-sm lg:hidden" onClick={() => setMobileNavOpen(false)} />}
+      <aside className={`admin-sidebar fixed inset-y-0 left-0 z-40 flex w-[286px] flex-col overflow-hidden p-5 transition-transform duration-300 ${mobileNavOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0`}>
+        <div className="brand-block mb-6 shrink-0 p-4">
+          <div className="flex items-center gap-3">
+            <div className="brand-mark">B</div>
+            <div><div className="text-xl font-black tracking-[.08em]">BRILAND</div><div className="text-[11px] font-bold uppercase tracking-[.18em] text-muted">Central de gestão</div></div>
+          </div>
         </div>
-        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+        <div className="mb-3 px-3 text-[10px] font-black uppercase tracking-[.22em] text-muted">Menu principal</div>
+        <nav className="admin-nav min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
           {visibleTabs.map(({ id, icon: Icon }) => (
-            <button key={id} onClick={() => setActive(id)} className={`flex items-center gap-3 rounded-xl px-4 py-3 text-left text-sm font-bold transition ${active === id ? "bg-yellow text-navy" : "text-white/78 hover:bg-white/10"}`}>
-              <Icon size={18} />
-              {id}
+            <button key={id} onClick={() => { setActive(id); setMobileNavOpen(false); }} className={`nav-item ${active === id ? "nav-item-active" : ""}`}>
+              <span className="nav-icon"><Icon size={17} /></span><span className="flex-1">{id}</span>{active === id && <ChevronRight size={15} />}
             </button>
           ))}
         </nav>
-        <div className="mt-5 shrink-0 rounded-2xl border border-white/10 p-4 text-sm text-white/70">
-          <div className="font-bold text-white">{adminUser.name}</div>
-          <div>{adminUser.email}</div>
-          <button onClick={logout} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 px-3 py-2 font-bold text-white hover:bg-white/10">
-            <LogOut size={16} />
-            Sair
-          </button>
+        <div className="user-card mt-5 shrink-0 p-3">
+          <div className="flex items-center gap-3"><div className="user-avatar">{adminUser.name.slice(0, 1).toUpperCase()}</div><div className="min-w-0 flex-1"><div className="truncate text-sm font-black">{adminUser.name}</div><div className="truncate text-xs text-muted">{adminUser.email}</div></div><button aria-label="Sair" onClick={logout} className="icon-btn"><LogOut size={16} /></button></div>
         </div>
       </aside>
 
-      <main className="lg:pl-72">
-        <header className="sticky top-0 z-10 border-b border-line bg-white/88 px-5 py-4 backdrop-blur lg:px-8">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div className="text-xs font-black uppercase tracking-[.25em] text-yellow">Briland Admin</div>
-              <h1 className="text-2xl font-black">{active}</h1>
+      <main className="lg:pl-[286px]">
+        <header className="admin-header sticky top-0 z-20 px-4 py-4 lg:px-8">
+          <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <button aria-label="Abrir menu" onClick={() => setMobileNavOpen(true)} className="icon-btn lg:hidden"><Menu size={19} /></button>
+              <div><div className="text-[10px] font-black uppercase tracking-[.24em] text-amber-500">Briland Admin</div><h1 className="text-xl font-black lg:text-2xl">{active}</h1></div>
             </div>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <label className="flex h-11 min-w-[280px] items-center gap-2 rounded-xl border border-line bg-white px-3 text-sm shadow-sm">
+            <div className="flex items-center gap-2 lg:gap-3">
+              <label className="search-control hidden h-11 min-w-[280px] items-center gap-2 px-4 text-sm md:flex">
                 <Search size={17} className="text-muted" />
                 <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar no painel..." className="w-full bg-transparent outline-none" />
               </label>
-              <button onClick={() => void reload()} className="flex h-11 items-center justify-center gap-2 rounded-xl bg-navy px-4 text-sm font-black text-white">
-                {loading ? <Loader2 className="animate-spin" size={17} /> : <RefreshCw size={17} />}
-                Atualizar
-              </button>
+              <button aria-label="Notificações" className="icon-btn relative"><Bell size={17} /><span className="notification-dot" /></button>
+              <button onClick={() => void reload()} className="btn-primary h-11 px-4">{loading ? <Loader2 className="animate-spin" size={17} /> : <RefreshCw size={17} />}<span className="hidden sm:inline">Atualizar</span></button>
             </div>
-          </div>
-          <div className="mt-4 flex gap-2 overflow-x-auto lg:hidden">
-            {visibleTabs.map(({ id }) => (
-              <button key={id} onClick={() => setActive(id)} className={`shrink-0 rounded-full px-4 py-2 text-sm font-bold ${active === id ? "bg-yellow text-navy" : "bg-white text-navy"}`}>
-                {id}
-              </button>
-            ))}
           </div>
         </header>
 
-        <section className="p-5 lg:p-8">
+        <section className="mx-auto max-w-[1600px] p-4 lg:p-8">
           {activeTab === "Dashboard" && <Dashboard data={data} setActive={setActive} role={adminUser.role} />}
           {activeTab === "Produtos" && <Products data={data} query={query} reload={reload} notify={notify} />}
           {activeTab === "Categorias" && <CategoryBrandSection title="Categorias" table="Categoria" imageField="imagem" items={data.categorias} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
@@ -613,7 +611,7 @@ export default function Page() {
         </section>
       </main>
 
-      {toast && <div className="fixed bottom-5 right-5 z-50 rounded-2xl bg-navy px-5 py-4 text-sm font-bold text-white shadow-soft">{toast}</div>}
+      {toast && <div className="toast fixed bottom-5 right-5 z-50 px-5 py-4 text-sm font-bold text-white">{toast}</div>}
     </div>
   );
 }
@@ -667,35 +665,45 @@ function LoginScreen({ onLogin, error, loading }: { onLogin: (email: string, pas
 }
 
 function Dashboard({ data, setActive, role }: { data: AppData; setActive: (tab: Tab) => void; role: Role }) {
+  const activeProducts = data.produtos.filter((item) => item.ativo !== false).length;
+  const pendingUsers = data.usuarios.filter((item) => item.status === "PENDING").length;
+  const newLeads = data.leads.filter((item) => item.status === "NOVO").length;
+  const withImages = data.produtos.filter((item) => item.imagemPrincipal).length;
+  const completion = data.produtos.length ? Math.round((withImages / data.produtos.length) * 100) : 0;
+  const lastSevenDays = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() - (6 - index));
+    const next = new Date(date); next.setDate(next.getDate() + 1);
+    return { label: date.toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", ""), value: data.leads.filter((lead) => { const time = Date.parse(lead.createdAt || ""); return time >= date.getTime() && time < next.getTime(); }).length };
+  });
+  const maxLeads = Math.max(1, ...lastSevenDays.map((item) => item.value));
+  const topCategories = data.categorias.map((category) => ({ name: category.nome, value: data.produtos.filter((product) => product.categoriaId === category.id).length })).sort((a, b) => b.value - a.value).slice(0, 5);
+  const maxCategory = Math.max(1, ...topCategories.map((item) => item.value));
   const cards = [
-    { label: "Produtos", value: String(data.produtos.length), tab: "Produtos", icon: Boxes },
-    { label: "Ativos", value: String(data.produtos.filter((item) => item.ativo !== false).length), tab: "Produtos", icon: CheckCircle2 },
-    { label: "Sem imagem", value: String(data.produtos.filter((item) => !item.imagemPrincipal).length), tab: "Produtos", icon: ImageIcon },
-    { label: "Leads", value: String(data.leads.length), tab: "Leads", icon: MessageCircle },
-    { label: "Usuários", value: String(data.usuarios.length), tab: "Usuários", icon: Users, masterOnly: true },
-    { label: "Permissões", value: String(data.permissoes.length), tab: "Permissões", icon: Lock, masterOnly: true },
-    { label: "Erros 24h", value: String(data.telemetry.filter((item) => item.success === false && Date.parse(item.createdAt || "") > Date.now() - 86400000).length), tab: "Diagnóstico", icon: Activity, masterOnly: true }
+    { label: "Produtos cadastrados", value: String(data.produtos.length), helper: `${activeProducts} ativos`, tab: "Produtos", icon: Boxes, tone: "blue" },
+    { label: "Novos leads", value: String(newLeads), helper: `${data.leads.length} no total`, tab: "Leads", icon: MessageCircle, tone: "yellow" },
+    { label: "Usuários pendentes", value: String(pendingUsers), helper: `${data.usuarios.length} cadastrados`, tab: "Usuários", icon: Users, masterOnly: true, tone: "violet" },
+    { label: "Catálogo completo", value: `${completion}%`, helper: `${withImages} produtos com foto`, tab: "Produtos", icon: CheckCircle2, tone: "green" }
   ].filter((item) => !item.masterOnly || isMaster(role));
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {cards.map(({ label, value, tab, icon: Icon }) => (
-          <button key={label} onClick={() => setActive(tab as Tab)} className="rounded-2xl bg-white p-5 text-left shadow-soft transition hover:-translate-y-0.5">
-            <div className="flex items-center justify-between">
-              <Icon className="text-yellow" />
-              <span className="text-3xl font-black">{value}</span>
-            </div>
-            <div className="mt-4 text-sm font-black text-muted">{label}</div>
+      <section className="hero-dashboard relative overflow-hidden p-6 lg:p-8">
+        <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between"><div><div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white/75 px-3 py-1.5 text-xs font-black text-navy"><Sparkles size={14} className="text-amber-500" /> Visão geral em tempo real</div><h2 className="max-w-2xl text-3xl font-black leading-tight lg:text-4xl">Tudo que importa para o catálogo, em um só lugar.</h2><p className="mt-3 max-w-xl text-sm font-semibold text-slate-600 lg:text-base">Acompanhe produtos, oportunidades e a saúde operacional da plataforma Briland.</p></div><div className="flex flex-wrap gap-3"><button onClick={() => setActive("Produtos")} className="btn-primary"><Plus size={17} /> Novo produto</button><button onClick={() => setActive("Leads")} className="btn-glass">Ver oportunidades <ArrowUpRight size={16} /></button></div></div>
+      </section>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {cards.map(({ label, value, helper, tab, icon: Icon, tone }) => (
+          <button key={label} onClick={() => setActive(tab as Tab)} className="metric-card group text-left">
+            <div className={`metric-icon metric-${tone}`}><Icon size={19} /></div><div className="mt-6 flex items-end justify-between"><div><div className="text-3xl font-black tracking-tight">{value}</div><div className="mt-1 text-sm font-black">{label}</div><div className="mt-1 text-xs font-semibold text-muted">{helper}</div></div><ArrowUpRight size={18} className="mb-1 text-slate-300 transition group-hover:-translate-y-1 group-hover:translate-x-1 group-hover:text-navy" /></div>
           </button>
         ))}
       </div>
-      <Panel title="Resumo operacional">
-        <div className="grid gap-4 md:grid-cols-3">
-          <Summary label="Categorias" value={data.categorias.length} />
-          <Summary label="Marcas" value={data.marcas.length} />
-          <Summary label="Aplicações" value={data.aplicacoes.length} />
-        </div>
-      </Panel>
+      <div className="grid gap-6 xl:grid-cols-[1.45fr_1fr]">
+        <Panel title="Entrada de leads — últimos 7 dias"><div className="chart-bars">{lastSevenDays.map((item) => <div key={item.label} className="chart-column"><div className="chart-value">{item.value}</div><div className="chart-track"><div className="chart-fill" style={{ height: `${Math.max(8, (item.value / maxLeads) * 100)}%` }} /></div><div className="chart-label">{item.label}</div></div>)}</div></Panel>
+        <Panel title="Distribuição do catálogo"><div className="space-y-4">{topCategories.length ? topCategories.map((item, index) => <div key={item.name}><div className="mb-2 flex items-center justify-between text-sm"><span className="font-bold">{item.name}</span><span className="font-black">{item.value}</span></div><div className="progress-track"><div className={`progress-fill progress-${index}`} style={{ width: `${(item.value / maxCategory) * 100}%` }} /></div></div>) : <div className="py-10 text-center text-sm text-muted">Sem categorias para exibir.</div>}</div></Panel>
+      </div>
+      <div className="grid gap-6 xl:grid-cols-[1.15fr_1fr]">
+        <Panel title="Oportunidades recentes"><div className="divide-y divide-line">{data.leads.slice(0, 5).map((lead) => <button key={lead.id} onClick={() => setActive("Leads")} className="flex w-full items-center gap-3 py-3 text-left"><div className="lead-avatar">{lead.nome.slice(0, 1).toUpperCase()}</div><div className="min-w-0 flex-1"><div className="truncate text-sm font-black">{lead.nome}</div><div className="truncate text-xs text-muted">{lead.empresa || lead.email || "Contato pelo catálogo"}</div></div><span className={`status-pill status-${String(lead.status).toLowerCase()}`}>{lead.status}</span></button>)}{!data.leads.length && <div className="py-10 text-center text-sm text-muted">Nenhum lead recebido.</div>}</div></Panel>
+        <Panel title="Pulso operacional"><div className="grid gap-3 sm:grid-cols-2"><Summary label="Categorias" value={data.categorias.length} /><Summary label="Marcas" value={data.marcas.length} /><Summary label="Aplicações" value={data.aplicacoes.length} /><Summary label="Montadoras" value={data.montadoras.length} /></div><div className="mt-5 rounded-2xl bg-navy p-4 text-white"><div className="flex items-center gap-2 text-sm font-black"><Clock3 size={17} className="text-yellow" /> Dados sincronizados</div><p className="mt-2 text-xs text-white/60">As métricas refletem os registros atuais do Supabase.</p></div></Panel>
+      </div>
     </div>
   );
 }
@@ -1879,11 +1887,11 @@ function ModalActions({ saving, onSave, onDelete }: { saving: boolean; onSave: (
 }
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="rounded-3xl bg-white p-5 shadow-soft"><h2 className="mb-5 text-lg font-black">{title}</h2>{children}</section>;
+  return <section className="panel-card p-5 lg:p-6"><div className="mb-5 flex items-center justify-between gap-3"><h2 className="text-base font-black lg:text-lg">{title}</h2><button className="panel-more" aria-label={`Mais opções de ${title}`}>•••</button></div>{children}</section>;
 }
 
 function Table({ children }: { children: React.ReactNode }) {
-  return <div className="overflow-x-auto"><table className="w-full min-w-[860px] border-separate border-spacing-0 text-sm">{children}</table></div>;
+  return <div className="table-wrap overflow-x-auto"><table className="w-full min-w-[860px] border-separate border-spacing-0 text-sm">{children}</table></div>;
 }
 
 function Th({ children }: { children?: React.ReactNode }) {
@@ -1903,7 +1911,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (checked: b
 }
 
 function Summary({ label, value }: { label: string; value: number }) {
-  return <div className="rounded-2xl bg-soft p-4"><div className="text-2xl font-black">{value}</div><div className="text-sm font-bold text-muted">{label}</div></div>;
+  return <div className="summary-card p-4"><div className="text-2xl font-black">{value}</div><div className="mt-1 text-sm font-bold text-muted">{label}</div></div>;
 }
 
 function Info({ label, value }: { label: string; value?: string | null }) {
