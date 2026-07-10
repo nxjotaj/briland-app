@@ -28,7 +28,7 @@ import {
 
 import { CONFIG_STORAGE_KEY, signInWithPassword, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRealtime, supabaseRpc, trackTelemetry, uploadStorageObject } from "./src/api/supabase";
 import { colors, defaultAbout, defaultSocialLinks } from "./src/config/brand";
-import type { AboutSettings, Aplicacao, AppData, CatalogPdfRole, CatalogPdfSettings, Categoria, Lead, Marca, MediaSettings, ModeloVeiculo, Montadora, Permission, Produto, ProdutoModeloVeiculo, ProdutoModeloVeiculoView, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
+import type { AboutSettings, Aplicacao, AppData, CatalogAppearance, CatalogPdfRole, CatalogPdfSettings, Categoria, Lead, Marca, MediaSettings, ModeloVeiculo, Montadora, Permission, Produto, ProdutoModeloVeiculo, ProdutoModeloVeiculoView, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
 import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage, money, optimizedImageUrl, parseCsv, slugify } from "./src/utils/helpers";
 
 type IconName = keyof typeof Ionicons.glyphMap;
@@ -36,6 +36,12 @@ type RegistrationRequest = { nome: string; empresa: string; telefone: string; em
 type CachedImageProps = ImageProps & { resizeMode?: ImageProps["contentFit"] };
 
 const logo = require("./assets/briland-logo.png");
+const defaultAppearance: CatalogAppearance = { version: 1, primaryColor: "#021126", accentColor: "#FCB900", backgroundColor: "#F4F6FA", surfaceColor: "#FFFFFF", textColor: "#021126", fontFamily: "system", cardRadius: 12, dockOpacity: 72, dockHeight: 62, dockPosition: "bottom", showProductCategory: true, showProductBrand: true, logoUrl: "" };
+function safeAppearance(value?: Partial<CatalogAppearance> | null): CatalogAppearance {
+  const merged = { ...defaultAppearance, ...(value || {}) };
+  const color = (candidate: string, fallback: string) => /^#[0-9a-f]{6}$/i.test(candidate) ? candidate : fallback;
+  return { ...merged, primaryColor: color(merged.primaryColor, defaultAppearance.primaryColor), accentColor: color(merged.accentColor, defaultAppearance.accentColor), backgroundColor: color(merged.backgroundColor, defaultAppearance.backgroundColor), surfaceColor: color(merged.surfaceColor, defaultAppearance.surfaceColor), textColor: color(merged.textColor, defaultAppearance.textColor), cardRadius: Math.min(32, Math.max(0, Number(merged.cardRadius) || 0)), dockOpacity: Math.min(100, Math.max(35, Number(merged.dockOpacity) || 72)), dockHeight: Math.min(90, Math.max(52, Number(merged.dockHeight) || 62)), dockPosition: merged.dockPosition === "top" ? "top" : "bottom", logoUrl: String(merged.logoUrl || "").slice(0, 1000) };
+}
 
 function Image({ resizeMode, contentFit, transition = 160, cachePolicy = "memory-disk", ...props }: CachedImageProps) {
   return <ExpoImage {...props} contentFit={contentFit ?? resizeMode ?? "cover"} transition={transition} cachePolicy={cachePolicy} />;
@@ -47,6 +53,7 @@ function liveImageUrl(url: string | null | undefined, options: Parameters<typeof
 
 function versionedRawUrl(url: string | null | undefined, version: number) {
   if (!url) return "";
+  if (!version) return url;
   try {
     const parsed = new URL(url);
     parsed.searchParams.set("_v", String(version));
@@ -114,9 +121,10 @@ export default function App() {
   const [mediaSettings, setMediaSettings] = useState<MediaSettings>({ initialImage: "", homeImage: "" });
   const [catalogPdfSettings, setCatalogPdfSettings] = useState<CatalogPdfSettings>({});
   const [aboutSettings, setAboutSettings] = useState<AboutSettings>(defaultAbout);
+  const [appearance, setAppearance] = useState<CatalogAppearance>(defaultAppearance);
   const [loading, setLoading] = useState(true);
   const [routeSplash, setRouteSplash] = useState(false);
-  const [imageRefreshVersion, setImageRefreshVersion] = useState(Date.now());
+  const [imageRefreshVersion, setImageRefreshVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const realtimeReloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const appState = useRef(AppState.currentState);
@@ -157,11 +165,12 @@ export default function App() {
           ])
         : [[], [], []] as [Usuario[], Lead[], Permission[]];
 
-      const settings = appSettings as { media?: MediaSettings; socialLinks?: SocialLinks; about?: AboutSettings; catalogPdf?: CatalogPdfSettings };
+      const settings = appSettings as { media?: MediaSettings; socialLinks?: SocialLinks; about?: AboutSettings; catalogPdf?: CatalogPdfSettings; catalogAppearance?: CatalogAppearance };
       if (settings.socialLinks) setSocialLinks({ ...defaultSocialLinks, ...settings.socialLinks });
       if (settings.media) setMediaSettings({ initialImage: settings.media.initialImage || "", homeImage: settings.media.homeImage || "" });
       if (settings.catalogPdf) setCatalogPdfSettings(settings.catalogPdf);
       if (settings.about) setAboutSettings({ ...defaultAbout, ...settings.about });
+      setAppearance(safeAppearance(settings.catalogAppearance));
 
       setData({
         produtos,
@@ -221,7 +230,7 @@ export default function App() {
     const scheduleRealtimeReload = () => {
       if (realtimeReloadTimer.current) clearTimeout(realtimeReloadTimer.current);
       realtimeReloadTimer.current = setTimeout(() => {
-        void reload(role, authToken, { silent: true, refreshImages: true });
+        void reload(role, authToken, { silent: true });
       }, 800);
     };
 
@@ -242,7 +251,7 @@ export default function App() {
       const wasInBackground = appState.current === "inactive" || appState.current === "background";
       appState.current = nextState;
       if (wasInBackground && nextState === "active") {
-        void reload(role, authToken, { silent: true, refreshImages: true });
+        void reload(role, authToken, { silent: true });
       }
     });
     return () => subscription.remove();
@@ -253,7 +262,7 @@ export default function App() {
       versionedRawUrl(mediaSettings.initialImage, imageRefreshVersion),
       optimizedImageUrl(mediaSettings.homeImage, { ...imageSize.home, version: imageRefreshVersion }),
       ...data.categorias.slice(0, 12).map((item) => optimizedImageUrl(item.imagem, { ...imageSize.categoryIcon, version: imageRefreshVersion })),
-      ...data.produtos.slice(0, 30).map((item) => optimizedImageUrl(item.imagemPrincipal, { ...imageSize.productCard, version: imageRefreshVersion }))
+      ...data.produtos.slice(0, 12).map((item) => optimizedImageUrl(item.imagemPrincipal, { ...imageSize.productCard, version: imageRefreshVersion }))
     ].filter(Boolean);
     if (urls.length) void ExpoImage.prefetch(urls);
   }, [data.categorias, data.produtos, imageRefreshVersion, mediaSettings.homeImage, mediaSettings.initialImage]);
@@ -484,21 +493,21 @@ export default function App() {
   };
 
   return (
-    <View style={styles.appRoot}>
+    <View style={[styles.appRoot, { backgroundColor: appearance.backgroundColor }]}>
       <StatusBar hidden={route === "initial"} style={route === "login" || route === "admin" ? "light" : "dark"} />
       {loading && <LoadingOverlay />}
       {routeSplash && <RouteSplash />}
       {route === "initial" ? (
         <InitialScreen media={mediaSettings} imageVersion={imageRefreshVersion} onCatalog={() => go("home")} onLogin={() => go("login")} />
       ) : (
-        <SafeAreaView style={styles.safe}>
+        <SafeAreaView style={[styles.safe, { backgroundColor: appearance.backgroundColor }]}>
           {route === "login" ? (
             <LoginScreen onLogin={login} onSignup={() => go("signup")} onCatalog={() => go("initial")} links={socialLinks} error={loginMessage} />
           ) : route === "admin" ? (
             <AdminScreen role={role} data={data} active={adminTab} setActive={setAdminTab} onBack={() => go("home")} onLogout={logout} reload={() => reload(role, authToken)} authToken={authToken} socialLinks={socialLinks} setSocialLinks={(links) => void saveAdminConfig(links, mediaSettings, aboutSettings)} mediaSettings={mediaSettings} setMediaSettings={(settings) => void saveAdminConfig(socialLinks, settings, aboutSettings)} aboutSettings={aboutSettings} setAboutSettings={(settings) => void saveAdminConfig(socialLinks, mediaSettings, settings)} onAction={(text) => notify("Painel admin", text)} />
           ) : (
             <>
-              <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} whatsappUrl={socialLinks.whatsapp} />
+              <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} whatsappUrl={socialLinks.whatsapp} appearance={appearance} />
               {error && <ErrorBanner message={error} onRetry={reload} />}
               {route === "home" && <HomeScreen go={openDirectCatalogRoute} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""} imageVersion={imageRefreshVersion} />}
               {route === "categories" && <CategoriesScreen categories={data.categorias} imageVersion={imageRefreshVersion} onPick={(id) => { clearCatalogFilters(); setCategoryFilter(id); go("products"); }} />}
@@ -536,6 +545,7 @@ export default function App() {
                   role={role}
                   catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
                   imageVersion={imageRefreshVersion}
+                  appearance={appearance}
                 />
               )}
               {route === "promotions" && (
@@ -571,6 +581,7 @@ export default function App() {
                   role={role}
                   catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
                   imageVersion={imageRefreshVersion}
+                  appearance={appearance}
                   promo
                 />
               )}
@@ -607,6 +618,7 @@ export default function App() {
                   role={role}
                   catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
                   imageVersion={imageRefreshVersion}
+                  appearance={appearance}
                   launch
                 />
               )}
@@ -614,7 +626,7 @@ export default function App() {
               {route === "contact" && <ContactScreen onSubmit={createLead} />}
               {route === "about" && <AboutScreen settings={aboutSettings} />}
               {route === "signup" && <SignupScreen links={socialLinks} onSubmit={requestRegistration} onLogin={() => go("login")} />}
-              {route !== "signup" && <SocialDock links={socialLinks} />}
+              {route !== "signup" && <SocialDock links={socialLinks} appearance={appearance} />}
             </>
           )}
         </SafeAreaView>
@@ -651,13 +663,13 @@ function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => voi
   );
 }
 
-function Header({ back, onBack, onMenu, whatsappUrl }: { back?: boolean; onBack: () => void; onMenu: () => void; whatsappUrl: string }) {
+function Header({ back, onBack, onMenu, whatsappUrl, appearance }: { back?: boolean; onBack: () => void; onMenu: () => void; whatsappUrl: string; appearance: CatalogAppearance }) {
   return (
     <View style={styles.header}>
       <Pressable style={styles.iconButton} onPress={back ? onBack : onMenu}>
         <Ionicons name={back ? "chevron-back" : "menu"} size={28} color={colors.navy} />
       </Pressable>
-      <LogoPlate compact />
+      <LogoPlate compact logoUrl={appearance.logoUrl} />
       <Pressable style={styles.iconButton} onPress={() => Linking.openURL(whatsappUrl)}>
         <Ionicons name="logo-whatsapp" size={25} color={colors.navy} />
       </Pressable>
@@ -665,10 +677,10 @@ function Header({ back, onBack, onMenu, whatsappUrl }: { back?: boolean; onBack:
   );
 }
 
-function LogoPlate({ compact = false }: { compact?: boolean }) {
+function LogoPlate({ compact = false, logoUrl }: { compact?: boolean; logoUrl?: string }) {
   return (
     <View style={[styles.logoPlate, compact && styles.logoPlateCompact]}>
-      <Image source={logo} style={styles.logo} resizeMode="contain" />
+      <Image source={logoUrl ? { uri: logoUrl } : logo} style={styles.logo} resizeMode="contain" />
     </View>
   );
 }
@@ -859,6 +871,7 @@ function ProductList({
   role,
   catalogPdfUrl,
   imageVersion,
+  appearance,
   promo,
   launch
 }: {
@@ -893,6 +906,7 @@ function ProductList({
   role: Role;
   catalogPdfUrl: string;
   imageVersion: number;
+  appearance: CatalogAppearance;
   promo?: boolean;
   launch?: boolean;
 }) {
@@ -902,7 +916,7 @@ function ProductList({
   const activeModelo = modeloFilter ? modelosVeiculo.find((item) => item.id === modeloFilter)?.nome : "Todos modelos";
   const availableModels = montadoraFilter ? modelosVeiculo.filter((item) => item.montadoraId === montadoraFilter) : [];
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
+    <ScrollView style={[styles.screen, { backgroundColor: appearance.backgroundColor }]} contentContainerStyle={styles.contentWithDock}>
       <PageTitle title={title} subtitle={subtitle} badge={launch ? "NOVO" : undefined} />
       <View style={styles.searchRow}>
         <View style={styles.searchBox}><Ionicons name="search" size={22} color={colors.navy} /><TextInput value={query} onChangeText={setQuery} placeholder="Buscar código, EAN, NCM ou descricao..." placeholderTextColor="#9BA0AA" style={styles.searchInput} /></View>
@@ -929,20 +943,20 @@ function ProductList({
       {products.length === 0 ? <EmptyState text="Nenhum produto encontrado com os filtros atuais." /> : (
         <View style={listMode === "grid" ? styles.grid : styles.list}>
           {products.map((product) => (
-            <Pressable key={product.id} style={[listMode === "grid" ? styles.productCard : styles.productListCard, promo && styles.promoCard, launch && styles.launchCard]} onPress={() => onOpen(product)}>
+            <Pressable key={product.id} style={[listMode === "grid" ? styles.productCard : styles.productListCard, { backgroundColor: appearance.surfaceColor, borderRadius: appearance.cardRadius }, promo && styles.promoCard, launch && styles.launchCard]} onPress={() => onOpen(product)}>
               <View style={listMode === "grid" ? undefined : styles.listImageWrap}>
-                {product.imagemPrincipal ? <Image source={{ uri: liveImageUrl(product.imagemPrincipal, imageSize.productCard, imageVersion) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : listMode === "grid" ? <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" /> : <View style={styles.productListPlaceholder}><Ionicons name="image-outline" size={28} color={colors.yellow} /></View>}
+                {product.imagemPrincipal ? <Image source={{ uri: liveImageUrl(product.imagemPrincipal, imageSize.productCard, imageVersion) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : listMode === "grid" ? <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" card /> : <View style={styles.productListPlaceholder}><Ionicons name="image-outline" size={28} color={colors.yellow} /></View>}
                 {promo && <Ribbon text="DESTAQUE" color={colors.red} />}
                 {launch && <Ribbon text="NOVO" color={colors.yellow} />}
               </View>
               <View style={styles.productBody}>
-                <Text style={styles.productCode}>{product.codigoInterno || "Sem código"}</Text>
+                <Text style={[styles.productCode, { color: appearance.primaryColor }]}>{product.codigoInterno || "Sem código"}</Text>
                 <Text style={styles.productName} numberOfLines={3}>{product.nome}</Text>
-                <Text style={styles.mutedSmall}>{categoryById.get(product.categoriaId ?? "")?.nome || "Sem categoria"}{productPermission(product, "marca", true) ? ` • ${brandById.get(product.marcaId ?? "")?.nome || "Sem marca"}` : ""}</Text>
+                {appearance.showProductCategory && <Text style={styles.mutedSmall}>{categoryById.get(product.categoriaId ?? "")?.nome || "Sem categoria"}{appearance.showProductBrand && productPermission(product, "marca", true) ? ` • ${brandById.get(product.marcaId ?? "")?.nome || "Sem marca"}` : ""}</Text>}
                 <View style={styles.cardLine} />
                 <Meta icon="cube-outline" label="Caixa master" value={product.caixaMaster || "A cadastrar"} />
                 {productPermission(product, "ncm", role !== "VISITANTE") && <Meta icon="document-text-outline" label="NCM" value={product.ncm || "A cadastrar"} />}
-                {role === "VISITANTE" ? <Text style={styles.loginHint}>Entrar para ver mais informações</Text> : <Text style={styles.price}>{money(product.preco)}</Text>}
+                {role === "VISITANTE" ? <Text style={[styles.loginHint, { color: appearance.accentColor }]}>Entrar para ver mais informações</Text> : <Text style={styles.price}>{money(product.preco)}</Text>}
               </View>
             </Pressable>
           ))}
@@ -1123,9 +1137,9 @@ function OptionPill({ label, selected, onPress }: { label: string; selected: boo
   return <Pressable onPress={onPress} style={[styles.optionPill, selected && styles.optionPillSelected]}><Text style={[styles.optionPillText, selected && styles.optionPillTextSelected]}>{label}</Text></Pressable>;
 }
 
-function BrandedMedia({ title, subtitle, tall, compact }: { title: string; subtitle: string; tall?: boolean; compact?: boolean }) {
+function BrandedMedia({ title, subtitle, tall, compact, card }: { title: string; subtitle: string; tall?: boolean; compact?: boolean; card?: boolean }) {
   return (
-    <LinearGradient colors={[colors.navy, "#0B2347"]} style={[styles.brandedMedia, tall && styles.brandedMediaTall, compact && styles.brandedMediaCompact]}>
+    <LinearGradient colors={[colors.navy, "#0B2347"]} style={[styles.brandedMedia, tall && styles.brandedMediaTall, compact && styles.brandedMediaCompact, card && styles.brandedMediaCard]}>
       <Image source={logo} style={styles.brandedMediaLogo} resizeMode="contain" />
       <Text style={styles.brandedMediaTitle} numberOfLines={2}>{title}</Text>
       <Text style={styles.brandedMediaSub}>{subtitle}</Text>
@@ -1805,14 +1819,20 @@ function Divider({ text, dark, compact }: { text: string; dark?: boolean; compac
   return <View style={[styles.divider, compact && styles.dividerCompact]}><View style={[styles.dividerLine, dark && styles.dividerLineDark]} /><Text style={[styles.dividerText, dark && styles.dividerTextDark]}>{text}</Text><View style={[styles.dividerLine, dark && styles.dividerLineDark]} /></View>;
 }
 
-function SocialDock({ links }: { links: SocialLinks }) {
+function SocialDock({ links, appearance = defaultAppearance }: { links: SocialLinks; appearance?: CatalogAppearance }) {
   const socialItems: [IconName, string, string][] = [
     ["logo-instagram", "Instagram", links.instagram],
     ["logo-linkedin", "LinkedIn", links.linkedin],
     ["logo-whatsapp", "WhatsApp", links.whatsapp],
     ["globe-outline", "Site", links.site]
   ];
-  return <View style={styles.socialDock}>{socialItems.map(([icon, label, url]) => <Pressable key={label} style={styles.socialItem} onPress={() => Linking.openURL(url)}><Ionicons name={icon} size={31} color={colors.navy} /><Text style={styles.socialLabel}>{label}</Text></Pressable>)}</View>;
+  const position = appearance.dockPosition === "top" ? { top: 14, bottom: undefined } : { bottom: 14, top: undefined };
+  return <View style={[styles.socialDock, position, { height: appearance.dockHeight, borderRadius: appearance.dockHeight / 2, backgroundColor: hexToRgba(appearance.surfaceColor, appearance.dockOpacity / 100) }]}>{socialItems.map(([icon, label, url]) => <Pressable key={label} style={styles.socialItem} onPress={() => Linking.openURL(url)}><Ionicons name={icon} size={25} color={appearance.primaryColor} /><Text style={[styles.socialLabel, { color: appearance.textColor }]}>{label}</Text></Pressable>)}</View>;
+}
+
+function hexToRgba(hex: string, alpha: number) {
+  const safe = /^#[0-9a-f]{6}$/i.test(hex) ? hex.slice(1) : "FFFFFF";
+  return `rgba(${parseInt(safe.slice(0, 2), 16)},${parseInt(safe.slice(2, 4), 16)},${parseInt(safe.slice(4, 6), 16)},${alpha})`;
 }
 
 function AdminPanel({ title, children }: { title: string; children: React.ReactNode }) {
@@ -1835,7 +1855,7 @@ const styles = StyleSheet.create({
   appRoot: { flex: 1, backgroundColor: colors.soft },
   safe: { flex: 1, backgroundColor: colors.soft },
   screen: { flex: 1, backgroundColor: colors.soft },
-  contentWithDock: { paddingHorizontal: 20, paddingBottom: 122 },
+  contentWithDock: { paddingHorizontal: 20, paddingBottom: 100 },
   initialScreen: { flex: 1, justifyContent: "flex-end", backgroundColor: colors.soft, overflow: "hidden" },
   initialBackgroundImage: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, width: "100%", height: "100%", backgroundColor: colors.white },
   initialFallback: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0 },
@@ -2013,9 +2033,9 @@ const styles = StyleSheet.create({
   aboutCard: { minHeight: 520, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, padding: 22, ...shadow },
   aboutText: { color: colors.muted, fontSize: 18, lineHeight: 27 },
   aboutBody: { color: colors.navy, fontSize: 16, lineHeight: 25, marginTop: 28 },
-  socialDock: { position: "absolute", left: 32, right: 32, bottom: 22, height: 78, borderRadius: 38, backgroundColor: "rgba(255,255,255,0.72)", borderWidth: 1, borderColor: "rgba(255,255,255,0.68)", flexDirection: "row", alignItems: "center", justifyContent: "space-around", ...shadow },
-  socialItem: { alignItems: "center", gap: 4 },
-  socialLabel: { color: colors.navy, fontSize: 12 },
+  socialDock: { position: "absolute", left: 32, right: 32, bottom: 14, height: 62, borderRadius: 31, backgroundColor: "rgba(255,255,255,0.72)", borderWidth: 1, borderColor: "rgba(255,255,255,0.68)", flexDirection: "row", alignItems: "center", justifyContent: "space-around", ...shadow },
+  socialItem: { alignItems: "center", gap: 1 },
+  socialLabel: { color: colors.navy, fontSize: 10 },
   adminSafe: { flex: 1, backgroundColor: colors.navy },
   adminHeader: { height: 78, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   adminBack: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
@@ -2102,6 +2122,7 @@ const styles = StyleSheet.create({
   optionPillText: { color: colors.navy, fontWeight: "800" },
   optionPillTextSelected: { color: colors.white },
   brandedMedia: { width: "100%", height: "100%", minHeight: 128, alignItems: "center", justifyContent: "center", padding: 16 },
+  brandedMediaCard: { height: 136, minHeight: 136 },
   brandedMediaTall: { minHeight: 390 },
   brandedMediaCompact: { width: 132, minHeight: 132 },
   brandedMediaLogo: { width: "72%", height: 54, marginBottom: 10 },

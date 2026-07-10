@@ -1,38 +1,60 @@
-# Briland Native Premium
+# Briland Catálogo
 
-Aplicativo mobile nativo em Expo + React Native + TypeScript para catálogo Briland, com telas públicas e painel administrativo no mesmo design system fornecido.
+Catálogo mobile em Expo + React Native + TypeScript, painel administrativo em Next.js e backend no Supabase.
 
-## Rodar
+## Estrutura
+
+- `App.tsx` e `src/`: aplicativo mobile e web via Expo.
+- `admin-web/`: painel administrativo publicado separadamente na Vercel.
+- `supabase/migrations/`: políticas RLS, RPCs, auditoria, storage e telemetria.
+- `scripts/`: ferramentas locais de banco e desenvolvimento.
+
+## Configuração local
+
+Copie `.env.example` para `.env` e `admin-web/.env.example` para `admin-web/.env.local`. Os arquivos reais são ignorados pelo Git.
+
+Variáveis do app:
+
+```env
+EXPO_PUBLIC_SUPABASE_URL=...
+EXPO_PUBLIC_SUPABASE_ANON_KEY=...
+```
+
+Variáveis do painel:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+```
+
+`SUPABASE_DATABASE_URL` é opcional e deve existir somente no ambiente local usado pelos scripts administrativos. Nunca use senha do banco ou service role no app, no painel ou na Vercel.
+
+## Executar
 
 ```bash
 npm install
 npm start
 ```
 
-No Windows deste ambiente, use `npm.cmd` se o PowerShell bloquear `npm.ps1`.
-
-Use `npm start`, nao `npx expo start`, para evitar que o Expo escolha `8082`. O script limpa processos antigos nas portas do Expo e inicia fixo na `8081`.
-
-Se o Expo Go no celular mostrar `request timed out`, use o túnel:
+No painel:
 
 ```bash
-npm run start:tunnel
+cd admin-web
+npm install
+npm run dev
 ```
 
-O modo LAN usa o IP local da máquina. Neste ambiente foi detectado `192.168.0.106`; celular e PC precisam estar na mesma rede e o firewall precisa permitir a porta `8081`.
+## Validação
 
-## Login demo
+```bash
+npm run typecheck
+cd admin-web
+npm run typecheck
+npm run build
+```
 
-- Admin real encontrado no Supabase: `faturamento@briland.com.br`
-- Representante real encontrado no Supabase: `rjarep.comercial@gmail.com`
-- Senha: campo visual nesta primeira versão; a validação segura deve ficar em Supabase Auth/backend.
+## Deploy
 
-Esta versão consome as tabelas reais do Supabase:
+Na Vercel, use `admin-web` como Root Directory e configure as duas variáveis `NEXT_PUBLIC_*`. As migrações do Supabase devem ser aplicadas antes de publicar código que dependa delas.
 
-- `Produto`
-- `Categoria`
-- `Marca`
-- `Aplicacao`
-- `User`
-- `ProductFieldPermission`
-- `LeadOrcamento`
+O editor “Aparência” mantém rascunho e configuração publicada separadamente. O app consome somente `catalogAppearance`, publicado explicitamente por um `ADMIN_MASTER`.

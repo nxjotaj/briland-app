@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import {
   BarChart3,
   Boxes,
@@ -35,6 +35,7 @@ import { supabase, uploadCatalogBlob, uploadCatalogMedia } from "@/lib/supabase"
 import { createId, csvEscape, downloadBlob, formatLocalDate, formatLocalDateTime, money, numberOrNull, slugify } from "@/lib/helpers";
 import type {
   AboutSettings,
+  CatalogAppearance,
   Aplicacao,
   AppData,
   AppSettings,
@@ -70,7 +71,8 @@ type Tab =
   | "Catálogo PDF"
   | "Mídia"
   | "Links"
-  | "Conteúdo";
+  | "Conteúdo"
+  | "Aparência";
 
 const tabs: { id: Tab; icon: React.ElementType }[] = [
   { id: "Dashboard", icon: BarChart3 },
@@ -86,7 +88,8 @@ const tabs: { id: Tab; icon: React.ElementType }[] = [
   { id: "Catálogo PDF", icon: Download },
   { id: "Mídia", icon: ImageIcon },
   { id: "Links", icon: LinkIcon },
-  { id: "Conteúdo", icon: Settings }
+  { id: "Conteúdo", icon: Settings },
+  { id: "Aparência", icon: Settings }
 ];
 
 const emptyData: AppData = {
@@ -172,15 +175,87 @@ function splitImportList(value: string) {
   return value.split(/[|;,]/).map((item) => item.trim()).filter(Boolean);
 }
 
+function parseCsvRows(text: string) {
+  const matrix: string[][] = [];
+  let row: string[] = [];
+  let value = "";
+  let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '"' && quoted && text[index + 1] === '"') { value += '"'; index += 1; }
+    else if (char === '"') quoted = !quoted;
+    else if (char === "," && !quoted) { row.push(value); value = ""; }
+    else if ((char === "\n" || char === "\r") && !quoted) {
+      if (char === "\r" && text[index + 1] === "\n") index += 1;
+      row.push(value); value = "";
+      if (row.some((cell) => cell.trim())) matrix.push(row);
+      row = [];
+    } else value += char;
+  }
+  row.push(value);
+  if (row.some((cell) => cell.trim())) matrix.push(row);
+  const [headers = [], ...dataRows] = matrix;
+  return dataRows.map((values) => Object.fromEntries(headers.map((header, index) => [header.trim(), values[index] ?? ""])));
+}
+
+async function readSpreadsheetRows(file: File): Promise<Record<string, unknown>[]> {
+  if (file.name.toLowerCase().endsWith(".csv")) return parseCsvRows(await file.text());
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(await file.arrayBuffer());
+  const sheet = workbook.worksheets[0];
+  if (!sheet) throw new Error("A planilha não contém nenhuma aba.");
+  const headers = (sheet.getRow(1).values as ExcelJS.CellValue[]).slice(1).map((value) => String(value ?? "").trim());
+  const rows: Record<string, unknown>[] = [];
+  sheet.eachRow((sheetRow, rowNumber) => {
+    if (rowNumber === 1) return;
+    const values = (sheetRow.values as ExcelJS.CellValue[]).slice(1);
+    if (values.some((value) => value != null && String(value).trim())) rows.push(Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""])));
+  });
+  return rows;
+}
+
 async function importProductsFromTemplate(file: File, data: AppData) {
-  const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer);
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[workbook.SheetNames[0]]);
+  let rows: Record<string, unknown>[];
+  try {
+    rows = await readSpreadsheetRows(file);
+  } catch {
+    throw new Error("Não foi possível abrir o arquivo. Salve a planilha como .xlsx ou .csv e tente novamente.");
+  }
+  if (!rows.length) throw new Error("A primeira aba da planilha está vazia.");
   const headers = Object.keys(rows[0] || {}).map(normalizeImportKey);
   const requiredHeaders = ["codigointerno", "categoria", "marca", "nome", "ean", "ncm", "caixamaster"];
   const missingHeaders = requiredHeaders.filter((key) => !headers.includes(key));
   if (missingHeaders.length) {
-    throw new Error("A planilha precisa seguir o modelo enviado. Colunas obrigatórias: Código interno, Categoria, Marca, Nome, EAN, NCM e Caixa Master.");
+    const labels: Record<string, string> = { codigointerno: "Código interno", categoria: "Categoria", marca: "Marca", nome: "Nome", ean: "EAN", ncm: "NCM", caixamaster: "Caixa Master" };
+    throw new Error(`Cabeçalhos ausentes: ${missingHeaders.map((key) => labels[key]).join(", ")}. Não renomeie as colunas do modelo.`);
+  }
+
+  const validationErrors: string[] = [];
+  const seenCodes = new Map<string, number>();
+  rows.forEach((row, index) => {
+    const line = index + 2;
+    const values = {
+      codigo: importValue(row, ["Código interno", "codigoInterno", "codigo"]),
+      categoria: importValue(row, ["Categoria", "categoriaId"]),
+      marca: importValue(row, ["Marca", "marcaId"]),
+      nome: importValue(row, ["Nome", "Descrição do produto", "Nome Descrição do produto"]),
+      ncm: importValue(row, ["NCM", "NCM Com os pontos"]),
+      caixa: importValue(row, ["Caixa Master", "caixaMaster"])
+    };
+    if (!Object.values(values).some(Boolean)) return;
+    const missing = Object.entries(values).filter(([, value]) => !value).map(([key]) => ({ codigo: "Código interno", categoria: "Categoria", marca: "Marca", nome: "Nome", ncm: "NCM", caixa: "Caixa Master" }[key]));
+    if (missing.length) validationErrors.push(`Linha ${line}: campos vazios — ${missing.join(", ")}.`);
+    const normalizedCode = values.codigo.toLocaleLowerCase("pt-BR");
+    if (normalizedCode && seenCodes.has(normalizedCode)) validationErrors.push(`Linha ${line}: Código interno duplicado (também aparece na linha ${seenCodes.get(normalizedCode)}).`);
+    else if (normalizedCode) seenCodes.set(normalizedCode, line);
+    for (const [label, aliases] of [["Preço", ["Preço", "preco"]], ["Estoque", ["Estoque", "estoque"]]] as const) {
+      const value = importValue(row, [...aliases]);
+      if (value && numberOrNull(value) == null) validationErrors.push(`Linha ${line}: ${label} deve ser numérico; valor recebido: “${value}”.`);
+    }
+  });
+  if (validationErrors.length) {
+    const shown = validationErrors.slice(0, 12);
+    throw new Error(`A planilha tem ${validationErrors.length} erro(s):\n${shown.join("\n")}${validationErrors.length > shown.length ? `\n… e mais ${validationErrors.length - shown.length}.` : ""}`);
   }
 
   const categorias = [...data.categorias];
@@ -260,7 +335,7 @@ async function importProductsFromTemplate(file: File, data: AppData) {
       ? supabase.from("Produto").update(payload).eq("id", existing.id)
       : supabase.from("Produto").insert({ id: productId, ...payload });
     const { error } = await request;
-    if (error) throw error;
+    if (error) throw new Error(`Linha ${count + 2} (${codigoInterno}): não foi possível salvar o produto — ${error.message}`);
 
     const applicationText = importValue(row, ["Aplicações", "Aplicacao", "Aplicacoes"]);
     if (applicationText) {
@@ -534,6 +609,7 @@ export default function Page() {
           {activeTab === "Mídia" && <MediaSettingsSection settings={data.settings.media} reload={reload} notify={notify} />}
           {activeTab === "Links" && <LinksSection settings={data.settings.socialLinks} reload={reload} notify={notify} />}
           {activeTab === "Conteúdo" && <ContentSection settings={data.settings.about} reload={reload} notify={notify} />}
+          {activeTab === "Aparência" && <AppearanceSection draftSettings={data.settings.catalogAppearanceDraft} publishedSettings={data.settings.catalogAppearance} reload={reload} notify={notify} />}
         </section>
       </main>
 
@@ -629,7 +705,7 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
   const lower = query.toLowerCase();
   const products = data.produtos.filter((item) => [item.nome, item.codigoInterno, item.ean, item.ncm].join(" ").toLowerCase().includes(lower));
 
-  const exportProducts = (format: "csv" | "xlsx") => {
+  const exportProducts = async (format: "csv" | "xlsx") => {
     const rows = data.produtos.map((product) => ({
       ...product,
       categoria: data.categorias.find((item) => item.id === product.categoriaId)?.nome || "",
@@ -645,10 +721,12 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
         .join("|")
     }));
     if (format === "xlsx") {
-      const sheet = XLSX.utils.json_to_sheet(rows);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, sheet, "Produtos");
-      XLSX.writeFile(workbook, "briland-produtos.xlsx");
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet("Produtos");
+      const headers = Object.keys(rows[0] || { codigoInterno: "", nome: "" });
+      sheet.columns = headers.map((header) => ({ header, key: header, width: 20 }));
+      sheet.addRows(rows);
+      downloadBlob("briland-produtos.xlsx", await workbook.xlsx.writeBuffer(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
       return;
     }
     const headers = Object.keys(rows[0] || { codigoInterno: "", nome: "" });
@@ -657,9 +735,7 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
   };
 
   const importProducts = async (file: File) => {
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer);
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[workbook.SheetNames[0]]);
+    const rows = await readSpreadsheetRows(file);
     let count = 0;
     for (const row of rows) {
       const codigoInterno = String(row.codigoInterno || row.codigo || row.Codigo || "").trim();
@@ -719,7 +795,10 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
       notify(`${count} produtos importados/atualizados pelo modelo oficial.`);
       await reload();
     } catch (error) {
-      notify(error instanceof Error ? error.message : "Falha ao importar a planilha modelo.");
+      const message = error instanceof Error ? error.message : "Falha ao importar a planilha modelo.";
+      notify("Importação não concluída. Veja o relatório aberto na tela.");
+      window.alert(`Erro na importação de ${file.name}\n\n${message}\n\nCorrija os itens indicados e envie novamente.`);
+      void trackAdminTelemetry({ eventType: "import_error", screen: "Produtos", route: "admin-web", success: false, message, metadata: { fileName: file.name, fileSize: file.size } });
     }
   };
 
@@ -727,9 +806,9 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
     <>
       <div className="mb-5 flex flex-wrap gap-3">
         <button onClick={() => setEditing(newProduct(data))} className="btn-yellow"><PackagePlus size={17} /> Criar produto</button>
-        <label className="btn-white cursor-pointer"><Upload size={17} /> Importar CSV/XLSX<input type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={(event) => event.target.files?.[0] && void importOfficialTemplate(event.target.files[0])} /></label>
+        <label className="btn-white cursor-pointer"><Upload size={17} /> Importar CSV/XLSX<input type="file" accept=".csv,.xlsx" className="hidden" onChange={(event) => event.target.files?.[0] && void importOfficialTemplate(event.target.files[0])} /></label>
         <button onClick={() => exportProducts("csv")} className="btn-white"><Download size={17} /> Exportar CSV</button>
-        <button onClick={() => exportProducts("xlsx")} className="btn-white"><FileSpreadsheet size={17} /> Exportar XLSX</button>
+        <button onClick={() => void exportProducts("xlsx")} className="btn-white"><FileSpreadsheet size={17} /> Exportar XLSX</button>
       </div>
       <Panel title={`${products.length} produtos`}>
         <Table>
@@ -1534,8 +1613,21 @@ function Diagnostics({ data }: { data: AppData }) {
     acc[screen].max = Math.max(acc[screen].max, Number(event.durationMs || 0));
     return acc;
   }, {})).map((row) => ({ ...row, avg: Math.round(row.total / Math.max(row.count, 1)) })).sort((a, b) => b.avg - a.avg).slice(0, 8);
+  const performanceLimitMs = 1500;
+  const criticalLoadLimitMs = 3000;
+  const incompleteProducts = data.produtos.filter((product) => !product.codigoInterno || !product.nome || !product.categoriaId || !product.marcaId);
+  const productsWithoutImage = data.produtos.filter((product) => product.ativo !== false && !product.imagemPrincipal);
+  const orphanVehicleLinks = data.produtoModelosVeiculo.filter((link) => !data.produtos.some((product) => product.id === link.produtoId) || !data.modelosVeiculo.some((model) => model.id === link.modeloId));
+  const slowScreens = loadRows.filter((row) => row.avg > performanceLimitMs || row.max > criticalLoadLimitMs);
+  const detectedProblems = [
+    ...errors24h.slice(0, 20).map((event) => ({ severity: "Erro", area: event.screen || event.route || "Sistema", detail: event.message || event.eventType })),
+    ...slowScreens.map((row) => ({ severity: row.max > criticalLoadLimitMs ? "Crítico" : "Alerta", area: row.screen, detail: `Carregamento médio ${row.avg} ms; máximo ${row.max} ms. Padrão: até ${performanceLimitMs} ms.` })),
+    ...(incompleteProducts.length ? [{ severity: "Erro", area: "Produtos", detail: `${incompleteProducts.length} produto(s) sem código, nome, categoria ou marca.` }] : []),
+    ...(orphanVehicleLinks.length ? [{ severity: "Erro", area: "Vínculos", detail: `${orphanVehicleLinks.length} vínculo(s) de veículo apontam para registros inexistentes.` }] : []),
+    ...(productsWithoutImage.length ? [{ severity: "Alerta", area: "Produtos", detail: `${productsWithoutImage.length} produto(s) ativo(s) sem imagem principal.` }] : [])
+  ];
   const securityScore = Math.max(0, 100 - errors24h.length * 2 - failedLogins24h.length * 5 - Math.max(0, activeAdmins.length - 3) * 6 - legacyAdmins.length * 12);
-  const health = securityScore >= 85 && errors24h.length === 0 ? "Tudo saudável" : securityScore >= 70 ? "Atenção leve" : "Revisar agora";
+  const health = detectedProblems.length === 0 ? "Tudo saudável" : detectedProblems.some((item) => item.severity === "Erro" || item.severity === "Crítico") ? "Revisar agora" : "Atenção";
 
   return (
     <div className="space-y-6">
@@ -1552,6 +1644,12 @@ function Diagnostics({ data }: { data: AppData }) {
           <Info label="Admins legados" value={String(legacyAdmins.length)} />
           <Info label="Última alteração" value={formatLocalDateTime(data.auditLogs[0]?.createdAt)} />
         </div>
+      </Panel>
+      <Panel title={`Problemas detectados (${detectedProblems.length})`}>
+        {detectedProblems.length === 0 ? <div className="text-sm font-bold text-green-700">Nenhum desvio encontrado nos dados e eventos monitorados.</div> : <Table>
+          <thead><tr><Th>Nível</Th><Th>Área</Th><Th>Problema / padrão esperado</Th></tr></thead>
+          <tbody>{detectedProblems.map((problem, index) => <tr key={`${problem.area}-${index}`}><Td className="font-black">{problem.severity}</Td><Td>{problem.area}</Td><Td>{problem.detail}</Td></tr>)}</tbody>
+        </Table>}
       </Panel>
       <Panel title="Telas mais lentas">
         <Table>
@@ -1622,13 +1720,91 @@ function ContentSection({ settings, reload, notify }: { settings?: AboutSettings
   return <SettingsPanel title="Conteúdo institucional" onSave={() => saveSetting("about", draft, reload, notify)}><div className="grid gap-4"><Field label="Título"><input className="input" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} /></Field><Field label="Subtítulo"><input className="input" value={draft.subtitle} onChange={(e) => setDraft({ ...draft, subtitle: e.target.value })} /></Field><Field label="Texto"><textarea className="textarea min-h-52" value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} /></Field></div></SettingsPanel>;
 }
 
+const defaultCatalogAppearance: CatalogAppearance = {
+  version: 1,
+  primaryColor: "#021126",
+  accentColor: "#FCB900",
+  backgroundColor: "#F4F6FA",
+  surfaceColor: "#FFFFFF",
+  textColor: "#021126",
+  fontFamily: "system",
+  cardRadius: 12,
+  dockOpacity: 72,
+  dockHeight: 62,
+  dockPosition: "bottom",
+  showProductCategory: true,
+  showProductBrand: true,
+  logoUrl: ""
+};
+
+function safeCatalogAppearance(value?: CatalogAppearance): CatalogAppearance {
+  const merged = { ...defaultCatalogAppearance, ...(value || {}) };
+  const color = (candidate: string, fallback: string) => /^#[0-9a-f]{6}$/i.test(candidate) ? candidate.toUpperCase() : fallback;
+  return {
+    ...merged,
+    version: Math.max(1, Number(merged.version) || 1),
+    primaryColor: color(merged.primaryColor, defaultCatalogAppearance.primaryColor),
+    accentColor: color(merged.accentColor, defaultCatalogAppearance.accentColor),
+    backgroundColor: color(merged.backgroundColor, defaultCatalogAppearance.backgroundColor),
+    surfaceColor: color(merged.surfaceColor, defaultCatalogAppearance.surfaceColor),
+    textColor: color(merged.textColor, defaultCatalogAppearance.textColor),
+    cardRadius: Math.min(32, Math.max(0, Number(merged.cardRadius) || 0)),
+    dockOpacity: Math.min(100, Math.max(35, Number(merged.dockOpacity) || 72)),
+    dockHeight: Math.min(90, Math.max(52, Number(merged.dockHeight) || 62)),
+    fontFamily: ["system", "rounded", "serif"].includes(merged.fontFamily) ? merged.fontFamily : "system",
+    dockPosition: merged.dockPosition === "top" ? "top" : "bottom",
+    logoUrl: String(merged.logoUrl || "").slice(0, 1000)
+  };
+}
+
+function AppearanceSection({ draftSettings, publishedSettings, reload, notify }: { draftSettings?: CatalogAppearance; publishedSettings?: CatalogAppearance; reload: () => Promise<void>; notify: (message: string) => void }) {
+  const [draft, setDraft] = useState(() => safeCatalogAppearance(draftSettings || publishedSettings));
+  const [saving, setSaving] = useState(false);
+  useEffect(() => setDraft(safeCatalogAppearance(draftSettings || publishedSettings)), [draftSettings, publishedSettings]);
+  const set = <K extends keyof CatalogAppearance>(key: K, value: CatalogAppearance[K]) => setDraft((current) => safeCatalogAppearance({ ...current, [key]: value }));
+  const saveDraft = async () => {
+    setSaving(true);
+    try { await saveSetting("catalogAppearanceDraft", safeCatalogAppearance(draft), reload, notify); } finally { setSaving(false); }
+  };
+  const publish = async () => {
+    if (!window.confirm("Publicar esta aparência no app real? O rascunho atual passará a ser o layout ativo.")) return;
+    setSaving(true);
+    try {
+      const published = { ...safeCatalogAppearance(draft), version: (publishedSettings?.version || 0) + 1, publishedAt: new Date().toISOString() };
+      await saveSetting("catalogAppearance", published, reload, notify);
+      notify(`Aparência versão ${published.version} publicada no app.`);
+    } finally { setSaving(false); }
+  };
+  const phoneFont = draft.fontFamily === "serif" ? "Georgia, serif" : draft.fontFamily === "rounded" ? "ui-rounded, system-ui" : "system-ui";
+  const sample = "BR64211";
+  return <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_390px]">
+    <Panel title="Aparência do catálogo — rascunho">
+      <div className="mb-5 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm font-bold text-blue-900">As alterações abaixo aparecem somente na prévia. O app real muda apenas ao clicar em “Publicar no app”.</div>
+      <div className="grid gap-4 md:grid-cols-2">
+        {([['primaryColor','Cor principal'],['accentColor','Cor de destaque'],['backgroundColor','Fundo'],['surfaceColor','Cards'],['textColor','Texto']] as const).map(([key,label]) => <Field key={key} label={label}><div className="flex gap-2"><input type="color" value={draft[key]} onChange={(e) => set(key, e.target.value)} className="h-11 w-14 rounded-xl border border-line bg-white p-1" /><input className="input" value={draft[key]} onChange={(e) => set(key, e.target.value as CatalogAppearance[typeof key])} /></div></Field>)}
+        <Field label="Fonte"><select className="input" value={draft.fontFamily} onChange={(e) => set('fontFamily', e.target.value as CatalogAppearance['fontFamily'])}><option value="system">Sistema</option><option value="rounded">Arredondada</option><option value="serif">Serifada</option></select></Field>
+        <Field label={`Raio dos cards: ${draft.cardRadius}px`}><input type="range" min="0" max="32" value={draft.cardRadius} onChange={(e) => set('cardRadius', Number(e.target.value))} className="w-full" /></Field>
+        <Field label={`Transparência da ilha: ${draft.dockOpacity}%`}><input type="range" min="35" max="100" value={draft.dockOpacity} onChange={(e) => set('dockOpacity', Number(e.target.value))} className="w-full" /></Field>
+        <Field label={`Altura da ilha: ${draft.dockHeight}px`}><input type="range" min="52" max="90" value={draft.dockHeight} onChange={(e) => set('dockHeight', Number(e.target.value))} className="w-full" /></Field>
+        <Field label="Posição da ilha"><select className="input" value={draft.dockPosition} onChange={(e) => set('dockPosition', e.target.value as CatalogAppearance['dockPosition'])}><option value="bottom">Inferior</option><option value="top">Superior</option></select></Field>
+      </div>
+      <div className="mt-5 grid gap-3 md:grid-cols-2"><label className="flex items-center gap-3 rounded-xl bg-soft p-3 font-bold"><input type="checkbox" checked={draft.showProductCategory} onChange={(e) => set('showProductCategory', e.target.checked)} /> Mostrar categoria</label><label className="flex items-center gap-3 rounded-xl bg-soft p-3 font-bold"><input type="checkbox" checked={draft.showProductBrand} onChange={(e) => set('showProductBrand', e.target.checked)} /> Mostrar marca</label></div>
+      <div className="mt-5"><UploadBox label="Logo superior personalizado" folder="app/layout" value={draft.logoUrl} onUploaded={(url) => set('logoUrl', url)} /></div>
+      <div className="mt-6 flex flex-wrap gap-3"><button disabled={saving} onClick={() => void saveDraft()} className="btn-white"><Save size={17} /> Salvar rascunho</button><button disabled={saving} onClick={() => void publish()} className="btn-yellow"><CheckCircle2 size={17} /> Publicar no app</button><button disabled={saving} onClick={() => setDraft(safeCatalogAppearance(publishedSettings))} className="btn-white">Restaurar publicado</button></div>
+      <p className="mt-4 text-xs font-bold text-muted">Publicado: versão {publishedSettings?.version || 0}{publishedSettings?.publishedAt ? ` em ${formatLocalDateTime(publishedSettings.publishedAt)}` : " — layout padrão atual"}.</p>
+    </Panel>
+    <div className="xl:sticky xl:top-28 xl:self-start"><div className="mb-3 text-center text-sm font-black text-muted">PRÉVIA AO VIVO — IPHONE</div><div className="mx-auto w-[360px] rounded-[54px] bg-[#111] p-[10px] shadow-2xl"><div className="relative h-[720px] overflow-hidden rounded-[44px]" style={{ background: draft.backgroundColor, color: draft.textColor, fontFamily: phoneFont }}><div className="absolute left-1/2 top-2 z-10 h-7 w-28 -translate-x-1/2 rounded-full bg-black" /><div className="flex h-14 items-center justify-between px-7 pt-2 text-xs font-black"><span>09:41</span><span>● ●●</span></div><div className="flex h-20 items-center justify-center" style={{ background: draft.surfaceColor }}>{draft.logoUrl ? <img src={draft.logoUrl} className="h-12 w-40 object-contain" alt="Logo na prévia" /> : <strong className="text-2xl" style={{ color: draft.primaryColor }}>BRILAND</strong>}</div><div className="p-5"><div className="mb-4 flex gap-2"><div className="flex-1 rounded-xl p-3 text-sm" style={{ background: draft.surfaceColor }}>Buscar produtos</div><div className="rounded-xl p-3" style={{ background: draft.accentColor }}>☰</div></div><div className="mb-3 text-sm opacity-60">13 produtos encontrados</div><div className="grid grid-cols-2 gap-3">{[sample,"BR64212"].map((code) => <div key={code} className="overflow-hidden border border-black/5" style={{ background: draft.surfaceColor, borderRadius: draft.cardRadius }}><div className="flex h-28 items-center justify-center" style={{ background: `${draft.primaryColor}10` }}>📦</div><div className="p-3"><strong style={{ color: draft.primaryColor }}>{code}</strong><div className="mt-1 text-xs opacity-70">Lâmpada halógena automotiva</div>{draft.showProductCategory && <div className="mt-3 text-[10px] opacity-55">Lâmpadas{draft.showProductBrand && " • Briland"}</div>}<div className="mt-3 text-xs font-black" style={{ color: draft.accentColor }}>Entrar para ver mais</div></div></div>)}</div></div><div className="absolute left-5 right-5 flex items-center justify-around rounded-full border border-white/50 text-lg shadow-xl" style={{ [draft.dockPosition]: 14, height: draft.dockHeight, background: `rgba(255,255,255,${draft.dockOpacity / 100})` }}>◎ in ◉ ◌</div></div></div></div>
+  </div>;
+}
+
 async function saveSetting(key: string, value: unknown, reload: () => Promise<void>, notify: (message: string) => void) {
   const { error } = await supabase.rpc("save_app_setting", { setting_key: key, setting_value: value });
-  if (error) notify(error.message);
-  else {
-    notify("Configuração salva.");
-    await reload();
+  if (error) {
+    notify(error.message);
+    throw error;
   }
+  notify("Configuração salva.");
+  await reload();
 }
 
 async function updateRow(table: string, id: string, payload: Record<string, unknown>, reload: () => Promise<void>, notify: (message: string) => void) {

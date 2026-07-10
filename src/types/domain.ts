@@ -63,6 +63,23 @@ export type AuditLog = { id: string; actorUserId?: string | null; actorEmail?: s
 export type SocialLinks = { instagram: string; linkedin: string; whatsapp: string; site: string };
 export type MediaSettings = { initialImage: string; homeImage: string };
 export type AboutSettings = { title: string; subtitle: string; body: string };
+export type CatalogAppearance = {
+  version: number;
+  primaryColor: string;
+  accentColor: string;
+  backgroundColor: string;
+  surfaceColor: string;
+  textColor: string;
+  fontFamily: "system" | "rounded" | "serif";
+  cardRadius: number;
+  dockOpacity: number;
+  dockHeight: number;
+  dockPosition: "bottom" | "top";
+  showProductCategory: boolean;
+  showProductBrand: boolean;
+  logoUrl: string;
+  publishedAt?: string | null;
+};
 export type CatalogPdfRole = "VISITANTE" | "NAO_CLIENTE" | "CLIENTE" | "REPRESENTANTE";
 export type CatalogPdfEntry = { url: string; generatedAt: string; role: CatalogPdfRole; productCount: number };
 export type CatalogPdfSettings = Partial<Record<CatalogPdfRole, CatalogPdfEntry>>;

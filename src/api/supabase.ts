@@ -1,9 +1,12 @@
 import type { AuthSession } from "../types/domain";
 import { createClient } from "@supabase/supabase-js";
 
-export const SUPABASE_URL = "https://jdxbxsufqjiinkfvvbda.supabase.co";
-export const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpkeGJ4c3VmcWppaW5rZnZ2YmRhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2NzM3OTAsImV4cCI6MjA5NzI0OTc5MH0.g40V1rpJ8_0URRcdxVC9EzRFrJzyKK1lFL7yh3HNeHY";
+export const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim() || "";
+export const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim() || "";
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error("Supabase não configurado. Defina EXPO_PUBLIC_SUPABASE_URL e EXPO_PUBLIC_SUPABASE_ANON_KEY.");
+}
 
 export const CONFIG_STORAGE_KEY = "briland-admin-config";
 
