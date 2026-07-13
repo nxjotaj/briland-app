@@ -18,7 +18,10 @@
       }
     },
     "web": {
-      "bundler": "metro"
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./public/icon-192.png",
+      "backgroundColor": "#021126"
     },
     "plugins": [
       "expo-asset",
