@@ -41,6 +41,8 @@ export type Produto = {
   ca?: string | null;
   ativo?: boolean | null;
   destaque?: boolean | null;
+  lancamento?: boolean | null;
+  promocao?: boolean | null;
   ordem?: number | null;
   createdAt?: string | null;
   updatedAt?: string | null;

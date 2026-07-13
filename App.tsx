@@ -551,8 +551,8 @@ export default function App() {
               {route === "promotions" && (
                 <ProductList
                   title="Promoções"
-                  subtitle="Produtos em destaque e oportunidades comerciais."
-                  products={filteredProducts.filter((item) => item.destaque || typeof item.preco === "number")}
+                  subtitle="Ofertas selecionadas pela equipe Briland."
+                  products={filteredProducts.filter((item) => item.promocao)}
                   allCategories={data.categorias}
                   categoryById={categoryById}
                   brandById={brandById}
@@ -588,8 +588,8 @@ export default function App() {
               {route === "launches" && (
                 <ProductList
                   title="Lançamentos"
-                  subtitle="Últimos produtos cadastrados no catálogo."
-                  products={[...filteredProducts].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 80)}
+                  subtitle="Novidades selecionadas pela equipe Briland."
+                  products={filteredProducts.filter((item) => item.lancamento).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))}
                   allCategories={data.categorias}
                   categoryById={categoryById}
                   brandById={brandById}
@@ -946,7 +946,7 @@ function ProductList({
             <Pressable key={product.id} style={[listMode === "grid" ? styles.productCard : styles.productListCard, { backgroundColor: appearance.surfaceColor, borderRadius: appearance.cardRadius }, promo && styles.promoCard, launch && styles.launchCard]} onPress={() => onOpen(product)}>
               <View style={listMode === "grid" ? undefined : styles.listImageWrap}>
                 {product.imagemPrincipal ? <Image source={{ uri: liveImageUrl(product.imagemPrincipal, imageSize.productCard, imageVersion) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : listMode === "grid" ? <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" card /> : <View style={styles.productListPlaceholder}><Ionicons name="image-outline" size={28} color={colors.yellow} /></View>}
-                {promo && <Ribbon text="DESTAQUE" color={colors.red} />}
+                {promo && <Ribbon text="PROMOÇÃO" color={colors.red} />}
                 {launch && <Ribbon text="NOVO" color={colors.yellow} />}
               </View>
               <View style={styles.productBody}>
@@ -1299,11 +1299,13 @@ function AdminProducts({ products, categories, brands, reload, authToken, onActi
       imagensExtras: [],
       ativo: true,
       destaque: false,
+      lancamento: false,
+      promocao: false,
       ordem: 0
     });
   };
   const exportProducts = () => {
-    const headers = ["codigoInterno", "nome", "categoria", "marca", "descricaoCurta", "descricaoCompleta", "ean", "ncm", "caixaMaster", "preco", "estoque", "condicaoComercial", "prazoEntrega", "fichaTecnica", "observacaoComercial", "ca", "ativo", "destaque", "ordem"];
+    const headers = ["codigoInterno", "nome", "categoria", "marca", "descricaoCurta", "descricaoCompleta", "ean", "ncm", "caixaMaster", "preco", "estoque", "condicaoComercial", "prazoEntrega", "fichaTecnica", "observacaoComercial", "ca", "ativo", "destaque", "lancamento", "promocao", "ordem"];
     const lines = products.map((product) => headers.map((key) => {
       if (key === "categoria") return csvEscape(categories.find((item) => item.id === product.categoriaId)?.nome || product.categoriaId || "");
       if (key === "marca") return csvEscape(brands.find((item) => item.id === product.marcaId)?.nome || product.marcaId || "");
@@ -1346,6 +1348,8 @@ function AdminProducts({ products, categories, brands, reload, authToken, onActi
           ca: row.ca || null,
           ativo: row.ativo ? row.ativo !== "false" && row.ativo !== "0" : true,
           destaque: row.destaque === "true" || row.destaque === "1",
+          lancamento: row.lancamento === "true" || row.lancamento === "1",
+          promocao: row.promocao === "true" || row.promocao === "1",
           ordem: row.ordem ? Number(row.ordem) : 0
         };
         if (current) await supabasePatch<Produto>("Produto", current.id, payload, authToken);
@@ -1401,6 +1405,8 @@ function ProductEditor({ product, categories, brands, authToken, onClose, onSave
     ca: draft.ca || null,
     ativo: draft.ativo !== false,
     destaque: Boolean(draft.destaque),
+    lancamento: Boolean(draft.lancamento),
+    promocao: Boolean(draft.promocao),
     ordem: Number(draft.ordem || 0),
     updatedAt: new Date().toISOString()
   });
@@ -1457,6 +1463,8 @@ function ProductEditor({ product, categories, brands, authToken, onClose, onSave
         <AdminTextInput label="Ordem" value={String(draft.ordem ?? 0)} keyboard="numeric" onChangeText={(value) => set("ordem", Number(value || 0))} />
         <View style={styles.editorSwitch}><Text style={styles.bold}>Ativo</Text><Switch value={draft.ativo !== false} onValueChange={(value) => set("ativo", value)} /></View>
         <View style={styles.editorSwitch}><Text style={styles.bold}>Destaque</Text><Switch value={Boolean(draft.destaque)} onValueChange={(value) => set("destaque", value)} /></View>
+        <View style={styles.editorSwitch}><Text style={styles.bold}>Lançamento</Text><Switch value={Boolean(draft.lancamento)} onValueChange={(value) => set("lancamento", value)} /></View>
+        <View style={styles.editorSwitch}><Text style={styles.bold}>Promoção</Text><Switch value={Boolean(draft.promocao)} onValueChange={(value) => set("promocao", value)} /></View>
         <View style={styles.editorActions}>
           {!isNew && <Pressable style={styles.dangerButton} onPress={remove}><Ionicons name="trash-outline" size={20} color={colors.red} /><Text style={styles.dangerText}>Excluir</Text></Pressable>}
           <Pressable style={styles.yellowButton} onPress={save}><Text style={styles.yellowButtonText}>Salvar produto</Text></Pressable>

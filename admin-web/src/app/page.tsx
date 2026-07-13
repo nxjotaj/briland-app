@@ -180,6 +180,13 @@ function importValue(row: Record<string, unknown>, aliases: string[]) {
   return "";
 }
 
+function importBoolean(value: unknown, fallback = false) {
+  const normalized = normalizeImportKey(value);
+  if (["1", "true", "sim", "s", "yes", "x"].includes(normalized)) return true;
+  if (["0", "false", "nao", "n", "no"].includes(normalized)) return false;
+  return fallback;
+}
+
 const importColumns = {
   codigo: ["Código interno", "Código", "Codigo", "Cód.", "Cod", "SKU", "Referência", "Referencia"],
   nome: ["Nome", "Descrição", "Descricao", "Descrição do produto", "Nome do produto", "Produto"],
@@ -365,7 +372,9 @@ async function importProductsFromTemplate(file: File, data: AppData) {
       condicaoComercial: importValue(row, ["Condição Comercial", "condicaoComercial"]) || null,
       observacaoComercial: importValue(row, ["Observação Comercial", "observacaoComercial"]) || null,
       ativo: true,
-      destaque: false,
+      destaque: importBoolean(importValue(row, ["Destaque"]), existing?.destaque ?? false),
+      lancamento: importBoolean(importValue(row, ["Lançamento", "Lancamento"]), existing?.lancamento ?? false),
+      promocao: importBoolean(importValue(row, ["Promoção", "Promocao"]), existing?.promocao ?? false),
       ordem: existing?.ordem ?? 0,
       updatedAt: new Date().toISOString()
     };
@@ -742,8 +751,40 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
   const [editing, setEditing] = useState<Produto | null>(null);
   const [importReport, setImportReport] = useState<{ fileName: string; imported: number; errors: string[] } | null>(null);
   const [importing, setImporting] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [pendingFilter, setPendingFilter] = useState("all");
+  const [sortMode, setSortMode] = useState("newest");
   const lower = query.toLowerCase();
-  const products = data.produtos.filter((item) => [item.nome, item.codigoInterno, item.ean, item.ncm].join(" ").toLowerCase().includes(lower));
+  const essentialMissing = (item: Produto) => !item.codigoInterno || !item.nome || !item.categoriaId || !item.marcaId || !item.imagemPrincipal || item.preco == null || !item.descricaoCurta || !item.ean || !item.ncm || !item.caixaMaster;
+  const products = data.produtos
+    .filter((item) => [item.nome, item.codigoInterno, item.ean, item.ncm].join(" ").toLowerCase().includes(lower))
+    .filter((item) => !categoryFilter || item.categoriaId === categoryFilter)
+    .filter((item) => statusFilter === "all" ||
+      (statusFilter === "active" && item.ativo !== false) ||
+      (statusFilter === "inactive" && item.ativo === false) ||
+      (statusFilter === "featured" && Boolean(item.destaque)) ||
+      (statusFilter === "launch" && Boolean(item.lancamento)) ||
+      (statusFilter === "promotion" && Boolean(item.promocao)))
+    .filter((item) => pendingFilter === "all" ||
+      (pendingFilter === "any" && essentialMissing(item)) ||
+      (pendingFilter === "photo" && !item.imagemPrincipal) ||
+      (pendingFilter === "price" && item.preco == null) ||
+      (pendingFilter === "description" && !item.descricaoCurta) ||
+      (pendingFilter === "ean" && !item.ean) ||
+      (pendingFilter === "ncm" && !item.ncm) ||
+      (pendingFilter === "masterBox" && !item.caixaMaster) ||
+      (pendingFilter === "stock" && item.estoque == null) ||
+      (pendingFilter === "technicalSheet" && !item.fichaTecnica))
+    .sort((a, b) => {
+      if (sortMode === "oldest") return String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
+      if (sortMode === "name") return a.nome.localeCompare(b.nome, "pt-BR");
+      if (sortMode === "code") return String(a.codigoInterno || "").localeCompare(String(b.codigoInterno || ""), "pt-BR", { numeric: true });
+      if (sortMode === "updated") return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
+      return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+    });
+  const hasFilters = Boolean(categoryFilter || statusFilter !== "all" || pendingFilter !== "all" || sortMode !== "newest");
+  const clearFilters = () => { setCategoryFilter(""); setStatusFilter("all"); setPendingFilter("all"); setSortMode("newest"); };
 
   const exportProducts = async (format: "csv" | "xlsx") => {
     const rows = data.produtos.map((product) => ({
@@ -801,6 +842,8 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
         estoque: row.estoque ? Number(row.estoque) : null,
         ativo: row.ativo == null ? true : !["false", "0", "Não", "nao"].includes(String(row.ativo)),
         destaque: ["true", "1", "Sim", "sim"].includes(String(row.destaque)),
+        lancamento: importBoolean(row.lancamento ?? row.Lancamento ?? row["Lançamento"], existing?.lancamento ?? false),
+        promocao: importBoolean(row.promocao ?? row.Promocao ?? row["Promoção"], existing?.promocao ?? false),
         ordem: row.ordem ? Number(row.ordem) : 0
       };
       const request = existing
@@ -853,7 +896,16 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
         <button onClick={() => exportProducts("csv")} className="btn-white"><Download size={17} /> Exportar CSV</button>
         <button onClick={() => void exportProducts("xlsx")} className="btn-white"><FileSpreadsheet size={17} /> Exportar XLSX</button>
       </div>
-      <Panel title={`${products.length} produtos`}>
+      <div className="mb-5 rounded-[24px] border border-line bg-white p-4 shadow-sm">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><div className="font-black">Filtros do cadastro</div><div className="text-xs font-semibold text-muted">Combine os filtros para localizar produtos e pendências rapidamente.</div></div>{hasFilters && <button className="btn-white" onClick={clearFilters}><RefreshCw size={15} /> Limpar filtros</button>}</div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <Field label="Categoria"><select className="input" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="">Todas as categorias</option>{data.categorias.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>
+          <Field label="Status"><select className="input" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">Todos os status</option><option value="active">Ativos</option><option value="inactive">Inativos</option><option value="featured">Destaques</option><option value="launch">Lançamentos</option><option value="promotion">Promoções</option></select></Field>
+          <Field label="Informações pendentes"><select className="input" value={pendingFilter} onChange={(event) => setPendingFilter(event.target.value)}><option value="all">Todas as condições</option><option value="any">Qualquer dado essencial faltando</option><option value="photo">Sem foto</option><option value="price">Sem preço</option><option value="description">Sem descrição curta</option><option value="ean">Sem EAN</option><option value="ncm">Sem NCM</option><option value="masterBox">Sem caixa master</option><option value="stock">Sem estoque</option><option value="technicalSheet">Sem ficha técnica</option></select></Field>
+          <Field label="Ordenar por"><select className="input" value={sortMode} onChange={(event) => setSortMode(event.target.value)}><option value="newest">Mais recentes primeiro</option><option value="oldest">Mais antigos primeiro</option><option value="updated">Atualizados recentemente</option><option value="name">Nome (A–Z)</option><option value="code">Código</option></select></Field>
+        </div>
+      </div>
+      <Panel title={`${products.length} de ${data.produtos.length} produtos`}>
         <Table>
           <thead><tr><Th>Imagem</Th><Th>Código</Th><Th>Nome</Th><Th>Categoria</Th><Th>Marca</Th><Th>Preço</Th><Th>Status</Th><Th /></tr></thead>
           <tbody>
@@ -865,12 +917,13 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
                 <Td>{data.categorias.find((item) => item.id === product.categoriaId)?.nome || "-"}</Td>
                 <Td>{data.marcas.find((item) => item.id === product.marcaId)?.nome || "-"}</Td>
                 <Td>{money(product.preco)}</Td>
-                <Td><Toggle checked={product.ativo !== false} onChange={async (checked) => { await updateRow("Produto", product.id, { ativo: checked }, reload, notify); }} /></Td>
+                <Td><div className="flex min-w-28 flex-wrap items-center gap-1.5"><Toggle checked={product.ativo !== false} onChange={async (checked) => { await updateRow("Produto", product.id, { ativo: checked }, reload, notify); }} />{product.destaque && <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-black text-amber-800">DESTAQUE</span>}{product.lancamento && <span className="rounded-full bg-blue-100 px-2 py-1 text-[10px] font-black text-blue-800">LANÇAMENTO</span>}{product.promocao && <span className="rounded-full bg-red-100 px-2 py-1 text-[10px] font-black text-red-800">PROMOÇÃO</span>}</div></Td>
                 <Td><button onClick={() => setEditing(product)} className="icon-btn"><Pencil size={16} /></button></Td>
               </tr>
             ))}
           </tbody>
         </Table>
+        {products.length === 0 && <div className="py-12 text-center text-sm font-semibold text-muted">Nenhum produto corresponde aos filtros selecionados.</div>}
       </Panel>
       {editing && <ProductModal product={editing} data={data} onClose={() => setEditing(null)} reload={reload} notify={notify} />}
       {importReport && <ImportReportModal report={importReport} onClose={() => setImportReport(null)} />}
@@ -910,6 +963,8 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
         imagensExtras: extras,
         ativo: draft.ativo !== false,
         destaque: Boolean(draft.destaque),
+        lancamento: Boolean(draft.lancamento),
+        promocao: Boolean(draft.promocao),
         ordem: Number(draft.ordem || 0),
         observacaoInterna: draft.observacaoInterna || null,
         preco: draft.preco ?? null,
@@ -1012,8 +1067,12 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
         <Field label="Observação interna"><textarea className="textarea" value={draft.observacaoInterna || ""} onChange={(event) => set("observacaoInterna", event.target.value)} /></Field>
         <div className="rounded-2xl border border-line p-4">
           <div className="mb-3 font-black">Status</div>
-          <label className="mr-6 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(event) => set("ativo", event.target.checked)} /> Ativo</label>
-          <label className="inline-flex items-center gap-2"><input type="checkbox" checked={Boolean(draft.destaque)} onChange={(event) => set("destaque", event.target.checked)} /> Destaque</label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(event) => set("ativo", event.target.checked)} /> Ativo</label>
+            <label className="inline-flex items-center gap-2"><input type="checkbox" checked={Boolean(draft.destaque)} onChange={(event) => set("destaque", event.target.checked)} /> Destaque</label>
+            <label className="inline-flex items-center gap-2"><input type="checkbox" checked={Boolean(draft.lancamento)} onChange={(event) => set("lancamento", event.target.checked)} /> Lançamento</label>
+            <label className="inline-flex items-center gap-2"><input type="checkbox" checked={Boolean(draft.promocao)} onChange={(event) => set("promocao", event.target.checked)} /> Promoção</label>
+          </div>
         </div>
       </div>
       <div className="mt-4 rounded-2xl border border-line p-4">
@@ -1891,6 +1950,8 @@ function newProduct(data: AppData): Produto {
     marcaId: data.marcas[0]?.id || "",
     ativo: true,
     destaque: false,
+    lancamento: false,
+    promocao: false,
     ordem: 0,
     imagensExtras: []
   };
