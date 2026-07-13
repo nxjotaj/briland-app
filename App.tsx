@@ -67,9 +67,9 @@ const imageSize = {
   home: { width: 960, height: 610, resize: "cover", quality: 78 } as const,
   category: { width: 480, height: 360, resize: "cover", quality: 72 } as const,
   categoryIcon: { width: 256, height: 256, resize: "contain", quality: 70 } as const,
-  productCard: { width: 460, height: 340, resize: "contain", quality: 72 } as const,
-  productDetail: { width: 1280, height: 960, resize: "contain", quality: 88 } as const,
-  thumb: { width: 180, height: 140, resize: "contain", quality: 68 } as const
+  productCard: { width: 920, height: 680, resize: "contain", quality: 88 } as const,
+  productDetail: { width: 1920, height: 1440, resize: "contain", quality: 94 } as const,
+  thumb: { width: 360, height: 280, resize: "contain", quality: 84 } as const
 };
 
 const realtimeCatalogTables = [
@@ -112,7 +112,6 @@ export default function App() {
   const [brandFilter, setBrandFilter] = useState<string | null>(null);
   const [montadoraFilter, setMontadoraFilter] = useState<string | null>(null);
   const [modeloFilter, setModeloFilter] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive" | "featured" | "missingPhoto">("all");
   const [sortMode, setSortMode] = useState<"order" | "name" | "newest">("order");
   const [listMode, setListMode] = useState<"grid" | "list">("grid");
   const [filterOpen, setFilterOpen] = useState(false);
@@ -324,26 +323,20 @@ export default function App() {
       const vehicleApplications = vehicleApplicationsByProduct.get(item.id) || item.aplicacoesVeiculo || [];
       const vehicleText = vehicleApplications.map((app) => `${app.montadoraNome || ""} ${app.modeloNome || ""}`).join(" ");
       const text = [item.nome, item.codigoInterno, item.descricaoCurta, item.ean, item.ncm, categoria, marca, vehicleText].join(" ").toLowerCase();
-      const statusOk =
-        statusFilter === "all" ||
-        (statusFilter === "active" && item.ativo !== false) ||
-        (statusFilter === "inactive" && item.ativo === false) ||
-        (statusFilter === "featured" && Boolean(item.destaque)) ||
-        (statusFilter === "missingPhoto" && !item.imagemPrincipal);
       const vehicleOk =
         (!montadoraFilter && !modeloFilter) ||
         vehicleApplications.some((app) =>
           (!montadoraFilter || app.montadoraId === montadoraFilter) &&
           (!modeloFilter || app.modeloId === modeloFilter)
         );
-      return (!q || text.includes(q)) && (!categoryFilter || item.categoriaId === categoryFilter) && (!brandFilter || item.marcaId === brandFilter) && vehicleOk && statusOk;
+      return (!q || text.includes(q)) && (!categoryFilter || item.categoriaId === categoryFilter) && (!brandFilter || item.marcaId === brandFilter) && vehicleOk;
     });
     return [...filtered].sort((a, b) => {
       if (sortMode === "name") return a.nome.localeCompare(b.nome);
       if (sortMode === "newest") return String(b.createdAt).localeCompare(String(a.createdAt));
       return (a.ordem ?? 0) - (b.ordem ?? 0);
     });
-  }, [activeProducts, query, categoryFilter, brandFilter, montadoraFilter, modeloFilter, statusFilter, sortMode, categoryById, brandById, vehicleApplicationsByProduct]);
+  }, [activeProducts, query, categoryFilter, brandFilter, montadoraFilter, modeloFilter, sortMode, categoryById, brandById, vehicleApplicationsByProduct]);
 
   const transitionTo = (next: Route) => {
     if (next === route) {
@@ -377,7 +370,6 @@ export default function App() {
     setBrandFilter(null);
     setMontadoraFilter(null);
     setModeloFilter(null);
-    setStatusFilter("all");
     setSortMode("order");
   };
 
@@ -530,8 +522,6 @@ export default function App() {
                   setMontadoraFilter={setMontadoraFilter}
                   modeloFilter={modeloFilter}
                   setModeloFilter={setModeloFilter}
-                  statusFilter={statusFilter}
-                  setStatusFilter={setStatusFilter}
                   sortMode={sortMode}
                   setSortMode={setSortMode}
                   brands={data.marcas}
@@ -566,8 +556,6 @@ export default function App() {
                   setMontadoraFilter={setMontadoraFilter}
                   modeloFilter={modeloFilter}
                   setModeloFilter={setModeloFilter}
-                  statusFilter={statusFilter}
-                  setStatusFilter={setStatusFilter}
                   sortMode={sortMode}
                   setSortMode={setSortMode}
                   brands={data.marcas}
@@ -603,8 +591,6 @@ export default function App() {
                   setMontadoraFilter={setMontadoraFilter}
                   modeloFilter={modeloFilter}
                   setModeloFilter={setModeloFilter}
-                  statusFilter={statusFilter}
-                  setStatusFilter={setStatusFilter}
                   sortMode={sortMode}
                   setSortMode={setSortMode}
                   brands={data.marcas}
@@ -856,8 +842,6 @@ function ProductList({
   setMontadoraFilter,
   modeloFilter,
   setModeloFilter,
-  statusFilter,
-  setStatusFilter,
   sortMode,
   setSortMode,
   brands,
@@ -891,8 +875,6 @@ function ProductList({
   setMontadoraFilter: (id: string | null) => void;
   modeloFilter: string | null;
   setModeloFilter: (id: string | null) => void;
-  statusFilter: "all" | "active" | "inactive" | "featured" | "missingPhoto";
-  setStatusFilter: (mode: "all" | "active" | "inactive" | "featured" | "missingPhoto") => void;
   sortMode: "order" | "name" | "newest";
   setSortMode: (mode: "order" | "name" | "newest") => void;
   brands: Marca[];
@@ -928,7 +910,7 @@ function ProductList({
         <Chip text={activeBrand ?? "Marcas"} onPress={() => setFilterOpen(true)} />
         <Chip text={activeMontadora ?? "Montadoras"} onPress={() => setFilterOpen(true)} />
         {montadoraFilter && <Chip text={activeModelo ?? "Modelos"} onPress={() => setFilterOpen(true)} />}
-        <Chip text="Limpar" onPress={() => { setQuery(""); setCategoryFilter(null); setBrandFilter(null); setMontadoraFilter(null); setModeloFilter(null); setStatusFilter("all"); setSortMode("order"); }} />
+        <Chip text="Limpar" onPress={() => { setQuery(""); setCategoryFilter(null); setBrandFilter(null); setMontadoraFilter(null); setModeloFilter(null); setSortMode("order"); }} />
       </View>
       {montadoraFilter && availableModels.length > 0 && (
         <View style={styles.modelFilterPanel}>
@@ -977,8 +959,6 @@ function ProductList({
         setMontadoraFilter={(id) => { setMontadoraFilter(id); setModeloFilter(null); }}
         modeloFilter={modeloFilter}
         setModeloFilter={setModeloFilter}
-        statusFilter={statusFilter}
-        setStatusFilter={setStatusFilter}
         sortMode={sortMode}
         setSortMode={setSortMode}
       />
@@ -1065,8 +1045,6 @@ function FilterSheet({
   setMontadoraFilter,
   modeloFilter,
   setModeloFilter,
-  statusFilter,
-  setStatusFilter,
   sortMode,
   setSortMode
 }: {
@@ -1084,18 +1062,9 @@ function FilterSheet({
   setMontadoraFilter: (id: string | null) => void;
   modeloFilter: string | null;
   setModeloFilter: (id: string | null) => void;
-  statusFilter: "all" | "active" | "inactive" | "featured" | "missingPhoto";
-  setStatusFilter: (mode: "all" | "active" | "inactive" | "featured" | "missingPhoto") => void;
   sortMode: "order" | "name" | "newest";
   setSortMode: (mode: "order" | "name" | "newest") => void;
 }) {
-  const statuses: Array<["all" | "active" | "inactive" | "featured" | "missingPhoto", string]> = [
-    ["all", "Todos"],
-    ["active", "Ativos"],
-    ["inactive", "Inativos"],
-    ["featured", "Destaque"],
-    ["missingPhoto", "Sem foto"]
-  ];
   const sorts: Array<["order" | "name" | "newest", string]> = [["order", "Ordem"], ["name", "Nome"], ["newest", "Mais novos"]];
   const filteredModels = montadoraFilter ? modelosVeiculo.filter((item) => item.montadoraId === montadoraFilter) : modelosVeiculo;
   return (
@@ -1123,8 +1092,6 @@ function FilterSheet({
           <OptionPill label="Todos" selected={!modeloFilter} onPress={() => setModeloFilter(null)} />
           {filteredModels.map((item) => <OptionPill key={item.id} label={item.nome} selected={modeloFilter === item.id} onPress={() => setModeloFilter(item.id)} />)}
         </ScrollView>
-        <Text style={styles.sheetLabel}>Status</Text>
-        <View style={styles.wrapOptions}>{statuses.map(([value, label]) => <OptionPill key={value} label={label} selected={statusFilter === value} onPress={() => setStatusFilter(value)} />)}</View>
         <Text style={styles.sheetLabel}>Ordenacao</Text>
         <View style={styles.wrapOptions}>{sorts.map(([value, label]) => <OptionPill key={value} label={label} selected={sortMode === value} onPress={() => setSortMode(value)} />)}</View>
         <Pressable style={styles.yellowButton} onPress={onClose}><Text style={styles.yellowButtonText}>Aplicar filtros</Text></Pressable>
