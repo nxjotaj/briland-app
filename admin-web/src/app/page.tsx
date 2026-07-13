@@ -926,18 +926,17 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
       const { error } = isNew ? await supabase.from("Produto").insert({ id: draft.id, ...payload }) : await supabase.from("Produto").update(payload).eq("id", draft.id);
       if (error) throw error;
       const existingApplicationLinks = data.produtoAplicacoes.filter((item) => item.produtoId === draft.id);
-      const currentApplicationIds = new Set(applicationLinks.map((item) => item.id).filter(Boolean));
+      const currentApplicationIds = new Set(applicationLinks.map((item) => item.aplicacaoId).filter(Boolean));
       for (const item of existingApplicationLinks) {
-        if (item.id && !currentApplicationIds.has(item.id)) {
-          const { error: deleteError } = await supabase.from("ProdutoAplicacao").delete().eq("id", item.id);
+        if (!currentApplicationIds.has(item.aplicacaoId)) {
+          const { error: deleteError } = await supabase.from("ProdutoAplicacao").delete().eq("produtoId", draft.id).eq("aplicacaoId", item.aplicacaoId);
           if (deleteError) throw deleteError;
         }
       }
-      for (const item of applicationLinks) {
-        if (!item.aplicacaoId) continue;
-        const exists = Boolean(item.id && existingApplicationLinks.some((current) => current.id === item.id));
-        if (!exists) {
-          const { error: applicationError } = await supabase.from("ProdutoAplicacao").insert({ id: item.id || createId("pa"), produtoId: draft.id, aplicacaoId: item.aplicacaoId });
+      const existingApplicationIds = new Set(existingApplicationLinks.map((item) => item.aplicacaoId));
+      for (const aplicacaoId of currentApplicationIds) {
+        if (!existingApplicationIds.has(aplicacaoId)) {
+          const { error: applicationError } = await supabase.from("ProdutoAplicacao").insert({ produtoId: draft.id, aplicacaoId });
           if (applicationError) throw applicationError;
         }
       }
@@ -1023,19 +1022,19 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
             <div className="font-black">Aplicações</div>
             <div className="text-xs text-muted">Vincule o produto a aplicações comerciais como Linha leve, Linha pesada ou outras.</div>
           </div>
-          <button className="btn-white" disabled={data.aplicacoes.length === 0} onClick={() => {
-            const aplicacaoId = data.aplicacoes.find((application) => !applicationLinks.some((link) => link.aplicacaoId === application.id))?.id || data.aplicacoes[0]?.id || "";
+          <button className="btn-white" disabled={data.aplicacoes.length === 0 || applicationLinks.length >= data.aplicacoes.length} onClick={() => {
+            const aplicacaoId = data.aplicacoes.find((application) => !applicationLinks.some((link) => link.aplicacaoId === application.id))?.id || "";
             if (!aplicacaoId) return;
-            setApplicationLinks([...applicationLinks, { id: createId("pa"), produtoId: draft.id, aplicacaoId }]);
+            setApplicationLinks([...applicationLinks, { produtoId: draft.id, aplicacaoId }]);
           }}><Plus size={15} /> Adicionar</button>
         </div>
         <div className="space-y-3">
           {data.aplicacoes.length === 0 && <div className="rounded-xl bg-soft p-4 text-sm text-muted">Cadastre aplicações na aba Aplicações antes de vincular produtos.</div>}
           {applicationLinks.length === 0 && data.aplicacoes.length > 0 && <div className="rounded-xl bg-soft p-4 text-sm text-muted">Nenhuma aplicação vinculada.</div>}
           {applicationLinks.map((link, index) => (
-            <div key={link.id || `${link.aplicacaoId}-${index}`} className="grid gap-3 rounded-xl bg-soft p-3 lg:grid-cols-[1fr_auto]">
+            <div key={`${link.aplicacaoId}-${index}`} className="grid gap-3 rounded-xl bg-soft p-3 lg:grid-cols-[1fr_auto]">
               <select className="input" value={link.aplicacaoId || ""} onChange={(event) => setApplicationLinks(applicationLinks.map((item, current) => current === index ? { ...item, aplicacaoId: event.target.value } : item))}>
-                {data.aplicacoes.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}
+                {data.aplicacoes.map((item) => <option key={item.id} value={item.id} disabled={applicationLinks.some((current, currentIndex) => currentIndex !== index && current.aplicacaoId === item.id)}>{item.nome}</option>)}
               </select>
               <button className="icon-btn" onClick={() => setApplicationLinks(applicationLinks.filter((_, current) => current !== index))}><Trash2 size={16} /></button>
             </div>

@@ -68,7 +68,7 @@ export type CatalogAppearance = {
 export type CatalogPdfRole = "VISITANTE" | "NAO_CLIENTE" | "CLIENTE" | "REPRESENTANTE";
 export type CatalogPdfEntry = { url: string; generatedAt: string; role: CatalogPdfRole; productCount: number };
 export type CatalogPdfSettings = Partial<Record<CatalogPdfRole, CatalogPdfEntry>>;
-export type ProdutoAplicacao = { id?: string; produtoId?: string | null; aplicacaoId?: string | null };
+export type ProdutoAplicacao = { produtoId: string; aplicacaoId: string };
 
 export type AppSettings = {
   media?: MediaSettings & { recommendations?: Record<string, string> };
