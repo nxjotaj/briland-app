@@ -39,8 +39,19 @@
     <div id="root"></div>
     <script>
       if ("serviceWorker" in navigator && window.location.protocol === "https:") {
+        var reloadingForServiceWorker = false;
+        navigator.serviceWorker.addEventListener("controllerchange", function () {
+          if (reloadingForServiceWorker) return;
+          reloadingForServiceWorker = true;
+          window.location.reload();
+        });
         window.addEventListener("load", function () {
-          navigator.serviceWorker.register("/sw.js").catch(function () {});
+          navigator.serviceWorker
+            .register("/sw.js", { updateViaCache: "none" })
+            .then(function (registration) {
+              return registration.update();
+            })
+            .catch(function () {});
         });
       }
     </script>
