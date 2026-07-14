@@ -4,16 +4,29 @@
     "slug": "briland-native-premium",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/briland-logo.png",
+    "icon": "./assets/app-icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.briland.app"
+      "supportsTablet": false,
+      "bundleIdentifier": "com.briland.app",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "A Briland usa suas fotos somente quando você escolhe uma imagem para enviar ao catálogo.",
+        "NSCameraUsageDescription": "A Briland usa a câmera somente quando você decide fotografar uma imagem para o catálogo.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false
+        }
+      }
     },
     "android": {
       "package": "com.briland.app",
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ],
       "adaptiveIcon": {
-        "foregroundImage": "./assets/briland-logo.png",
+        "foregroundImage": "./assets/adaptive-icon-foreground.png",
         "backgroundColor": "#021126"
       }
     },
@@ -32,6 +45,14 @@
           "image": "./assets/briland-logo.png",
           "resizeMode": "contain",
           "backgroundColor": "#021126"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "A Briland usa suas fotos somente quando você escolhe uma imagem para enviar ao catálogo.",
+          "cameraPermission": "A Briland usa a câmera somente quando você decide fotografar uma imagem para o catálogo.",
+          "microphonePermission": false
         }
       ]
     ],

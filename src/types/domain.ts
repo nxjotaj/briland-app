@@ -10,6 +10,8 @@ export type Route =
   | "detail"
   | "login"
   | "signup"
+  | "privacy"
+  | "accountDeletion"
   | "about"
   | "admin";
 

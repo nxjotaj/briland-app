@@ -130,6 +130,7 @@ const visibleTabsFor = (role?: Role | null) => {
 
 function leadDepartment(lead: Lead) {
   const source = `${lead.origem || ""} ${lead.mensagem || ""}`.toLowerCase();
+  if (source.includes("account-deletion") || source.includes("privacidade")) return "Privacidade";
   if (source.includes("suporte")) return "Suporte";
   if (source.includes("comercial")) return "Comercial";
   return "Não informado";
@@ -638,7 +639,7 @@ export default function Page() {
           {activeTab === "Marcas" && <CategoryBrandSection title="Marcas" table="Marca" imageField="logo" items={data.marcas} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Montadoras" && <VehicleSection data={data} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Aplicações" && <Applications items={data.aplicacoes} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
-          {activeTab === "Leads" && <Leads leads={data.leads} products={data.produtos} query={query} reload={reload} notify={notify} />}
+          {activeTab === "Leads" && <Leads leads={data.leads} products={data.produtos} query={query} reload={reload} notify={notify} canCompleteDeletion={isMaster(adminUser.role)} />}
           {activeTab === "Usuários" && <UsersSection users={data.usuarios} query={query} reload={reload} notify={notify} adminUser={adminUser} />}
           {activeTab === "Permissões" && <PermissionsSectionV2 permissions={data.permissoes} query={query} reload={reload} notify={notify} />}
           {activeTab === "Diagnóstico" && <Diagnostics data={data} />}
@@ -1367,15 +1368,25 @@ function ApplicationModal({ item, reload, notify, canDelete, onClose }: { item: 
   return <Modal title="Aplicação" onClose={onClose}><div className="grid gap-4 lg:grid-cols-3"><Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value })} /></Field><Field label="Slug"><input className="input" value={draft.slug || ""} onChange={(e) => setDraft({ ...draft, slug: e.target.value })} /></Field><Field label="Tipo"><input className="input" value={draft.tipo || ""} onChange={(e) => setDraft({ ...draft, tipo: e.target.value })} /></Field></div><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativa</label><ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} /></Modal>;
 }
 
-function Leads({ leads, products, query, reload, notify }: { leads: Lead[]; products: Produto[]; query: string; reload: () => Promise<void>; notify: (message: string) => void }) {
+function Leads({ leads, products, query, reload, notify, canCompleteDeletion }: { leads: Lead[]; products: Produto[]; query: string; reload: () => Promise<void>; notify: (message: string) => void; canCompleteDeletion: boolean }) {
   const [selected, setSelected] = useState<Lead | null>(null);
   const filtered = leads.filter((lead) => [lead.nome, lead.empresa, lead.email, lead.telefone, lead.mensagem].join(" ").toLowerCase().includes(query.toLowerCase()));
+  const completeDeletion = async (lead: Lead) => {
+    if (!lead.email || !confirm(`Excluir definitivamente a conta e os dados associados a ${lead.email}?`)) return;
+    const { error } = await supabase.rpc("complete_account_deletion", { p_email: lead.email });
+    if (error) notify(error.message);
+    else {
+      notify("Exclusão de conta concluída e dados pessoais removidos.");
+      setSelected(null);
+      await reload();
+    }
+  };
   return (
     <>
       <Panel title={`${filtered.length} leads`}>
         <Table><thead><tr><Th>Nome</Th><Th>Área</Th><Th>Empresa</Th><Th>Produto</Th><Th>Status</Th><Th>Data</Th><Th /></tr></thead><tbody>{filtered.map((lead) => <tr key={lead.id}><Td>{lead.nome}</Td><Td>{leadDepartment(lead)}</Td><Td>{lead.empresa}</Td><Td>{products.find((p) => p.id === lead.produtoId)?.codigoInterno || "-"}</Td><Td><select className="input h-9" value={lead.status || "NOVO"} onChange={async (event) => updateRow("LeadOrcamento", lead.id, { status: event.target.value }, reload, notify)}><option>NOVO</option><option>EM_ATENDIMENTO</option><option>CONCLUIDO</option><option>ARQUIVADO</option></select></Td><Td>{formatLocalDate(lead.createdAt)}</Td><Td><button className="icon-btn" onClick={() => setSelected(lead)}><Eye size={16} /></button></Td></tr>)}</tbody></Table>
       </Panel>
-      {selected && <Modal title="Lead recebido" onClose={() => setSelected(null)}><div className="grid gap-3 lg:grid-cols-2"><Info label="Nome" value={selected.nome} /><Info label="Área" value={leadDepartment(selected)} /><Info label="Empresa" value={selected.empresa} /><Info label="Telefone" value={selected.telefone} /><Info label="E-mail" value={selected.email} /><Info label="Cidade/UF" value={`${selected.cidade || "-"} / ${selected.estado || "-"}`} /><Info label="Origem" value={selected.origem} /></div><div className="mt-4 rounded-2xl bg-soft p-4 text-sm leading-6">{leadMessageBody(selected.mensagem) || "Sem mensagem"}</div>{selected.telefone && <a href={`https://wa.me/${selected.telefone.replace(/\D/g, "")}`} target="_blank" className="btn-yellow mt-5 inline-flex"><MessageCircle size={17} /> Abrir WhatsApp</a>}</Modal>}
+      {selected && <Modal title={selected.origem === "account-deletion" ? "Solicitação de exclusão" : "Lead recebido"} onClose={() => setSelected(null)}><div className="grid gap-3 lg:grid-cols-2"><Info label="Nome" value={selected.nome} /><Info label="Área" value={leadDepartment(selected)} /><Info label="Empresa" value={selected.empresa} /><Info label="Telefone" value={selected.telefone} /><Info label="E-mail" value={selected.email} /><Info label="Cidade/UF" value={`${selected.cidade || "-"} / ${selected.estado || "-"}`} /><Info label="Origem" value={selected.origem} /></div><div className="mt-4 rounded-2xl bg-soft p-4 text-sm leading-6">{leadMessageBody(selected.mensagem) || "Sem mensagem"}</div>{selected.origem === "account-deletion" && selected.status !== "CONCLUIDO" && canCompleteDeletion && <button className="btn-primary mt-5" onClick={() => void completeDeletion(selected)}><Trash2 size={17} /> Concluir exclusão de conta</button>}{selected.origem !== "account-deletion" && selected.telefone && <a href={`https://wa.me/${selected.telefone.replace(/\D/g, "")}`} target="_blank" className="btn-yellow mt-5 inline-flex"><MessageCircle size={17} /> Abrir WhatsApp</a>}</Modal>}
     </>
   );
 }

@@ -15,6 +15,7 @@ import {
   Linking,
   Modal,
   PanResponder,
+  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -36,6 +37,16 @@ type RegistrationRequest = { nome: string; empresa: string; telefone: string; em
 type CachedImageProps = ImageProps & { resizeMode?: ImageProps["contentFit"] };
 
 const logo = require("./assets/briland-logo.png");
+const PRIVACY_POLICY_URL = "https://briland-catalogo.vercel.app/privacidade.html";
+const ACCOUNT_DELETION_URL = "https://briland-catalogo.vercel.app/excluir-conta.html";
+function initialAppRoute(): Route {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    const action = new URL(window.location.href).searchParams.get("acao");
+    if (action === "excluir-conta") return "accountDeletion";
+    if (action === "privacidade") return "privacy";
+  }
+  return "initial";
+}
 const defaultAppearance: CatalogAppearance = { version: 1, primaryColor: "#021126", accentColor: "#FCB900", backgroundColor: "#F4F6FA", surfaceColor: "#FFFFFF", textColor: "#021126", fontFamily: "system", cardRadius: 12, dockOpacity: 72, dockHeight: 62, dockPosition: "bottom", showProductCategory: true, showProductBrand: true, logoUrl: "" };
 function safeAppearance(value?: Partial<CatalogAppearance> | null): CatalogAppearance {
   const merged = { ...defaultAppearance, ...(value || {}) };
@@ -99,7 +110,7 @@ const catalogPdfRoleFor = (value: Role): CatalogPdfRole => {
 };
 
 export default function App() {
-  const [route, setRoute] = useState<Route>("initial");
+  const [route, setRoute] = useState<Route>(initialAppRoute);
   const [routeHistory, setRouteHistory] = useState<Route[]>([]);
   const [role, setRole] = useState<Role>("VISITANTE");
   const [currentUser, setCurrentUser] = useState<Usuario | null>(null);
@@ -484,6 +495,25 @@ export default function App() {
     }
   };
 
+  const requestAccountDeletion = async (email: string, reason: string) => {
+    try {
+      await supabaseRpc<{ accepted: boolean; message?: string }>("request_account_deletion", {
+        p_email: email.trim().toLowerCase(),
+        p_reason: reason.trim() || "Solicitação enviada pelo aplicativo Briland."
+      }, authToken);
+      if (currentUser) {
+        setAuthToken(undefined);
+        setCurrentUser(null);
+        setRole("VISITANTE");
+      }
+      notify("Solicitação recebida", currentUser ? "O acesso foi desativado e a exclusão dos dados será concluída em até 30 dias." : "A equipe confirmará a identidade antes de concluir a exclusão em até 30 dias.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Não foi possível registrar a solicitação.";
+      notify("Falha na solicitação", message);
+      throw err;
+    }
+  };
+
   return (
     <View style={[styles.appRoot, { backgroundColor: appearance.backgroundColor }]}>
       <StatusBar hidden={route === "initial"} style={route === "login" || route === "admin" ? "light" : "dark"} />
@@ -494,7 +524,7 @@ export default function App() {
       ) : (
         <SafeAreaView style={[styles.safe, { backgroundColor: appearance.backgroundColor }]}>
           {route === "login" ? (
-            <LoginScreen onLogin={login} onSignup={() => go("signup")} onCatalog={() => go("initial")} links={socialLinks} error={loginMessage} />
+            <LoginScreen onLogin={login} onSignup={() => go("signup")} onCatalog={() => go("initial")} onPrivacy={() => go("privacy")} onDelete={() => go("accountDeletion")} links={socialLinks} error={loginMessage} />
           ) : route === "admin" ? (
             <AdminScreen role={role} data={data} active={adminTab} setActive={setAdminTab} onBack={() => go("home")} onLogout={logout} reload={() => reload(role, authToken)} authToken={authToken} socialLinks={socialLinks} setSocialLinks={(links) => void saveAdminConfig(links, mediaSettings, aboutSettings)} mediaSettings={mediaSettings} setMediaSettings={(settings) => void saveAdminConfig(socialLinks, settings, aboutSettings)} aboutSettings={aboutSettings} setAboutSettings={(settings) => void saveAdminConfig(socialLinks, mediaSettings, settings)} onAction={(text) => notify("Painel admin", text)} />
           ) : (
@@ -611,7 +641,9 @@ export default function App() {
               {route === "detail" && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} imageVersion={imageRefreshVersion} onQuote={() => createLead({ produtoId: selectedProduct.id, mensagem: `Tenho interesse no produto ${selectedProduct.codigoInterno} - ${selectedProduct.nome}.`, origem: "produto" })} />}
               {route === "contact" && <ContactScreen onSubmit={createLead} />}
               {route === "about" && <AboutScreen settings={aboutSettings} />}
-              {route === "signup" && <SignupScreen links={socialLinks} onSubmit={requestRegistration} onLogin={() => go("login")} />}
+              {route === "privacy" && <PrivacyScreen />}
+              {route === "accountDeletion" && <AccountDeletionScreen initialEmail={currentUser?.email || ""} onSubmit={requestAccountDeletion} />}
+              {route === "signup" && <SignupScreen links={socialLinks} onSubmit={requestRegistration} onLogin={() => go("login")} onPrivacy={() => go("privacy")} onDelete={() => go("accountDeletion")} />}
               {route !== "signup" && <SocialDock links={socialLinks} appearance={appearance} />}
             </>
           )}
@@ -1138,7 +1170,7 @@ function ContactScreen({ onSubmit }: { onSubmit: (lead: Partial<Lead>) => void }
     </ScrollView>
   );
 }
-function LoginScreen({ onLogin, onSignup, onCatalog, links, error }: { onLogin: (email: string, password: string) => void | Promise<void>; onSignup: () => void; onCatalog: () => void; links: SocialLinks; error?: string }) {
+function LoginScreen({ onLogin, onSignup, onCatalog, onPrivacy, onDelete, links, error }: { onLogin: (email: string, password: string) => void | Promise<void>; onSignup: () => void; onCatalog: () => void; onPrivacy: () => void; onDelete: () => void; links: SocialLinks; error?: string }) {
   const [email, setEmail] = useState("faturamento@briland.com.br");
   const [password, setPassword] = useState("");
   const supportUrl = links.whatsapp + (links.whatsapp.includes("?") ? "&" : "?") + "text=Preciso%20recuperar%20meu%20acesso%20Briland";
@@ -1160,12 +1192,15 @@ function LoginScreen({ onLogin, onSignup, onCatalog, links, error }: { onLogin: 
         <Pressable style={styles.catalogBackButton} onPress={onCatalog}><Ionicons name="home-outline" size={22} color={colors.white} /><Text style={styles.catalogBackText}>Voltar ao catálogo</Text></Pressable>
         <Text style={styles.loginMuted}>Ainda não tem uma conta?</Text>
         <Pressable style={styles.signupDarkButton} onPress={onSignup}><Ionicons name="person-add-outline" size={26} color={colors.yellow} /><Text style={styles.signupDarkText}>Cadastrar</Text></Pressable>
+        <View style={styles.legalLinksRow}><Pressable onPress={onPrivacy}><Text style={styles.loginLegalLink}>Política de Privacidade</Text></Pressable><Pressable onPress={onDelete}><Text style={styles.loginLegalLink}>Excluir cadastro</Text></Pressable></View>
       </ScrollView>
     </SafeAreaView>
   );
 }
-function SignupScreen({ links, onSubmit, onLogin }: { links: SocialLinks; onSubmit: (request: RegistrationRequest) => void; onLogin: () => void }) {
+function SignupScreen({ links, onSubmit, onLogin, onPrivacy, onDelete }: { links: SocialLinks; onSubmit: (request: RegistrationRequest) => void; onLogin: () => void; onPrivacy: () => void; onDelete: () => void }) {
   const [form, setForm] = useState<RegistrationRequest>({ nome: "", empresa: "", telefone: "", email: "", cnpj: "", observacoes: "" });
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
+  const requiredFieldsReady = Boolean(form.empresa.trim() && form.nome.trim() && form.telefone.trim() && form.email.trim() && form.cnpj.trim());
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.signupContent}>
       <PageTitle title="Cadastrar empresa" subtitle="Preencha os dados abaixo para solicitar seu cadastro empresarial." />
@@ -1175,10 +1210,71 @@ function SignupScreen({ links, onSubmit, onLogin }: { links: SocialLinks; onSubm
       <Input label="E-mail" value={form.email} onChangeText={(email) => setForm({ ...form, email })} />
       <Input label="CNPJ" value={form.cnpj} onChangeText={(cnpj) => setForm({ ...form, cnpj })} />
       <Input label="Observações" value={form.observacoes} onChangeText={(observacoes) => setForm({ ...form, observacoes })} />
-      <View style={styles.checkRow}><View style={styles.emptyCheck} /><Text style={styles.checkText}>Concordo com contato comercial da Briland sobre promoções e lançamentos.</Text></View>
-      <Pressable style={styles.yellowButton} onPress={() => onSubmit(form)}><Text style={styles.yellowButtonText}>Cadastrar</Text></Pressable>
+      <Pressable style={styles.checkRow} onPress={() => setPrivacyAccepted((value) => !value)}><View style={[styles.emptyCheck, privacyAccepted && styles.checkedBox]}>{privacyAccepted && <Ionicons name="checkmark" size={20} color={colors.navy} />}</View><Text style={styles.checkText}>Li a Política de Privacidade e concordo com o tratamento dos dados para análise do cadastro.</Text></Pressable>
+      <Pressable onPress={onPrivacy}><Text style={styles.inlineLegalLink}>Ler a Política de Privacidade</Text></Pressable>
+      <Pressable disabled={!privacyAccepted || !requiredFieldsReady} style={[styles.yellowButton, (!privacyAccepted || !requiredFieldsReady) && styles.disabledButton]} onPress={() => onSubmit(form)}><Text style={styles.yellowButtonText}>Cadastrar</Text></Pressable>
       <Pressable onPress={onLogin}><Text style={styles.loginLink}>Já tem uma conta? <Text style={styles.yellowText}>Entrar</Text></Text></Pressable>
+      <Pressable onPress={onDelete}><Text style={styles.inlineLegalLink}>Solicitar exclusão de cadastro</Text></Pressable>
       <SocialDock links={links} />
+    </ScrollView>
+  );
+}
+
+function PrivacyScreen() {
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.legalContent}>
+      <PageTitle title="Política de Privacidade" subtitle="Transparência sobre o uso dos seus dados no catálogo Briland." />
+      <View style={styles.legalCard}>
+        <Text style={styles.legalHeading}>Dados tratados</Text>
+        <Text style={styles.legalParagraph}>Podemos tratar dados de cadastro empresarial, como nome, empresa, e-mail, telefone, CNPJ e endereço; dados enviados em contatos e orçamentos; e dados técnicos mínimos de uso e diagnóstico.</Text>
+        <Text style={styles.legalHeading}>Finalidades</Text>
+        <Text style={styles.legalParagraph}>Usamos esses dados para analisar cadastros, autenticar usuários, atender solicitações, apresentar o catálogo conforme o perfil de acesso, proteger o serviço e corrigir falhas.</Text>
+        <Text style={styles.legalHeading}>Compartilhamento e segurança</Text>
+        <Text style={styles.legalParagraph}>Os dados podem ser processados por fornecedores de infraestrutura necessários ao funcionamento do serviço, como Supabase, Expo e Vercel. Não vendemos dados pessoais e não usamos SDK de publicidade comportamental.</Text>
+        <Text style={styles.legalHeading}>Seus direitos</Text>
+        <Text style={styles.legalParagraph}>Você pode pedir confirmação, acesso, correção, portabilidade, oposição ou exclusão. Solicitações de exclusão são processadas em até 30 dias, ressalvadas retenções exigidas por lei ou necessárias à segurança.</Text>
+        <Text style={styles.legalHeading}>Contato</Text>
+        <Text style={styles.legalParagraph}>E-mail: catalogo@briland.com.br. Site: briland.com.br.</Text>
+        <Pressable style={styles.legalAction} onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}><Ionicons name="open-outline" size={20} color={colors.navy} /><Text style={styles.legalActionText}>Abrir política completa</Text></Pressable>
+        <Pressable style={styles.legalActionSecondary} onPress={() => Linking.openURL(ACCOUNT_DELETION_URL)}><Ionicons name="person-remove-outline" size={20} color={colors.red} /><Text style={styles.dangerText}>Página pública de exclusão</Text></Pressable>
+      </View>
+    </ScrollView>
+  );
+}
+
+function AccountDeletionScreen({ initialEmail, onSubmit }: { initialEmail: string; onSubmit: (email: string, reason: string) => Promise<void> }) {
+  const [email, setEmail] = useState(initialEmail);
+  const [reason, setReason] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const validEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim());
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await onSubmit(email, reason);
+      setSubmitted(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.legalContent}>
+      <PageTitle title="Excluir cadastro" subtitle="Solicite a exclusão da conta e dos dados pessoais associados." />
+      <View style={styles.legalCard}>
+        {submitted ? (
+          <View style={styles.deletionSuccess}><Ionicons name="checkmark-circle" size={52} color={colors.green} /><Text style={styles.legalHeading}>Solicitação registrada</Text><Text style={styles.legalParagraph}>Se necessário, a equipe confirmará sua identidade antes de concluir a exclusão em até 30 dias. Serão mantidas apenas informações exigidas por lei ou necessárias para prevenção de fraude e segurança.</Text></View>
+        ) : (
+          <>
+            <Text style={styles.legalParagraph}>Informe o mesmo e-mail usado no cadastro. Se você estiver conectado, o acesso será desativado imediatamente após a confirmação.</Text>
+            <Input label="E-mail do cadastro" value={email} onChangeText={setEmail} />
+            <Text style={styles.label}>Motivo (opcional)</Text>
+            <TextInput value={reason} onChangeText={setReason} placeholder="Conte brevemente o motivo, se desejar." style={styles.textArea} multiline maxLength={1000} placeholderTextColor="#9BA0AA" />
+            <Pressable style={styles.checkRow} onPress={() => setConfirmed((value) => !value)}><View style={[styles.emptyCheck, confirmed && styles.checkedBox]}>{confirmed && <Ionicons name="checkmark" size={20} color={colors.navy} />}</View><Text style={styles.checkText}>Entendo que perderei o acesso à conta e desejo solicitar a exclusão dos dados associados.</Text></Pressable>
+            <Pressable disabled={!validEmail || !confirmed || busy} style={[styles.dangerSubmitButton, (!validEmail || !confirmed || busy) && styles.disabledButton]} onPress={() => void submit()}>{busy ? <ActivityIndicator color={colors.white} /> : <><Ionicons name="trash-outline" size={20} color={colors.white} /><Text style={styles.dangerSubmitText}>Solicitar exclusão</Text></>}</Pressable>
+          </>
+        )}
+      </View>
     </ScrollView>
   );
 }
@@ -1716,7 +1812,7 @@ function AdminTextInput({ label, value, onChangeText, keyboard, multiline }: { l
 }
 
 function SideMenu({ visible, onClose, go, role, user, setRole, setCurrentUser }: { visible: boolean; onClose: () => void; go: (route: Route) => void; role: Role; user: Usuario | null; setRole: (role: Role) => void; setCurrentUser: (user: Usuario | null) => void }) {
-  const items: [Route, string, IconName][] = [["home", "Início", "home-outline"], ["categories", "Categorias", "grid-outline"], ["vehicleBrands", "Montadoras", "car-sport-outline"], ["products", "Produtos", "bag-outline"], ["launches", "Lançamentos", "star-outline"], ["promotions", "Promoções", "pricetag-outline"], ["contact", "Contatos", "headset-outline"], ["about", "Sobre a Briland", "business-outline"]];
+  const items: [Route, string, IconName][] = [["home", "Início", "home-outline"], ["categories", "Categorias", "grid-outline"], ["vehicleBrands", "Montadoras", "car-sport-outline"], ["products", "Produtos", "bag-outline"], ["launches", "Lançamentos", "star-outline"], ["promotions", "Promoções", "pricetag-outline"], ["contact", "Contatos", "headset-outline"], ["about", "Sobre a Briland", "business-outline"], ["privacy", "Privacidade", "shield-checkmark-outline"], ["accountDeletion", "Excluir cadastro", "person-remove-outline"]];
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.menuOverlay} onPress={onClose}><BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} /></Pressable>
@@ -1994,6 +2090,8 @@ const styles = StyleSheet.create({
   loginMuted: { color: "#AAB6C8", textAlign: "center", marginTop: 24, marginBottom: 14 },
   signupDarkButton: { height: 60, borderRadius: 12, borderWidth: 1, borderColor: colors.yellow, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 12 },
   signupDarkText: { color: colors.yellow, fontSize: 19, fontWeight: "900" },
+  legalLinksRow: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 18, marginTop: 18, paddingBottom: 18 },
+  loginLegalLink: { color: colors.white, textDecorationLine: "underline", fontSize: 13, fontWeight: "700" },
   divider: { flexDirection: "row", alignItems: "center", gap: 14, width: "100%", marginVertical: 22 },
   dividerCompact: { marginVertical: 16 },
   dividerLine: { flex: 1, height: 1, backgroundColor: "#D6D8DE" },
@@ -2002,9 +2100,22 @@ const styles = StyleSheet.create({
   dividerTextDark: { color: "#AAB6C8" },
   signupContent: { paddingHorizontal: 22, paddingBottom: 122 },
   checkRow: { flexDirection: "row", gap: 12, marginVertical: 12 },
-  emptyCheck: { width: 28, height: 28, borderRadius: 5, borderWidth: 2, borderColor: colors.navy },
+  emptyCheck: { width: 28, height: 28, borderRadius: 5, borderWidth: 2, borderColor: colors.navy, alignItems: "center", justifyContent: "center" },
+  checkedBox: { backgroundColor: colors.yellow, borderColor: colors.yellow },
   checkText: { flex: 1, color: colors.navy, lineHeight: 22 },
+  inlineLegalLink: { color: colors.navy, textDecorationLine: "underline", fontWeight: "800", textAlign: "center", marginBottom: 14 },
+  disabledButton: { opacity: 0.45 },
   loginLink: { textAlign: "center", color: colors.navy, marginVertical: 16 },
+  legalContent: { paddingHorizontal: 20, paddingBottom: 110 },
+  legalCard: { borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, padding: 22, gap: 10, ...shadow },
+  legalHeading: { color: colors.navy, fontSize: 18, fontWeight: "900", marginTop: 8 },
+  legalParagraph: { color: colors.muted, fontSize: 15, lineHeight: 23 },
+  legalAction: { minHeight: 54, marginTop: 12, borderRadius: 12, backgroundColor: colors.yellow, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
+  legalActionText: { color: colors.navy, fontWeight: "900" },
+  legalActionSecondary: { minHeight: 50, borderRadius: 12, borderWidth: 1, borderColor: "#F3C3CB", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
+  dangerSubmitButton: { minHeight: 56, borderRadius: 12, backgroundColor: colors.red, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
+  dangerSubmitText: { color: colors.white, fontWeight: "900", fontSize: 16 },
+  deletionSuccess: { alignItems: "center", gap: 10, paddingVertical: 24 },
   aboutCard: { minHeight: 520, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, padding: 22, ...shadow },
   aboutText: { color: colors.muted, fontSize: 18, lineHeight: 27 },
   aboutBody: { color: colors.navy, fontSize: 16, lineHeight: 25, marginTop: 28 },
