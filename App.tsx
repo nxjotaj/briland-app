@@ -12,6 +12,7 @@ import {
   Alert,
   Animated,
   AppState,
+  FlatList,
   Linking,
   Modal,
   PanResponder,
@@ -78,8 +79,8 @@ const imageSize = {
   home: { width: 960, height: 610, resize: "cover", quality: 78 } as const,
   category: { width: 480, height: 360, resize: "cover", quality: 72 } as const,
   categoryIcon: { width: 256, height: 256, resize: "contain", quality: 70 } as const,
-  productCard: { width: 920, height: 680, resize: "contain", quality: 88 } as const,
-  productDetail: { width: 1920, height: 1440, resize: "contain", quality: 94 } as const,
+  productCard: { width: 640, height: 480, resize: "contain", quality: 82 } as const,
+  productDetail: { width: 1600, height: 1200, resize: "contain", quality: 92 } as const,
   thumb: { width: 360, height: 280, resize: "contain", quality: 84 } as const
 };
 
@@ -271,8 +272,8 @@ export default function App() {
     const urls = [
       versionedRawUrl(mediaSettings.initialImage, imageRefreshVersion),
       optimizedImageUrl(mediaSettings.homeImage, { ...imageSize.home, version: imageRefreshVersion }),
-      ...data.categorias.slice(0, 12).map((item) => optimizedImageUrl(item.imagem, { ...imageSize.categoryIcon, version: imageRefreshVersion })),
-      ...data.produtos.slice(0, 12).map((item) => optimizedImageUrl(item.imagemPrincipal, { ...imageSize.productCard, version: imageRefreshVersion }))
+      ...data.categorias.slice(0, 4).map((item) => optimizedImageUrl(item.imagem, { ...imageSize.categoryIcon, version: imageRefreshVersion })),
+      ...data.produtos.slice(0, 4).map((item) => optimizedImageUrl(item.imagemPrincipal, { ...imageSize.productCard, version: imageRefreshVersion }))
     ].filter(Boolean);
     if (urls.length) void ExpoImage.prefetch(urls);
   }, [data.categorias, data.produtos, imageRefreshVersion, mediaSettings.homeImage, mediaSettings.initialImage]);
@@ -929,8 +930,8 @@ function ProductList({
   const activeMontadora = montadoraFilter ? montadoras.find((item) => item.id === montadoraFilter)?.nome : "Todas montadoras";
   const activeModelo = modeloFilter ? modelosVeiculo.find((item) => item.id === modeloFilter)?.nome : "Todos modelos";
   const availableModels = montadoraFilter ? modelosVeiculo.filter((item) => item.montadoraId === montadoraFilter) : [];
-  return (
-    <ScrollView style={[styles.screen, { backgroundColor: appearance.backgroundColor }]} contentContainerStyle={styles.contentWithDock}>
+  const listHeader = (
+    <>
       <PageTitle title={title} subtitle={subtitle} badge={launch ? "NOVO" : undefined} />
       <View style={styles.searchRow}>
         <View style={styles.searchBox}><Ionicons name="search" size={22} color={colors.navy} /><TextInput value={query} onChangeText={setQuery} placeholder="Buscar código, EAN, NCM ou descricao..." placeholderTextColor="#9BA0AA" style={styles.searchInput} /></View>
@@ -954,28 +955,44 @@ function ProductList({
         </View>
       )}
       <View style={styles.resultRow}><Text style={styles.muted}>{products.length} produtos encontrados</Text><Segmented value={listMode} setValue={setListMode} /></View>
-      {products.length === 0 ? <EmptyState text="Nenhum produto encontrado com os filtros atuais." /> : (
-        <View style={listMode === "grid" ? styles.grid : styles.list}>
-          {products.map((product) => (
-            <Pressable key={product.id} style={[listMode === "grid" ? styles.productCard : styles.productListCard, { backgroundColor: appearance.surfaceColor, borderRadius: appearance.cardRadius }, promo && styles.promoCard, launch && styles.launchCard]} onPress={() => onOpen(product)}>
-              <View style={listMode === "grid" ? undefined : styles.listImageWrap}>
-                {product.imagemPrincipal ? <Image source={{ uri: liveImageUrl(product.imagemPrincipal, imageSize.productCard, imageVersion) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : listMode === "grid" ? <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" card /> : <View style={styles.productListPlaceholder}><Ionicons name="image-outline" size={28} color={colors.yellow} /></View>}
-                {promo && <Ribbon text="PROMOÇÃO" color={colors.red} />}
-                {launch && <Ribbon text="NOVO" color={colors.yellow} />}
-              </View>
-              <View style={styles.productBody}>
-                <Text style={[styles.productCode, { color: appearance.primaryColor }]}>{product.codigoInterno || "Sem código"}</Text>
-                <Text style={styles.productName} numberOfLines={3}>{product.nome}</Text>
-                {appearance.showProductCategory && <Text style={styles.mutedSmall}>{categoryById.get(product.categoriaId ?? "")?.nome || "Sem categoria"}{appearance.showProductBrand && productPermission(product, "marca", true) ? ` • ${brandById.get(product.marcaId ?? "")?.nome || "Sem marca"}` : ""}</Text>}
-                <View style={styles.cardLine} />
-                <Meta icon="cube-outline" label="Caixa master" value={product.caixaMaster || "A cadastrar"} />
-                {productPermission(product, "ncm", role !== "VISITANTE") && <Meta icon="document-text-outline" label="NCM" value={product.ncm || "A cadastrar"} />}
-                {role === "VISITANTE" ? <Text style={[styles.loginHint, { color: appearance.accentColor }]}>Entrar para ver mais informações</Text> : <Text style={styles.price}>{money(product.preco)}</Text>}
-              </View>
-            </Pressable>
-          ))}
-        </View>
-      )}
+    </>
+  );
+  return (
+    <View style={[styles.screen, { backgroundColor: appearance.backgroundColor }]}>
+      <FlatList
+        key={listMode}
+        data={products}
+        keyExtractor={(product) => product.id}
+        numColumns={listMode === "grid" ? 2 : 1}
+        columnWrapperStyle={listMode === "grid" ? styles.productColumns : undefined}
+        contentContainerStyle={styles.contentWithDock}
+        ListHeaderComponent={listHeader}
+        ListEmptyComponent={<EmptyState text="Nenhum produto encontrado com os filtros atuais." />}
+        initialNumToRender={6}
+        maxToRenderPerBatch={6}
+        updateCellsBatchingPeriod={50}
+        windowSize={5}
+        removeClippedSubviews={Platform.OS === "android"}
+        showsVerticalScrollIndicator={false}
+        renderItem={({ item: product }) => (
+          <Pressable style={[listMode === "grid" ? styles.productCard : styles.productListCard, { backgroundColor: appearance.surfaceColor, borderRadius: appearance.cardRadius }, promo && styles.promoCard, launch && styles.launchCard]} onPress={() => onOpen(product)}>
+            <View style={listMode === "grid" ? undefined : styles.listImageWrap}>
+              {product.imagemPrincipal ? <Image recyclingKey={product.id} source={{ uri: liveImageUrl(product.imagemPrincipal, imageSize.productCard, imageVersion) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : listMode === "grid" ? <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" card /> : <View style={styles.productListPlaceholder}><Ionicons name="image-outline" size={28} color={colors.yellow} /></View>}
+              {promo && <Ribbon text="PROMOÇÃO" color={colors.red} />}
+              {launch && <Ribbon text="NOVO" color={colors.yellow} />}
+            </View>
+            <View style={styles.productBody}>
+              <Text style={[styles.productCode, { color: appearance.primaryColor }]}>{product.codigoInterno || "Sem código"}</Text>
+              <Text style={styles.productName} numberOfLines={3}>{product.nome}</Text>
+              {appearance.showProductCategory && <Text style={styles.mutedSmall}>{categoryById.get(product.categoriaId ?? "")?.nome || "Sem categoria"}{appearance.showProductBrand && productPermission(product, "marca", true) ? ` • ${brandById.get(product.marcaId ?? "")?.nome || "Sem marca"}` : ""}</Text>}
+              <View style={styles.cardLine} />
+              <Meta icon="cube-outline" label="Caixa master" value={product.caixaMaster || "A cadastrar"} />
+              {productPermission(product, "ncm", role !== "VISITANTE") && <Meta icon="document-text-outline" label="NCM" value={product.ncm || "A cadastrar"} />}
+              {role === "VISITANTE" ? <Text style={[styles.loginHint, { color: appearance.accentColor }]}>Entrar para ver mais informações</Text> : <Text style={styles.price}>{money(product.preco)}</Text>}
+            </View>
+          </Pressable>
+        )}
+      />
       <FilterSheet
         visible={filterOpen}
         onClose={() => setFilterOpen(false)}
@@ -994,7 +1011,7 @@ function ProductList({
         sortMode={sortMode}
         setSortMode={setSortMode}
       />
-    </ScrollView>
+    </View>
   );
 }
 
@@ -1818,11 +1835,16 @@ function SideMenu({ visible, onClose, go, role, user, setRole, setCurrentUser }:
       <Pressable style={styles.menuOverlay} onPress={onClose}><BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} /></Pressable>
       <View style={styles.sideMenu}>
         <View style={styles.sideHeader}><Image source={logo} style={styles.sideLogo} resizeMode="contain" /></View>
-        {user && <Text style={styles.sideUser}>{user.name} • {role}</Text>}
-        {items.map(([target, label, icon]) => <Pressable key={label} style={styles.sideItem} onPress={() => go(target)}><Ionicons name={icon} size={25} color={label === "Início" ? colors.yellow : colors.navy} /><Text style={[styles.sideLabel, label === "Início" && styles.yellowText]}>{label}</Text></Pressable>)}
-        {isAdminRole(role) && <Pressable style={styles.sideItem} onPress={() => go("admin")}><Ionicons name="speedometer-outline" size={25} color={colors.navy} /><Text style={styles.sideLabel}>Painel admin</Text></Pressable>}
-        <Pressable style={styles.sideItem} onPress={() => { setRole("VISITANTE"); setCurrentUser(null); go(role === "VISITANTE" ? "login" : "initial"); }}><Ionicons name="log-in-outline" size={25} color={colors.navy} /><Text style={styles.sideLabel}>{role === "VISITANTE" ? "Login" : "Sair"}</Text></Pressable>
-        <View style={styles.sidePromo}><Text style={styles.sidePromoText}>Copyright Briland 2026. Todos os direitos reservados.</Text></View>
+        <ScrollView style={styles.sideMenuScroll} contentContainerStyle={styles.sideMenuContent} showsVerticalScrollIndicator={false} bounces>
+          {user && <Text style={styles.sideUser}>{user.name} • {role}</Text>}
+          {items.map(([target, label, icon]) => {
+            const compact = target === "privacy";
+            return <Pressable key={label} style={[styles.sideItem, compact && styles.sideItemCompact]} onPress={() => go(target)}><Ionicons name={icon} size={compact ? 18 : 25} color={label === "Início" ? colors.yellow : compact ? colors.muted : colors.navy} /><Text style={[styles.sideLabel, label === "Início" && styles.yellowText, compact && styles.sideLabelCompact]}>{label}</Text></Pressable>;
+          })}
+          {isAdminRole(role) && <Pressable style={styles.sideItem} onPress={() => go("admin")}><Ionicons name="speedometer-outline" size={25} color={colors.navy} /><Text style={styles.sideLabel}>Painel admin</Text></Pressable>}
+          <Pressable style={styles.sideItem} onPress={() => { setRole("VISITANTE"); setCurrentUser(null); go(role === "VISITANTE" ? "login" : "initial"); }}><Ionicons name="log-in-outline" size={25} color={colors.navy} /><Text style={styles.sideLabel}>{role === "VISITANTE" ? "Login" : "Sair"}</Text></Pressable>
+          <View style={styles.sidePromo}><Text style={styles.sidePromoText}>Copyright Briland 2026. Todos os direitos reservados.</Text></View>
+        </ScrollView>
       </View>
     </Modal>
   );
@@ -1988,6 +2010,7 @@ const styles = StyleSheet.create({
   badge: { backgroundColor: colors.yellow, color: colors.white, overflow: "hidden", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 5, fontWeight: "900" },
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 14 },
   list: { gap: 12 },
+  productColumns: { justifyContent: "space-between", marginBottom: 14 },
   categoryCard: { width: "47.4%", minHeight: 188, borderRadius: 14, backgroundColor: colors.white, padding: 15, paddingRight: 36, overflow: "hidden", ...shadow },
   categoryIcon: { width: 56, height: 56, borderRadius: 16, backgroundColor: colors.soft, alignItems: "center", justifyContent: "center", marginBottom: 16 },
   categoryImage: { width: 44, height: 44 },
@@ -2012,7 +2035,7 @@ const styles = StyleSheet.create({
   segmentActive: { width: 42, height: 36, borderRadius: 18, backgroundColor: colors.navy, alignItems: "center", justifyContent: "center" },
   segmentLight: { width: 42, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   productCard: { width: "47.4%", minHeight: 324, borderRadius: 12, backgroundColor: colors.white, overflow: "hidden", borderWidth: 1, borderColor: colors.line, ...shadow },
-  productListCard: { width: "100%", minHeight: 154, borderRadius: 14, backgroundColor: colors.white, overflow: "hidden", borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "stretch", ...shadow },
+  productListCard: { width: "100%", minHeight: 154, marginBottom: 12, borderRadius: 14, backgroundColor: colors.white, overflow: "hidden", borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "stretch", ...shadow },
   promoCard: { borderColor: "#F4A7B1" },
   launchCard: { borderColor: colors.yellow },
   listImageWrap: { width: 118, padding: 10, justifyContent: "flex-start", alignItems: "center", backgroundColor: colors.white },
@@ -2184,12 +2207,16 @@ const styles = StyleSheet.create({
   openLeadText: { color: colors.yellow, fontWeight: "900", marginTop: 10 },
   leadMessageFull: { color: colors.navy, fontSize: 15, lineHeight: 23, backgroundColor: colors.soft, borderRadius: 12, padding: 14 },
   menuOverlay: { flex: 1 },
-  sideMenu: { position: "absolute", left: 0, top: 0, bottom: 0, width: "82%", backgroundColor: colors.white, paddingBottom: 24 },
+  sideMenu: { position: "absolute", left: 0, top: 0, bottom: 0, width: "82%", backgroundColor: colors.white },
   sideHeader: { height: 145, backgroundColor: colors.navy, borderBottomRightRadius: 34, justifyContent: "center", paddingHorizontal: 26, borderBottomWidth: 4, borderBottomColor: colors.yellow },
   sideLogo: { width: "100%", height: 60 },
+  sideMenuScroll: { flex: 1 },
+  sideMenuContent: { paddingBottom: 24 },
   sideUser: { marginHorizontal: 24, marginTop: 14, color: colors.muted, fontWeight: "800" },
   sideItem: { height: 58, marginHorizontal: 24, borderBottomWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", gap: 18 },
   sideLabel: { color: colors.navy, fontWeight: "900", fontSize: 17 },
+  sideItemCompact: { height: 42, marginHorizontal: 28, gap: 14 },
+  sideLabelCompact: { color: colors.muted, fontSize: 12, fontWeight: "700" },
   sidePromo: { margin: 24, height: 126, borderRadius: 14, backgroundColor: colors.navy, borderBottomWidth: 4, borderBottomColor: colors.yellow, justifyContent: "flex-end", padding: 18 },
   sidePromoText: { color: colors.white, fontWeight: "900", fontSize: 16, lineHeight: 23 },
   emptyState: { minHeight: 120, borderRadius: 16, backgroundColor: colors.white, alignItems: "center", justifyContent: "center", gap: 10, padding: 18, ...shadow }
