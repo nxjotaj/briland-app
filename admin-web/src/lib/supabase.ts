@@ -20,6 +20,7 @@ export async function uploadCatalogMedia(file: File, folder: string) {
   const path = `${folder}/${Date.now()}-${safeName}`;
   const { error } = await supabase.storage.from("catalog-media").upload(path, file, {
     contentType: file.type,
+    cacheControl: "31536000",
     upsert: true
   });
   if (error) throw error;
@@ -29,6 +30,7 @@ export async function uploadCatalogMedia(file: File, folder: string) {
 export async function uploadCatalogBlob(path: string, blob: Blob, contentType: string) {
   const { error } = await supabase.storage.from("catalog-media").upload(path, blob, {
     contentType,
+    cacheControl: "31536000",
     upsert: true
   });
   if (error) throw error;

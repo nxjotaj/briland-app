@@ -752,6 +752,8 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
   const [editing, setEditing] = useState<Produto | null>(null);
   const [importReport, setImportReport] = useState<{ fileName: string; imported: number; errors: string[] } | null>(null);
   const [importing, setImporting] = useState(false);
+  const [optimizingImages, setOptimizingImages] = useState(false);
+  const [imageProgress, setImageProgress] = useState({ completed: 0, total: 0 });
   const [categoryFilter, setCategoryFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [pendingFilter, setPendingFilter] = useState("all");
@@ -786,6 +788,53 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
     });
   const hasFilters = Boolean(categoryFilter || statusFilter !== "all" || pendingFilter !== "all" || sortMode !== "newest");
   const clearFilters = () => { setCategoryFilter(""); setStatusFilter("all"); setPendingFilter("all"); setSortMode("newest"); };
+
+  const optimizeExistingImages = async () => {
+    const pending = data.produtos.filter((product) => product.imagemPrincipal && (!product.imagemCard || !product.imagemDetalhe));
+    if (!pending.length) {
+      notify("Todas as imagens de produtos já estão otimizadas.");
+      return;
+    }
+    setOptimizingImages(true);
+    setImageProgress({ completed: 0, total: pending.length });
+    let cursor = 0;
+    let completed = 0;
+    const failures: string[] = [];
+    const worker = async () => {
+      while (cursor < pending.length) {
+        const product = pending[cursor++];
+        const source = product.imagemOriginal || product.imagemPrincipal || "";
+        try {
+          const response = await fetch(source, { cache: "no-store" });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const blob = await response.blob();
+          const extension = blob.type.split("/")[1] || "jpg";
+          const file = new File([blob], `${product.id}.${extension}`, { type: blob.type || "image/jpeg" });
+          const variants = await uploadProductImageVariants(file, product.id, source);
+          const { error } = await supabase.from("Produto").update({
+            imagemOriginal: source,
+            imagemPrincipal: variants.detail,
+            imagemCard: variants.card,
+            imagemDetalhe: variants.detail,
+            updatedAt: new Date().toISOString()
+          }).eq("id", product.id);
+          if (error) throw error;
+        } catch (error) {
+          failures.push(`${product.codigoInterno || product.nome}: ${error instanceof Error ? error.message : "falha desconhecida"}`);
+        } finally {
+          completed += 1;
+          setImageProgress({ completed, total: pending.length });
+        }
+      }
+    };
+    try {
+      await Promise.all(Array.from({ length: Math.min(3, pending.length) }, () => worker()));
+      notify(failures.length ? `${pending.length - failures.length} imagens otimizadas; ${failures.length} falharam.` : `${pending.length} imagens otimizadas com sucesso.`);
+      await reload();
+    } finally {
+      setOptimizingImages(false);
+    }
+  };
 
   const exportProducts = async (format: "csv" | "xlsx") => {
     const rows = data.produtos.map((product) => ({
@@ -894,6 +943,7 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
       <div className="mb-5 flex flex-wrap gap-3">
         <button onClick={() => setEditing(newProduct(data))} className="btn-yellow"><PackagePlus size={17} /> Criar produto</button>
         <label className={`btn-white cursor-pointer ${importing ? "pointer-events-none opacity-60" : ""}`}>{importing ? <Loader2 className="animate-spin" size={17} /> : <Upload size={17} />} {importing ? "Analisando planilha..." : "Importar CSV/XLSX"}<input type="file" accept=".csv,.xlsx" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importOfficialTemplate(file); event.target.value = ""; }} /></label>
+        <button onClick={() => void optimizeExistingImages()} disabled={optimizingImages} className="btn-white disabled:pointer-events-none disabled:opacity-60">{optimizingImages ? <Loader2 className="animate-spin" size={17} /> : <Sparkles size={17} />} {optimizingImages ? `Otimizando ${imageProgress.completed}/${imageProgress.total}` : "Otimizar imagens existentes"}</button>
         <button onClick={() => exportProducts("csv")} className="btn-white"><Download size={17} /> Exportar CSV</button>
         <button onClick={() => void exportProducts("xlsx")} className="btn-white"><FileSpreadsheet size={17} /> Exportar XLSX</button>
       </div>
@@ -912,7 +962,7 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
           <tbody>
             {products.map((product) => (
               <tr key={product.id}>
-                <Td>{product.imagemPrincipal ? <img src={product.imagemPrincipal} alt="" className="h-12 w-16 rounded-lg object-contain" /> : <div className="h-12 w-16 rounded-lg bg-soft" />}</Td>
+                <Td>{product.imagemPrincipal ? <img src={product.imagemCard || product.imagemPrincipal} alt="" className="h-12 w-16 rounded-lg object-contain" /> : <div className="h-12 w-16 rounded-lg bg-soft" />}</Td>
                 <Td className="font-black">{product.codigoInterno}</Td>
                 <Td>{product.nome}</Td>
                 <Td>{data.categorias.find((item) => item.id === product.categoriaId)?.nome || "-"}</Td>
@@ -961,6 +1011,9 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
         ncm: draft.ncm || null,
         caixaMaster: draft.caixaMaster || null,
         imagemPrincipal: draft.imagemPrincipal || null,
+        imagemOriginal: draft.imagemOriginal || null,
+        imagemCard: draft.imagemCard || null,
+        imagemDetalhe: draft.imagemDetalhe || null,
         imagensExtras: extras,
         ativo: draft.ativo !== false,
         destaque: Boolean(draft.destaque),
@@ -1133,7 +1186,7 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
         </div>
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <UploadBox label="Imagem principal" folder="produtos/principal" value={draft.imagemPrincipal || ""} onUploaded={(url) => set("imagemPrincipal", url)} />
+        <UploadBox label="Imagem principal" folder="produtos/principal" value={draft.imagemDetalhe || draft.imagemPrincipal || ""} productMode onUploaded={(url) => set("imagemPrincipal", url)} onProductUploaded={(variants) => setDraft((current) => ({ ...current, imagemOriginal: variants.original, imagemPrincipal: variants.detail, imagemCard: variants.card, imagemDetalhe: variants.detail }))} />
         <UploadBox label="Adicionar imagem extra" folder="produtos/extras" onUploaded={(url) => set("imagensExtras", [...extras, url])} />
       </div>
       {extras.length > 0 && <div className="mt-4 flex flex-wrap gap-3">{extras.map((url, index) => <div key={`${url}-${index}`} className="relative h-24 w-28 rounded-xl border border-line bg-white p-2"><img src={url} alt="" className="h-full w-full object-contain" /><button className="absolute right-1 top-1 rounded-full bg-red-600 p-1 text-white" onClick={() => set("imagensExtras", extras.filter((_, current) => current !== index))}><Trash2 size={13} /></button></div>)}</div>}
@@ -1934,21 +1987,43 @@ async function updateRow(table: string, id: string, payload: Record<string, unkn
   }
 }
 
-async function compressIconImage(file: File, maxSize = 256, quality = 0.78) {
+type ProductImageVariants = { original: string; card: string; detail: string };
+
+async function compressImage(file: File, maxWidth: number, maxHeight: number, quality: number) {
   const bitmap = await createImageBitmap(file);
-  const ratio = Math.min(maxSize / bitmap.width, maxSize / bitmap.height, 1);
+  const ratio = Math.min(maxWidth / bitmap.width, maxHeight / bitmap.height, 1);
   const width = Math.max(1, Math.round(bitmap.width * ratio));
   const height = Math.max(1, Math.round(bitmap.height * ratio));
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d");
-  if (!context) return file;
+  if (!context) throw new Error("O navegador não conseguiu preparar a imagem.");
   context.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", quality));
-  if (!blob) return file;
-  const name = file.name.replace(/\.[^.]+$/, "") || "montadora";
+  if (!blob) throw new Error("O navegador não conseguiu compactar a imagem em WebP.");
+  const name = file.name.replace(/\.[^.]+$/, "") || "imagem";
   return new File([blob], `${name}.webp`, { type: "image/webp" });
+}
+
+async function compressIconImage(file: File, maxSize = 256, quality = 0.78) {
+  return compressImage(file, maxSize, maxSize, quality);
+}
+
+async function uploadProductImageVariants(file: File, key: string, existingOriginal?: string): Promise<ProductImageVariants> {
+  const safeKey = key.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9_-]+/g, "-");
+  const version = `${Date.now()}-${safeKey}`;
+  const [cardFile, detailFile] = await Promise.all([
+    compressImage(file, 640, 480, 0.8),
+    compressImage(file, 1600, 1200, 0.88)
+  ]);
+  const [original, card, detail] = await Promise.all([
+    existingOriginal ? Promise.resolve(existingOriginal) : uploadCatalogMedia(file, "produtos/original"),
+    uploadCatalogBlob(`produtos/card/${version}.webp`, cardFile, "image/webp"),
+    uploadCatalogBlob(`produtos/detalhe/${version}.webp`, detailFile, "image/webp")
+  ]);
+  return { original, card, detail };
 }
 
 function newProduct(data: AppData): Produto {
@@ -1968,7 +2043,7 @@ function newProduct(data: AppData): Produto {
   };
 }
 
-function UploadBox({ label, folder, value, iconMode = false, onUploaded }: { label: string; folder: string; value?: string; iconMode?: boolean; onUploaded: (url: string) => void }) {
+function UploadBox({ label, folder, value, iconMode = false, productMode = false, onUploaded, onProductUploaded }: { label: string; folder: string; value?: string; iconMode?: boolean; productMode?: boolean; onUploaded: (url: string) => void; onProductUploaded?: (variants: ProductImageVariants) => void }) {
   const [uploading, setUploading] = useState(false);
   const upload = async (file: File) => {
     if (!isImageFile(file)) {
@@ -1977,13 +2052,19 @@ function UploadBox({ label, folder, value, iconMode = false, onUploaded }: { lab
     }
     setUploading(true);
     try {
-      const uploadFile = iconMode ? await compressIconImage(file) : file;
-      onUploaded(await uploadCatalogMedia(uploadFile, folder));
+      if (productMode) {
+        const variants = await uploadProductImageVariants(file, file.name);
+        onProductUploaded?.(variants);
+        onUploaded(variants.detail);
+      } else {
+        const uploadFile = iconMode ? await compressIconImage(file) : folder === "produtos/extras" ? await compressImage(file, 1600, 1200, 0.88) : file;
+        onUploaded(await uploadCatalogMedia(uploadFile, folder));
+      }
     } finally {
       setUploading(false);
     }
   };
-  return <div className="rounded-2xl border border-line bg-white p-4"><div className="mb-3 text-sm font-black">{label}</div>{value && !isPdfUrl(value) ? <img src={value} alt="" className="mb-3 h-36 w-full rounded-xl bg-soft object-contain" /> : <div className="mb-3 flex h-36 items-center justify-center rounded-xl bg-soft text-sm text-muted">{value ? "Arquivo atual nao e imagem" : "Sem imagem"}</div>}<label className="btn-white inline-flex cursor-pointer">{uploading ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />} Enviar imagem<input className="hidden" type="file" accept="image/*" onChange={(event) => event.target.files?.[0] && void upload(event.target.files[0])} /></label>{iconMode && <p className="mt-2 text-xs text-muted">A imagem sera comprimida para 256 x 256 px e usada como icone leve no app.</p>}</div>;
+  return <div className="rounded-2xl border border-line bg-white p-4"><div className="mb-3 text-sm font-black">{label}</div>{value && !isPdfUrl(value) ? <img src={value} alt="" className="mb-3 h-36 w-full rounded-xl bg-soft object-contain" /> : <div className="mb-3 flex h-36 items-center justify-center rounded-xl bg-soft text-sm text-muted">{value ? "Arquivo atual nao e imagem" : "Sem imagem"}</div>}<label className="btn-white inline-flex cursor-pointer">{uploading ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />} {uploading ? "Otimizando..." : "Enviar imagem"}<input className="hidden" type="file" accept="image/*" onChange={(event) => event.target.files?.[0] && void upload(event.target.files[0])} /></label>{iconMode && <p className="mt-2 text-xs text-muted">A imagem sera comprimida para 256 x 256 px e usada como icone leve no app.</p>}{productMode && <p className="mt-2 text-xs text-muted">O original será preservado e o sistema criará automaticamente versões WebP para card e detalhe.</p>}</div>;
 }
 
 function SettingsPanel({ title, children, onSave }: { title: string; children: React.ReactNode; onSave: () => void | Promise<void> }) {

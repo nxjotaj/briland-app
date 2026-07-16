@@ -84,6 +84,13 @@ const imageSize = {
   thumb: { width: 360, height: 280, resize: "contain", quality: 84 } as const
 };
 
+function productImageUrl(product: Produto, variant: "card" | "detail" | "thumb", version: number) {
+  const permanent = variant === "detail" ? product.imagemDetalhe : product.imagemCard;
+  if (permanent) return versionedRawUrl(permanent, version);
+  const fallbackSize = variant === "detail" ? imageSize.productDetail : variant === "thumb" ? imageSize.thumb : imageSize.productCard;
+  return liveImageUrl(product.imagemPrincipal, fallbackSize, version);
+}
+
 const realtimeCatalogTables = [
   "Produto",
   "Categoria",
@@ -273,7 +280,7 @@ export default function App() {
       versionedRawUrl(mediaSettings.initialImage, imageRefreshVersion),
       optimizedImageUrl(mediaSettings.homeImage, { ...imageSize.home, version: imageRefreshVersion }),
       ...data.categorias.slice(0, 4).map((item) => optimizedImageUrl(item.imagem, { ...imageSize.categoryIcon, version: imageRefreshVersion })),
-      ...data.produtos.slice(0, 4).map((item) => optimizedImageUrl(item.imagemPrincipal, { ...imageSize.productCard, version: imageRefreshVersion }))
+      ...data.produtos.slice(0, 4).map((item) => productImageUrl(item, "card", imageRefreshVersion))
     ].filter(Boolean);
     if (urls.length) void ExpoImage.prefetch(urls);
   }, [data.categorias, data.produtos, imageRefreshVersion, mediaSettings.homeImage, mediaSettings.initialImage]);
@@ -977,7 +984,7 @@ function ProductList({
         renderItem={({ item: product }) => (
           <Pressable style={[listMode === "grid" ? styles.productCard : styles.productListCard, { backgroundColor: appearance.surfaceColor, borderRadius: appearance.cardRadius }, promo && styles.promoCard, launch && styles.launchCard]} onPress={() => onOpen(product)}>
             <View style={listMode === "grid" ? undefined : styles.listImageWrap}>
-              {product.imagemPrincipal ? <Image recyclingKey={product.id} source={{ uri: liveImageUrl(product.imagemPrincipal, imageSize.productCard, imageVersion) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : listMode === "grid" ? <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" card /> : <View style={styles.productListPlaceholder}><Ionicons name="image-outline" size={28} color={colors.yellow} /></View>}
+              {product.imagemPrincipal ? <Image recyclingKey={product.id} placeholder={logo} placeholderContentFit="contain" source={{ uri: productImageUrl(product, "card", imageVersion) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : listMode === "grid" ? <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" card /> : <View style={styles.productListPlaceholder}><Ionicons name="image-outline" size={28} color={colors.yellow} /></View>}
               {promo && <Ribbon text="PROMOÇÃO" color={colors.red} />}
               {launch && <Ribbon text="NOVO" color={colors.yellow} />}
             </View>
@@ -1031,7 +1038,7 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <View style={styles.detailMedia}>
-        {gallery[0] ? <Image source={{ uri: liveImageUrl(gallery[0], imageSize.productDetail, imageVersion) }} style={styles.detailImage} resizeMode="contain" /> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Cadastre a imagem principal no painel admin" tall />}
+        {gallery[0] ? <Image source={{ uri: productImageUrl(product, "detail", imageVersion) }} placeholder={logo} placeholderContentFit="contain" style={styles.detailImage} resizeMode="contain" /> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Cadastre a imagem principal no painel admin" tall />}
         <View style={styles.dotsOverlay}><View style={styles.dotActive} />{gallery.slice(1, 5).map((item) => <View key={item} style={styles.dotLight} />)}</View>
       </View>
       <Text style={styles.smallYellow}>{product.codigoInterno || "Sem código"}</Text>
@@ -1446,7 +1453,7 @@ function AdminProducts({ products, categories, brands, reload, authToken, onActi
     <>
       <Text style={styles.adminTitle}>Produtos</Text>
       <View style={styles.adminActions}><Pressable style={styles.adminYellowButton} onPress={newProduct}><Ionicons name="add" size={20} color={colors.navy} /><Text style={styles.adminYellowText}>Criar produto</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={importProducts}><Ionicons name="cloud-upload-outline" size={20} color={colors.navy} /><Text>Importar CSV</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={exportProducts}><Ionicons name="download-outline" size={20} color={colors.navy} /><Text>Exportar</Text></Pressable></View>
-      {products.map((product) => <Pressable key={product.id} style={styles.adminListItem} onPress={() => setEditing(product)}>{product.imagemPrincipal ? <Image source={{ uri: optimizedImageUrl(product.imagemPrincipal, imageSize.thumb) }} style={styles.adminThumb} /> : <View style={styles.adminThumbPlaceholder}><Ionicons name="image-outline" size={24} color={colors.yellow} /></View>}<View style={styles.flex}><Text style={styles.productCode}>{product.codigoInterno || "Sem código"}</Text><Text style={styles.adminItemTitle}>{product.nome}</Text><Text style={styles.mutedSmall}>{product.ativo ? "Ativo" : "Inativo"} • Ordem {product.ordem ?? 0} • {money(product.preco)}</Text></View><Switch value={product.ativo !== false} onValueChange={async (value) => { try { await supabasePatch<Produto>("Produto", product.id, { ativo: value }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar status."); } }} trackColor={{ true: colors.yellow, false: "#D7DAE1" }} /></Pressable>)}
+      {products.map((product) => <Pressable key={product.id} style={styles.adminListItem} onPress={() => setEditing(product)}>{product.imagemPrincipal ? <Image source={{ uri: productImageUrl(product, "thumb", 0) }} placeholder={logo} placeholderContentFit="contain" style={styles.adminThumb} /> : <View style={styles.adminThumbPlaceholder}><Ionicons name="image-outline" size={24} color={colors.yellow} /></View>}<View style={styles.flex}><Text style={styles.productCode}>{product.codigoInterno || "Sem código"}</Text><Text style={styles.adminItemTitle}>{product.nome}</Text><Text style={styles.mutedSmall}>{product.ativo ? "Ativo" : "Inativo"} • Ordem {product.ordem ?? 0} • {money(product.preco)}</Text></View><Switch value={product.ativo !== false} onValueChange={async (value) => { try { await supabasePatch<Produto>("Produto", product.id, { ativo: value }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar status."); } }} trackColor={{ true: colors.yellow, false: "#D7DAE1" }} /></Pressable>)}
       <ProductEditor product={editing} categories={categories} brands={brands} authToken={authToken} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(); }} />
     </>
   );

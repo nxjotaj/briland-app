@@ -117,6 +117,7 @@ export async function uploadStorageObject(uri: string, path: string, contentType
     headers: {
       ...requestHeaders(token),
       "Content-Type": contentType,
+      "cache-control": "max-age=31536000",
       "x-upsert": "true"
     },
     body: blob

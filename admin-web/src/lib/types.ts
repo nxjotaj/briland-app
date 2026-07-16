@@ -13,6 +13,9 @@ export type Produto = {
   ncm?: string | null;
   caixaMaster?: string | null;
   imagemPrincipal?: string | null;
+  imagemOriginal?: string | null;
+  imagemCard?: string | null;
+  imagemDetalhe?: string | null;
   imagensExtras?: string[] | null;
   preco?: number | null;
   estoque?: number | null;
