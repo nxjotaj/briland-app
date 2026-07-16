@@ -518,11 +518,19 @@ export default function App() {
     }
   };
 
+  const previousRoute = routeHistory[routeHistory.length - 1];
+  const retainedCatalogRoute = route === "products" || route === "promotions" || route === "launches"
+    ? route
+    : route === "detail" && (previousRoute === "products" || previousRoute === "promotions" || previousRoute === "launches")
+      ? previousRoute
+      : null;
+  const pageTransitionKey = route === "detail" && retainedCatalogRoute ? retainedCatalogRoute : route;
+
   return (
     <View style={[styles.appRoot, { backgroundColor: appearance.backgroundColor }]}>
       <StatusBar hidden={route === "initial"} style={route === "login" || route === "admin" ? "light" : "dark"} />
       {loading && <LoadingOverlay />}
-      <PageTransition key={route}>
+      <PageTransition key={pageTransitionKey}>
         {route === "initial" ? (
           <InitialScreen media={mediaSettings} imageVersion={imageRefreshVersion} onCatalog={() => go("home")} onLogin={() => go("login")} />
         ) : (
@@ -538,7 +546,9 @@ export default function App() {
               {route === "home" && <HomeScreen go={openDirectCatalogRoute} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""} imageVersion={imageRefreshVersion} />}
               {route === "categories" && <CategoriesScreen categories={data.categorias} imageVersion={imageRefreshVersion} onPick={(id) => { clearCatalogFilters(); setCategoryFilter(id); go("products"); }} />}
               {route === "vehicleBrands" && <VehicleBrandsScreen montadoras={data.montadoras} applications={data.produtoModelosVeiculo} imageVersion={imageRefreshVersion} onPick={(id) => { clearCatalogFilters(); setMontadoraFilter(id); go("products"); }} />}
-              {route === "products" && (
+              {retainedCatalogRoute && (
+                <View style={styles.catalogStage}>
+              {retainedCatalogRoute === "products" && (
                 <ProductList
                   title="Produtos"
                   subtitle="Encontre o produto ideal para sua necessidade."
@@ -574,7 +584,7 @@ export default function App() {
                   onScrollOffset={(offset) => { catalogScrollOffsets.current.products = offset; }}
                 />
               )}
-              {route === "promotions" && (
+              {retainedCatalogRoute === "promotions" && (
                 <ProductList
                   title="Promoções"
                   subtitle="Ofertas selecionadas pela equipe Briland."
@@ -611,7 +621,7 @@ export default function App() {
                   promo
                 />
               )}
-              {route === "launches" && (
+              {retainedCatalogRoute === "launches" && (
                 <ProductList
                   title="Lançamentos"
                   subtitle="Novidades selecionadas pela equipe Briland."
@@ -648,7 +658,10 @@ export default function App() {
                   launch
                 />
               )}
-              {route === "detail" && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} imageVersion={imageRefreshVersion} onQuote={() => createLead({ produtoId: selectedProduct.id, mensagem: `Tenho interesse no produto ${selectedProduct.codigoInterno} - ${selectedProduct.nome}.`, origem: "produto" })} />}
+              {route === "detail" && selectedProduct && <View style={[styles.detailOverlay, { backgroundColor: appearance.backgroundColor }]}><ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} imageVersion={imageRefreshVersion} onQuote={() => createLead({ produtoId: selectedProduct.id, mensagem: `Tenho interesse no produto ${selectedProduct.codigoInterno} - ${selectedProduct.nome}.`, origem: "produto" })} /></View>}
+                </View>
+              )}
+              {route === "detail" && !retainedCatalogRoute && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} imageVersion={imageRefreshVersion} onQuote={() => createLead({ produtoId: selectedProduct.id, mensagem: `Tenho interesse no produto ${selectedProduct.codigoInterno} - ${selectedProduct.nome}.`, origem: "produto" })} />}
               {route === "contact" && <ContactScreen onSubmit={createLead} />}
               {route === "about" && <AboutScreen settings={aboutSettings} />}
               {route === "privacy" && <PrivacyScreen />}
@@ -2006,6 +2019,8 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.soft },
   screen: { flex: 1, backgroundColor: colors.soft },
   pageTransition: { flex: 1 },
+  catalogStage: { flex: 1, position: "relative" },
+  detailOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 10 },
   contentWithDock: { paddingHorizontal: 20, paddingBottom: 100 },
   initialScreen: { flex: 1, justifyContent: "flex-end", backgroundColor: colors.soft, overflow: "hidden" },
   initialBackgroundImage: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, width: "100%", height: "100%", backgroundColor: colors.white },
