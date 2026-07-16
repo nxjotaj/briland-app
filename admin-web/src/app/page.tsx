@@ -40,7 +40,7 @@ import {
   Upload,
   Users
 } from "lucide-react";
-import { supabase, uploadCatalogBlob, uploadCatalogMedia } from "@/lib/supabase";
+import { createRegistrationCredential, supabase, uploadCatalogBlob, uploadCatalogMedia } from "@/lib/supabase";
 import { createId, csvEscape, downloadBlob, formatLocalDate, formatLocalDateTime, money, numberOrNull, slugify } from "@/lib/helpers";
 import type {
   AboutSettings,
@@ -1456,27 +1456,55 @@ function UsersSection({ users, query, reload, notify, adminUser }: { users: Usua
 function UserModal({ user, reload, notify, adminUser, onClose }: { user?: Usuario; reload: () => Promise<void>; notify: (message: string) => void; adminUser: Usuario; onClose: () => void }) {
   const [draft, setDraft] = useState<Usuario>(user || { id: createId("user"), name: "", company: "", email: "", role: "CLIENTE", status: "PENDING", phone: "", cnpj: "", address: "", city: "", state: "", registrationNotes: "", notes: "" });
   const [saving, setSaving] = useState(false);
+  const [password, setPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const save = async () => {
     if (!draft.name.trim() || !draft.email.trim()) {
       notify("Preencha nome e e-mail.");
+      return;
+    }
+    if (!user && (password.length < 8 || password !== passwordConfirmation)) {
+      notify(password.length < 8 ? "A senha inicial precisa ter no mínimo 8 caracteres." : "A senha e a confirmação não coincidem.");
       return;
     }
     setSaving(true);
     const approvedAt = draft.status === "ACTIVE" ? (draft.approvedAt || new Date().toISOString()) : draft.approvedAt || null;
     const approvedBy = draft.status === "ACTIVE" ? (draft.approvedBy || adminUser.id) : draft.approvedBy || null;
     const values = { name: draft.name.trim(), company: draft.company?.trim() || null, email: draft.email.trim().toLowerCase(), role: draft.role, status: draft.status, phone: draft.phone?.trim() || null, cnpj: draft.cnpj?.trim() || null, address: draft.address?.trim() || null, city: draft.city?.trim() || null, state: draft.state?.trim() || null, registrationNotes: draft.registrationNotes?.trim() || null, notes: draft.notes?.trim() || null, approvedAt, approvedBy, updatedAt: new Date().toISOString() };
-    const result = user
-      ? await supabase.from("User").update(values).eq("id", user.id)
-      : await supabase.from("User").insert({ id: draft.id, ...values, passwordHash: "PENDING_APPROVAL", authUserId: null });
+    try {
+      if (!user) {
+        await createRegistrationCredential({ name: values.name, company: values.company, phone: values.phone, email: values.email, cnpj: values.cnpj, registrationNotes: values.registrationNotes, password });
+      }
+      const result = await supabase.from("User").update(values).eq(user ? "id" : "email", user ? user.id : values.email);
+      if (result.error) throw result.error;
+      notify(user ? "Usuário atualizado." : "Usuário cadastrado. Enviamos a confirmação para o e-mail informado.");
+      await reload();
+      onClose();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Não foi possível salvar o usuário.";
+      notify(message.toLowerCase().includes("database error saving new user") ? "Este e-mail já possui conta ou solicitação de cadastro." : message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const remove = async () => {
+    if (!user) return;
+    if (user.id === adminUser.id) {
+      notify("Não é permitido excluir o próprio usuário administrador.");
+      return;
+    }
+    if (!confirm(`Excluir definitivamente o cadastro de ${user.name}? A credencial de login também será removida.`)) return;
+    setSaving(true);
+    const { error } = await supabase.rpc("admin_delete_user", { p_user_id: user.id });
     setSaving(false);
-    if (result.error) notify(result.error.code === "23505" ? "Já existe um usuário com este e-mail." : result.error.message);
+    if (error) notify(error.message);
     else {
-      notify(user ? "Usuário atualizado." : "Usuário cadastrado no painel.");
+      notify("Cadastro e credencial de login excluídos.");
       await reload();
       onClose();
     }
   };
-  return <Modal title={user ? "Editar usuário" : "Cadastrar usuário"} onClose={onClose}><div className="grid gap-4 lg:grid-cols-2"><Field label="Nome"><input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="Empresa"><input className="input" value={draft.company || ""} onChange={(e) => setDraft({ ...draft, company: e.target.value })} /></Field><Field label="E-mail"><input className="input" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} /></Field><Field label="Telefone / WhatsApp"><input className="input" value={draft.phone || ""} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} /></Field><Field label="CNPJ"><input className="input" value={draft.cnpj || ""} onChange={(e) => setDraft({ ...draft, cnpj: e.target.value })} /></Field><Field label="Endereço"><input className="input" value={draft.address || ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} /></Field><Field label="Cidade"><input className="input" value={draft.city || ""} onChange={(e) => setDraft({ ...draft, city: e.target.value })} /></Field><Field label="UF"><input className="input" value={draft.state || ""} onChange={(e) => setDraft({ ...draft, state: e.target.value })} /></Field><Field label="Role"><select className="input" value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value as Role })}><option>ADMIN_MASTER</option><option>ADMIN_COLABORADOR</option><option>NAO_CLIENTE</option><option>CLIENTE</option><option>REPRESENTANTE</option></select></Field><Field label="Status"><select className="input" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value as Usuario["status"] })}><option>PENDING</option><option>ACTIVE</option><option>INACTIVE</option></select></Field><Field label="Observações do cadastro"><textarea className="textarea" value={draft.registrationNotes || ""} onChange={(e) => setDraft({ ...draft, registrationNotes: e.target.value })} /></Field><Field label="Notas internas"><textarea className="textarea" value={draft.notes || ""} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></Field></div><ModalActions saving={saving} onSave={save} /></Modal>;
+  return <Modal title={user ? "Editar usuário" : "Cadastrar usuário"} onClose={onClose}><div className="grid gap-4 lg:grid-cols-2"><Field label="Nome"><input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="Empresa"><input className="input" value={draft.company || ""} onChange={(e) => setDraft({ ...draft, company: e.target.value })} /></Field><Field label="E-mail"><input className="input" type="email" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} /></Field><Field label="Telefone / WhatsApp"><input className="input" value={draft.phone || ""} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} /></Field><Field label="CNPJ"><input className="input" value={draft.cnpj || ""} onChange={(e) => setDraft({ ...draft, cnpj: e.target.value })} /></Field><Field label="Endereço"><input className="input" value={draft.address || ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} /></Field><Field label="Cidade"><input className="input" value={draft.city || ""} onChange={(e) => setDraft({ ...draft, city: e.target.value })} /></Field><Field label="UF"><input className="input" value={draft.state || ""} onChange={(e) => setDraft({ ...draft, state: e.target.value })} /></Field>{!user && <><Field label="Senha inicial"><input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field><Field label="Confirmar senha"><input className="input" type="password" value={passwordConfirmation} onChange={(e) => setPasswordConfirmation(e.target.value)} /></Field></>}<Field label="Role"><select className="input" value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value as Role })}><option>ADMIN_MASTER</option><option>ADMIN_COLABORADOR</option><option>NAO_CLIENTE</option><option>CLIENTE</option><option>REPRESENTANTE</option></select></Field><Field label="Status"><select className="input" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value as Usuario["status"] })}><option>PENDING</option><option>ACTIVE</option><option>INACTIVE</option></select></Field><Field label="Observações do cadastro"><textarea className="textarea" value={draft.registrationNotes || ""} onChange={(e) => setDraft({ ...draft, registrationNotes: e.target.value })} /></Field><Field label="Notas internas"><textarea className="textarea" value={draft.notes || ""} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></Field></div><ModalActions saving={saving} onSave={save} onDelete={user ? remove : undefined} /></Modal>;
 }
 
 function PermissionsSection({ permissions, query, reload, notify }: { permissions: Permission[]; query: string; reload: () => Promise<void>; notify: (message: string) => void }) {

@@ -15,6 +15,40 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   }
 });
 
+export async function createRegistrationCredential(payload: {
+  name: string;
+  company?: string | null;
+  phone?: string | null;
+  email: string;
+  cnpj?: string | null;
+  registrationNotes?: string | null;
+  password: string;
+}) {
+  const registrationClient = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+  });
+  const { data, error } = await registrationClient.auth.signUp({
+    email: payload.email.trim().toLowerCase(),
+    password: payload.password,
+    options: {
+      emailRedirectTo: "https://briland-catalogo.vercel.app/?acao=login",
+      data: {
+        registration_source: "briland_catalog",
+        name: payload.name.trim(),
+        company: payload.company?.trim() || "Não informado",
+        phone: payload.phone?.trim() || "Não informado",
+        cnpj: payload.cnpj?.trim() || "Não informado",
+        observacoes: payload.registrationNotes?.trim() || ""
+      }
+    }
+  });
+  if (error) throw error;
+  if (!data.user) throw new Error("Não foi possível criar a credencial de acesso.");
+  if (Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+    throw new Error("Este e-mail já possui uma conta ou solicitação de cadastro.");
+  }
+}
+
 export async function uploadCatalogMedia(file: File, folder: string) {
   const safeName = file.name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9._-]+/g, "-");
   const path = `${folder}/${Date.now()}-${safeName}`;

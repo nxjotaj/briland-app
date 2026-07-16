@@ -135,6 +135,39 @@ export async function signInWithPassword(email: string, password: string) {
   return data.session as AuthSession;
 }
 
+export async function signUpRegistration(payload: {
+  nome: string;
+  empresa: string;
+  telefone: string;
+  email: string;
+  cnpj: string;
+  observacoes?: string;
+  senha: string;
+}) {
+  const { data, error } = await supabaseRealtime.auth.signUp({
+    email: payload.email.trim().toLowerCase(),
+    password: payload.senha,
+    options: {
+      emailRedirectTo: "https://briland-catalogo.vercel.app/?acao=login",
+      data: {
+        registration_source: "briland_catalog",
+        name: payload.nome.trim(),
+        company: payload.empresa.trim(),
+        phone: payload.telefone.trim(),
+        cnpj: payload.cnpj.trim(),
+        observacoes: payload.observacoes?.trim() || ""
+      }
+    }
+  });
+  if (error) throw error;
+  if (!data.user) throw new Error("Não foi possível criar a credencial de acesso.");
+  if (Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+    throw new Error("Este e-mail já possui uma conta ou solicitação de cadastro.");
+  }
+  if (data.session) await supabaseRealtime.auth.signOut({ scope: "local" });
+  return { requiresEmailConfirmation: !data.session };
+}
+
 export async function getPersistedSession() {
   const { data, error } = await supabaseRealtime.auth.getSession();
   if (error) throw error;

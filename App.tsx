@@ -28,13 +28,13 @@ import {
   View
 } from "react-native";
 
-import { CONFIG_STORAGE_KEY, getPersistedSession, signInWithPassword, signOutSession, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRealtime, supabaseRpc, trackTelemetry, uploadStorageObject } from "./src/api/supabase";
+import { CONFIG_STORAGE_KEY, getPersistedSession, signInWithPassword, signOutSession, signUpRegistration, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRealtime, supabaseRpc, trackTelemetry, uploadStorageObject } from "./src/api/supabase";
 import { colors, defaultAbout, defaultSocialLinks } from "./src/config/brand";
 import type { AboutSettings, Aplicacao, AppData, CatalogAppearance, CatalogPdfRole, CatalogPdfSettings, Categoria, Lead, Marca, MediaSettings, ModeloVeiculo, Montadora, Permission, Produto, ProdutoModeloVeiculo, ProdutoModeloVeiculoView, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
 import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage, money, optimizedImageUrl, parseCsv, slugify } from "./src/utils/helpers";
 
 type IconName = keyof typeof Ionicons.glyphMap;
-type RegistrationRequest = { nome: string; empresa: string; telefone: string; email: string; cnpj: string; observacoes: string };
+type RegistrationRequest = { nome: string; empresa: string; telefone: string; email: string; cnpj: string; observacoes: string; senha: string; confirmarSenha: string };
 type CachedImageProps = ImageProps & { resizeMode?: ImageProps["contentFit"] };
 
 const logo = require("./assets/briland-logo.png");
@@ -45,6 +45,7 @@ function initialAppRoute(): Route {
     const action = new URL(window.location.href).searchParams.get("acao");
     if (action === "excluir-conta") return "accountDeletion";
     if (action === "privacidade") return "privacy";
+    if (action === "login") return "login";
   }
   return "initial";
 }
@@ -523,20 +524,14 @@ export default function App() {
 
   const requestRegistration = async (payload: RegistrationRequest) => {
     try {
-      await supabaseRpc<{ accepted: boolean }>("request_user_registration", {
-        p_name: payload.nome.trim(),
-        p_company: payload.empresa.trim(),
-        p_phone: payload.telefone.trim(),
-        p_email: payload.email.trim().toLowerCase(),
-        p_cnpj: payload.cnpj.trim(),
-        p_observacoes: payload.observacoes.trim() || null
-      });
-      notify("Recebemos seu cadastro, aguarde aprovação", "Nossa equipe vai analisar as informações enviadas.");
+      await signUpRegistration(payload);
+      notify("Cadastro recebido", "Confirme o e-mail enviado para você e aguarde a aprovação da equipe Briland.");
       return true;
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
-      const duplicate = raw.toLowerCase().includes("duplicate") || raw.includes("User_email_key");
-      notify("Não foi possível cadastrar", duplicate ? "Este e-mail já possui cadastro ou solicitação em análise." : raw);
+      const normalized = raw.toLowerCase();
+      const duplicate = normalized.includes("already") || normalized.includes("já possui") || normalized.includes("database error saving new user");
+      notify("Não foi possível cadastrar", duplicate ? "Este e-mail já possui conta ou solicitação em análise." : raw);
       return false;
     }
   };
@@ -1327,11 +1322,13 @@ function LoginScreen({ onLogin, onSignup, onCatalog, onPrivacy, onDelete, links,
   );
 }
 function SignupScreen({ onSubmit, onLogin, onPrivacy, onDelete }: { onSubmit: (request: RegistrationRequest) => Promise<boolean>; onLogin: () => void; onPrivacy: () => void; onDelete: () => void }) {
-  const [form, setForm] = useState<RegistrationRequest>({ nome: "", empresa: "", telefone: "", email: "", cnpj: "", observacoes: "" });
+  const [form, setForm] = useState<RegistrationRequest>({ nome: "", empresa: "", telefone: "", email: "", cnpj: "", observacoes: "", senha: "", confirmarSenha: "" });
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const requiredFieldsReady = Boolean(form.empresa.trim() && form.nome.trim() && form.telefone.trim() && form.email.trim() && form.cnpj.trim());
+  const passwordsMatch = form.senha === form.confirmarSenha;
+  const passwordReady = form.senha.length >= 8 && passwordsMatch;
+  const requiredFieldsReady = Boolean(form.empresa.trim() && form.nome.trim() && form.telefone.trim() && form.email.trim() && form.cnpj.trim() && passwordReady);
   const submit = async () => {
     setSubmitting(true);
     try {
@@ -1343,13 +1340,16 @@ function SignupScreen({ onSubmit, onLogin, onPrivacy, onDelete }: { onSubmit: (r
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.signupContent}>
       <PageTitle title="Cadastrar empresa" subtitle="Preencha os dados abaixo para solicitar seu cadastro empresarial." />
-      {submitted ? <View style={styles.deletionSuccess}><Ionicons name="checkmark-circle" size={58} color={colors.green} /><Text style={styles.legalHeading}>Cadastro recebido</Text><Text style={styles.legalParagraph}>Sua solicitação foi enviada para análise. A equipe Briland entrará em contato após a aprovação.</Text></View> : <>
+      {submitted ? <View style={styles.deletionSuccess}><Ionicons name="checkmark-circle" size={58} color={colors.green} /><Text style={styles.legalHeading}>Cadastro recebido</Text><Text style={styles.legalParagraph}>Enviamos uma confirmação para o seu e-mail. Confirme o endereço e aguarde a equipe Briland aprovar o cadastro. Depois, entre usando este e-mail e a senha que acabou de criar.</Text></View> : <>
         <Input label="Razão social" value={form.empresa} onChangeText={(empresa) => setForm({ ...form, empresa })} />
         <Input label="Nome do responsável" value={form.nome} onChangeText={(nome) => setForm({ ...form, nome })} />
         <Input label="Contato (Telefone / WhatsApp)" value={form.telefone} onChangeText={(telefone) => setForm({ ...form, telefone })} />
         <Input label="E-mail" value={form.email} onChangeText={(email) => setForm({ ...form, email })} />
         <Input label="CNPJ" value={form.cnpj} onChangeText={(cnpj) => setForm({ ...form, cnpj })} />
         <Input label="Observações" required={false} value={form.observacoes} onChangeText={(observacoes) => setForm({ ...form, observacoes })} />
+        <Input label="Senha" secure value={form.senha} onChangeText={(senha) => setForm({ ...form, senha })} />
+        <Input label="Confirmar senha" secure value={form.confirmarSenha} onChangeText={(confirmarSenha) => setForm({ ...form, confirmarSenha })} />
+        <Text style={[styles.mutedSmall, form.confirmarSenha.length > 0 && !passwordsMatch && { color: colors.red }]}>Use no mínimo 8 caracteres{form.confirmarSenha.length > 0 && !passwordsMatch ? ". As senhas não coincidem." : "."}</Text>
         <Pressable style={styles.checkRow} onPress={() => setPrivacyAccepted((value) => !value)}><View style={[styles.emptyCheck, privacyAccepted && styles.checkedBox]}>{privacyAccepted && <Ionicons name="checkmark" size={20} color={colors.navy} />}</View><Text style={styles.checkText}>Li a Política de Privacidade e concordo com o tratamento dos dados para análise do cadastro.</Text></Pressable>
         <Pressable onPress={onPrivacy}><Text style={styles.inlineLegalLink}>Ler a Política de Privacidade</Text></Pressable>
         <Pressable disabled={!privacyAccepted || !requiredFieldsReady || submitting} style={[styles.yellowButton, (!privacyAccepted || !requiredFieldsReady || submitting) && styles.disabledButton]} onPress={() => void submit()}>{submitting ? <ActivityIndicator color={colors.navy} /> : <Text style={styles.yellowButtonText}>Cadastrar</Text>}</Pressable>
@@ -2050,8 +2050,9 @@ function Choice({ title, subtitle, selected, icon, onPress }: { title: string; s
   return <Pressable onPress={onPress} style={[styles.choice, selected && styles.choiceSelected]}>{selected && <View style={styles.choiceCheck}><Ionicons name="checkmark" size={15} color={colors.white} /></View>}<Ionicons name={icon} size={32} color={colors.navy} /><Text style={styles.choiceTitle}>{title}</Text><Text style={styles.choiceSub}>{subtitle}</Text></Pressable>;
 }
 
-function Input({ label, value, onChangeText, required = true }: { label: string; value: string; onChangeText: (text: string) => void; required?: boolean }) {
-  return <View style={styles.inputGroup}><Text style={styles.label}>{label}{required ? <> <Text style={styles.required}>*</Text></> : null}</Text><View style={styles.input}><Ionicons name="document-text-outline" size={21} color={colors.muted} /><TextInput value={value} onChangeText={onChangeText} placeholder={`Digite ${label.toLowerCase()}`} style={styles.inputText} placeholderTextColor="#9BA0AA" /></View></View>;
+function Input({ label, value, onChangeText, required = true, secure = false }: { label: string; value: string; onChangeText: (text: string) => void; required?: boolean; secure?: boolean }) {
+  const isEmail = label.toLowerCase().includes("e-mail");
+  return <View style={styles.inputGroup}><Text style={styles.label}>{label}{required ? <> <Text style={styles.required}>*</Text></> : null}</Text><View style={styles.input}><Ionicons name={secure ? "lock-closed-outline" : "document-text-outline"} size={21} color={colors.muted} /><TextInput value={value} onChangeText={onChangeText} secureTextEntry={secure} autoCapitalize={secure || isEmail ? "none" : "sentences"} keyboardType={isEmail ? "email-address" : "default"} placeholder={`Digite ${label.toLowerCase()}`} style={styles.inputText} placeholderTextColor="#9BA0AA" /></View></View>;
 }
 
 function DarkInput({ icon, value, onChangeText, placeholder, secure }: { icon: IconName; value?: string; onChangeText?: (text: string) => void; placeholder: string; secure?: boolean }) {
