@@ -141,7 +141,6 @@ export default function App() {
   const [aboutSettings, setAboutSettings] = useState<AboutSettings>(defaultAbout);
   const [appearance, setAppearance] = useState<CatalogAppearance>(defaultAppearance);
   const [loading, setLoading] = useState(true);
-  const [routeSplash, setRouteSplash] = useState(false);
   const [imageRefreshVersion, setImageRefreshVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const realtimeReloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -362,12 +361,8 @@ export default function App() {
       setMenuOpen(false);
       return;
     }
-    setRouteSplash(true);
     setMenuOpen(false);
-    setTimeout(() => {
-      setRoute(next);
-      setRouteSplash(false);
-    }, 320);
+    setRoute(next);
   };
 
   const go = (next: Route, options?: { replace?: boolean; resetHistory?: boolean }) => {
@@ -526,10 +521,10 @@ export default function App() {
     <View style={[styles.appRoot, { backgroundColor: appearance.backgroundColor }]}>
       <StatusBar hidden={route === "initial"} style={route === "login" || route === "admin" ? "light" : "dark"} />
       {loading && <LoadingOverlay />}
-      {routeSplash && <RouteSplash />}
-      {route === "initial" ? (
-        <InitialScreen media={mediaSettings} imageVersion={imageRefreshVersion} onCatalog={() => go("home")} onLogin={() => go("login")} />
-      ) : (
+      <PageTransition key={route}>
+        {route === "initial" ? (
+          <InitialScreen media={mediaSettings} imageVersion={imageRefreshVersion} onCatalog={() => go("home")} onLogin={() => go("login")} />
+        ) : (
         <SafeAreaView style={[styles.safe, { backgroundColor: appearance.backgroundColor }]}>
           {route === "login" ? (
             <LoginScreen onLogin={login} onSignup={() => go("signup")} onCatalog={() => go("initial")} onPrivacy={() => go("privacy")} onDelete={() => go("accountDeletion")} links={socialLinks} error={loginMessage} />
@@ -656,7 +651,8 @@ export default function App() {
             </>
           )}
         </SafeAreaView>
-      )}
+        )}
+      </PageTransition>
       <SideMenu visible={menuOpen} role={role} user={currentUser} onClose={() => setMenuOpen(false)} go={openDirectCatalogRoute} setRole={setRole} setCurrentUser={(user) => { setCurrentUser(user); if (!user) setAuthToken(undefined); }} />
     </View>
   );
@@ -671,12 +667,18 @@ function LoadingOverlay() {
   );
 }
 
-function RouteSplash() {
+function PageTransition({ children }: { children: React.ReactNode }) {
+  const progress = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(progress, { toValue: 1, duration: 180, useNativeDriver: true }).start();
+  }, [progress]);
   return (
-    <View style={styles.routeSplash}>
-      <Image source={logo} style={styles.routeSplashLogo} resizeMode="contain" />
-      <ActivityIndicator size="small" color={colors.yellow} />
-    </View>
+    <Animated.View style={[styles.pageTransition, {
+      opacity: progress.interpolate({ inputRange: [0, 1], outputRange: [0.88, 1] }),
+      transform: [{ translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }]
+    }]}>
+      {children}
+    </Animated.View>
   );
 }
 
@@ -982,9 +984,9 @@ function ProductList({
         removeClippedSubviews={Platform.OS === "android"}
         showsVerticalScrollIndicator={false}
         renderItem={({ item: product }) => (
-          <Pressable style={[listMode === "grid" ? styles.productCard : styles.productListCard, { backgroundColor: appearance.surfaceColor, borderRadius: appearance.cardRadius }, promo && styles.promoCard, launch && styles.launchCard]} onPress={() => onOpen(product)}>
+          <Pressable style={[listMode === "grid" ? styles.productCard : styles.productListCard, { backgroundColor: appearance.surfaceColor, borderRadius: appearance.cardRadius }, promo && styles.promoCard, launch && styles.launchCard]} onPressIn={() => { const detailUrl = productImageUrl(product, "detail", imageVersion); if (detailUrl) void ExpoImage.prefetch(detailUrl); }} onPress={() => onOpen(product)}>
             <View style={listMode === "grid" ? undefined : styles.listImageWrap}>
-              {product.imagemPrincipal ? <Image recyclingKey={product.id} placeholder={logo} placeholderContentFit="contain" source={{ uri: productImageUrl(product, "card", imageVersion) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : listMode === "grid" ? <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" card /> : <View style={styles.productListPlaceholder}><Ionicons name="image-outline" size={28} color={colors.yellow} /></View>}
+              {product.imagemPrincipal ? <Image recyclingKey={product.id} source={{ uri: productImageUrl(product, "card", imageVersion) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : listMode === "grid" ? <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" card /> : <View style={styles.productListPlaceholder}><Ionicons name="image-outline" size={28} color={colors.yellow} /></View>}
               {promo && <Ribbon text="PROMOÇÃO" color={colors.red} />}
               {launch && <Ribbon text="NOVO" color={colors.yellow} />}
             </View>
@@ -1029,6 +1031,8 @@ function productPermission(product: Produto, key: string, fallback = true) {
 
 function ProductDetail({ product, role, category, brand, vehicleApplications, whatsappUrl, imageVersion, onQuote }: { product: Produto; role: Role; category?: Categoria; brand?: Marca; vehicleApplications: ProdutoModeloVeiculoView[]; whatsappUrl: string; imageVersion: number; onQuote: () => void }) {
   const gallery = [product.imagemPrincipal, ...(product.imagensExtras ?? [])].filter(Boolean) as string[];
+  const cardImage = productImageUrl(product, "card", imageVersion);
+  const detailImage = productImageUrl(product, "detail", imageVersion);
   const showBrand = productPermission(product, "marca", true);
   const showCa = productPermission(product, "ca", role !== "VISITANTE" && role !== "NAO_CLIENTE");
   const showManual = Boolean(product.manualPdf) && productPermission(product, "manualPdf", role !== "VISITANTE" && role !== "NAO_CLIENTE");
@@ -1038,7 +1042,10 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <View style={styles.detailMedia}>
-        {gallery[0] ? <Image source={{ uri: productImageUrl(product, "detail", imageVersion) }} placeholder={logo} placeholderContentFit="contain" style={styles.detailImage} resizeMode="contain" /> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Cadastre a imagem principal no painel admin" tall />}
+        {gallery[0] ? <View style={styles.detailImageStack}>
+          <Image recyclingKey={`${product.id}-card-detail`} source={{ uri: cardImage }} transition={0} style={styles.detailImage} resizeMode="contain" />
+          {detailImage !== cardImage && <Image recyclingKey={`${product.id}-high-detail`} source={{ uri: detailImage }} transition={140} style={[styles.detailImage, styles.detailImageOverlay]} resizeMode="contain" />}
+        </View> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Cadastre a imagem principal no painel admin" tall />}
         <View style={styles.dotsOverlay}><View style={styles.dotActive} />{gallery.slice(1, 5).map((item) => <View key={item} style={styles.dotLight} />)}</View>
       </View>
       <Text style={styles.smallYellow}>{product.codigoInterno || "Sem código"}</Text>
@@ -1453,7 +1460,7 @@ function AdminProducts({ products, categories, brands, reload, authToken, onActi
     <>
       <Text style={styles.adminTitle}>Produtos</Text>
       <View style={styles.adminActions}><Pressable style={styles.adminYellowButton} onPress={newProduct}><Ionicons name="add" size={20} color={colors.navy} /><Text style={styles.adminYellowText}>Criar produto</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={importProducts}><Ionicons name="cloud-upload-outline" size={20} color={colors.navy} /><Text>Importar CSV</Text></Pressable><Pressable style={styles.adminSoftButton} onPress={exportProducts}><Ionicons name="download-outline" size={20} color={colors.navy} /><Text>Exportar</Text></Pressable></View>
-      {products.map((product) => <Pressable key={product.id} style={styles.adminListItem} onPress={() => setEditing(product)}>{product.imagemPrincipal ? <Image source={{ uri: productImageUrl(product, "thumb", 0) }} placeholder={logo} placeholderContentFit="contain" style={styles.adminThumb} /> : <View style={styles.adminThumbPlaceholder}><Ionicons name="image-outline" size={24} color={colors.yellow} /></View>}<View style={styles.flex}><Text style={styles.productCode}>{product.codigoInterno || "Sem código"}</Text><Text style={styles.adminItemTitle}>{product.nome}</Text><Text style={styles.mutedSmall}>{product.ativo ? "Ativo" : "Inativo"} • Ordem {product.ordem ?? 0} • {money(product.preco)}</Text></View><Switch value={product.ativo !== false} onValueChange={async (value) => { try { await supabasePatch<Produto>("Produto", product.id, { ativo: value }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar status."); } }} trackColor={{ true: colors.yellow, false: "#D7DAE1" }} /></Pressable>)}
+      {products.map((product) => <Pressable key={product.id} style={styles.adminListItem} onPress={() => setEditing(product)}>{product.imagemPrincipal ? <Image source={{ uri: productImageUrl(product, "thumb", 0) }} style={styles.adminThumb} /> : <View style={styles.adminThumbPlaceholder}><Ionicons name="image-outline" size={24} color={colors.yellow} /></View>}<View style={styles.flex}><Text style={styles.productCode}>{product.codigoInterno || "Sem código"}</Text><Text style={styles.adminItemTitle}>{product.nome}</Text><Text style={styles.mutedSmall}>{product.ativo ? "Ativo" : "Inativo"} • Ordem {product.ordem ?? 0} • {money(product.preco)}</Text></View><Switch value={product.ativo !== false} onValueChange={async (value) => { try { await supabasePatch<Produto>("Produto", product.id, { ativo: value }, authToken); await reload(); } catch (err) { onAction(err instanceof Error ? err.message : "Falha ao atualizar status."); } }} trackColor={{ true: colors.yellow, false: "#D7DAE1" }} /></Pressable>)}
       <ProductEditor product={editing} categories={categories} brands={brands} authToken={authToken} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(); }} />
     </>
   );
@@ -1955,14 +1962,13 @@ const styles = StyleSheet.create({
   appRoot: { flex: 1, backgroundColor: colors.soft },
   safe: { flex: 1, backgroundColor: colors.soft },
   screen: { flex: 1, backgroundColor: colors.soft },
+  pageTransition: { flex: 1 },
   contentWithDock: { paddingHorizontal: 20, paddingBottom: 100 },
   initialScreen: { flex: 1, justifyContent: "flex-end", backgroundColor: colors.soft, overflow: "hidden" },
   initialBackgroundImage: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, width: "100%", height: "100%", backgroundColor: colors.white },
   initialFallback: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0 },
   loadingOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 30, backgroundColor: "rgba(2,17,38,0.82)", alignItems: "center", justifyContent: "center" },
   loadingText: { color: colors.white, fontWeight: "800", marginTop: 14 },
-  routeSplash: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 26, backgroundColor: colors.navy, alignItems: "center", justifyContent: "center", gap: 18 },
-  routeSplashLogo: { width: 230, height: 84 },
   errorBanner: { backgroundColor: "#FFF4D6", borderBottomWidth: 1, borderColor: colors.yellow, padding: 12, gap: 8 },
   errorText: { color: colors.navy, fontSize: 12 },
   errorButton: { alignSelf: "flex-start", backgroundColor: colors.navy, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
@@ -2061,7 +2067,9 @@ const styles = StyleSheet.create({
   price: { color: colors.red, fontWeight: "900", fontSize: 16 },
   loginHint: { color: colors.yellow, fontWeight: "900", marginTop: 4 },
   detailMedia: { height: 390, borderRadius: 22, overflow: "hidden", backgroundColor: colors.white, marginBottom: 20, ...shadow },
+  detailImageStack: { flex: 1, backgroundColor: colors.white },
   detailImage: { width: "100%", height: "100%", backgroundColor: colors.white },
+  detailImageOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, backgroundColor: "transparent" },
   dotsOverlay: { position: "absolute", bottom: 22, alignSelf: "center", flexDirection: "row", gap: 8 },
   smallYellow: { color: colors.yellow, fontWeight: "900", marginBottom: 6 },
   detailTitle: { color: colors.navy, fontSize: 27, fontWeight: "900", lineHeight: 34 },
