@@ -523,27 +523,21 @@ export default function App() {
 
   const requestRegistration = async (payload: RegistrationRequest) => {
     try {
-      const now = new Date().toISOString();
-      await supabasePostMinimal("User", {
-        id: createId("user"),
-        name: payload.nome || "Responsável não informado",
-        company: payload.empresa || "Empresa não informada",
-        email: payload.email || `cadastro-${Date.now()}@briland.local`,
-        passwordHash: "PENDING_APPROVAL",
-        role: "CLIENTE",
-        status: "PENDING",
-        phone: payload.telefone || null,
-        cnpj: payload.cnpj || null,
-        registrationNotes: payload.observacoes || null,
-        notes: "Cadastro pendente pelo app.",
-        updatedAt: now,
-        authUserId: null
+      await supabaseRpc<{ accepted: boolean }>("request_user_registration", {
+        p_name: payload.nome.trim(),
+        p_company: payload.empresa.trim(),
+        p_phone: payload.telefone.trim(),
+        p_email: payload.email.trim().toLowerCase(),
+        p_cnpj: payload.cnpj.trim(),
+        p_observacoes: payload.observacoes.trim() || null
       });
       notify("Recebemos seu cadastro, aguarde aprovação", "Nossa equipe vai analisar as informações enviadas.");
+      return true;
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
       const duplicate = raw.toLowerCase().includes("duplicate") || raw.includes("User_email_key");
       notify("Não foi possível cadastrar", duplicate ? "Este e-mail já possui cadastro ou solicitação em análise." : raw);
+      return false;
     }
   };
 
@@ -1332,22 +1326,34 @@ function LoginScreen({ onLogin, onSignup, onCatalog, onPrivacy, onDelete, links,
     </SafeAreaView>
   );
 }
-function SignupScreen({ onSubmit, onLogin, onPrivacy, onDelete }: { onSubmit: (request: RegistrationRequest) => void; onLogin: () => void; onPrivacy: () => void; onDelete: () => void }) {
+function SignupScreen({ onSubmit, onLogin, onPrivacy, onDelete }: { onSubmit: (request: RegistrationRequest) => Promise<boolean>; onLogin: () => void; onPrivacy: () => void; onDelete: () => void }) {
   const [form, setForm] = useState<RegistrationRequest>({ nome: "", empresa: "", telefone: "", email: "", cnpj: "", observacoes: "" });
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
   const requiredFieldsReady = Boolean(form.empresa.trim() && form.nome.trim() && form.telefone.trim() && form.email.trim() && form.cnpj.trim());
+  const submit = async () => {
+    setSubmitting(true);
+    try {
+      setSubmitted(await onSubmit(form));
+    } finally {
+      setSubmitting(false);
+    }
+  };
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.signupContent}>
       <PageTitle title="Cadastrar empresa" subtitle="Preencha os dados abaixo para solicitar seu cadastro empresarial." />
-      <Input label="Razão social" value={form.empresa} onChangeText={(empresa) => setForm({ ...form, empresa })} />
-      <Input label="Nome do responsável" value={form.nome} onChangeText={(nome) => setForm({ ...form, nome })} />
-      <Input label="Contato (Telefone / WhatsApp)" value={form.telefone} onChangeText={(telefone) => setForm({ ...form, telefone })} />
-      <Input label="E-mail" value={form.email} onChangeText={(email) => setForm({ ...form, email })} />
-      <Input label="CNPJ" value={form.cnpj} onChangeText={(cnpj) => setForm({ ...form, cnpj })} />
-      <Input label="Observações" value={form.observacoes} onChangeText={(observacoes) => setForm({ ...form, observacoes })} />
-      <Pressable style={styles.checkRow} onPress={() => setPrivacyAccepted((value) => !value)}><View style={[styles.emptyCheck, privacyAccepted && styles.checkedBox]}>{privacyAccepted && <Ionicons name="checkmark" size={20} color={colors.navy} />}</View><Text style={styles.checkText}>Li a Política de Privacidade e concordo com o tratamento dos dados para análise do cadastro.</Text></Pressable>
-      <Pressable onPress={onPrivacy}><Text style={styles.inlineLegalLink}>Ler a Política de Privacidade</Text></Pressable>
-      <Pressable disabled={!privacyAccepted || !requiredFieldsReady} style={[styles.yellowButton, (!privacyAccepted || !requiredFieldsReady) && styles.disabledButton]} onPress={() => onSubmit(form)}><Text style={styles.yellowButtonText}>Cadastrar</Text></Pressable>
+      {submitted ? <View style={styles.deletionSuccess}><Ionicons name="checkmark-circle" size={58} color={colors.green} /><Text style={styles.legalHeading}>Cadastro recebido</Text><Text style={styles.legalParagraph}>Sua solicitação foi enviada para análise. A equipe Briland entrará em contato após a aprovação.</Text></View> : <>
+        <Input label="Razão social" value={form.empresa} onChangeText={(empresa) => setForm({ ...form, empresa })} />
+        <Input label="Nome do responsável" value={form.nome} onChangeText={(nome) => setForm({ ...form, nome })} />
+        <Input label="Contato (Telefone / WhatsApp)" value={form.telefone} onChangeText={(telefone) => setForm({ ...form, telefone })} />
+        <Input label="E-mail" value={form.email} onChangeText={(email) => setForm({ ...form, email })} />
+        <Input label="CNPJ" value={form.cnpj} onChangeText={(cnpj) => setForm({ ...form, cnpj })} />
+        <Input label="Observações" required={false} value={form.observacoes} onChangeText={(observacoes) => setForm({ ...form, observacoes })} />
+        <Pressable style={styles.checkRow} onPress={() => setPrivacyAccepted((value) => !value)}><View style={[styles.emptyCheck, privacyAccepted && styles.checkedBox]}>{privacyAccepted && <Ionicons name="checkmark" size={20} color={colors.navy} />}</View><Text style={styles.checkText}>Li a Política de Privacidade e concordo com o tratamento dos dados para análise do cadastro.</Text></Pressable>
+        <Pressable onPress={onPrivacy}><Text style={styles.inlineLegalLink}>Ler a Política de Privacidade</Text></Pressable>
+        <Pressable disabled={!privacyAccepted || !requiredFieldsReady || submitting} style={[styles.yellowButton, (!privacyAccepted || !requiredFieldsReady || submitting) && styles.disabledButton]} onPress={() => void submit()}>{submitting ? <ActivityIndicator color={colors.navy} /> : <Text style={styles.yellowButtonText}>Cadastrar</Text>}</Pressable>
+      </>}
       <Pressable onPress={onLogin}><Text style={styles.loginLink}>Já tem uma conta? <Text style={styles.yellowText}>Entrar</Text></Text></Pressable>
       <Pressable onPress={onDelete}><Text style={styles.inlineLegalLink}>Solicitar exclusão de cadastro</Text></Pressable>
     </ScrollView>
@@ -2044,8 +2050,8 @@ function Choice({ title, subtitle, selected, icon, onPress }: { title: string; s
   return <Pressable onPress={onPress} style={[styles.choice, selected && styles.choiceSelected]}>{selected && <View style={styles.choiceCheck}><Ionicons name="checkmark" size={15} color={colors.white} /></View>}<Ionicons name={icon} size={32} color={colors.navy} /><Text style={styles.choiceTitle}>{title}</Text><Text style={styles.choiceSub}>{subtitle}</Text></Pressable>;
 }
 
-function Input({ label, value, onChangeText }: { label: string; value: string; onChangeText: (text: string) => void }) {
-  return <View style={styles.inputGroup}><Text style={styles.label}>{label} <Text style={styles.required}>*</Text></Text><View style={styles.input}><Ionicons name="document-text-outline" size={21} color={colors.muted} /><TextInput value={value} onChangeText={onChangeText} placeholder={`Digite ${label.toLowerCase()}`} style={styles.inputText} placeholderTextColor="#9BA0AA" /></View></View>;
+function Input({ label, value, onChangeText, required = true }: { label: string; value: string; onChangeText: (text: string) => void; required?: boolean }) {
+  return <View style={styles.inputGroup}><Text style={styles.label}>{label}{required ? <> <Text style={styles.required}>*</Text></> : null}</Text><View style={styles.input}><Ionicons name="document-text-outline" size={21} color={colors.muted} /><TextInput value={value} onChangeText={onChangeText} placeholder={`Digite ${label.toLowerCase()}`} style={styles.inputText} placeholderTextColor="#9BA0AA" /></View></View>;
 }
 
 function DarkInput({ icon, value, onChangeText, placeholder, secure }: { icon: IconName; value?: string; onChangeText?: (text: string) => void; placeholder: string; secure?: boolean }) {
