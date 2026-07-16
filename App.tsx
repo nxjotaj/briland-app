@@ -666,14 +666,13 @@ export default function App() {
               {route === "about" && <AboutScreen settings={aboutSettings} />}
               {route === "privacy" && <PrivacyScreen />}
               {route === "accountDeletion" && <AccountDeletionScreen initialEmail={currentUser?.email || ""} onSubmit={requestAccountDeletion} />}
-              {route === "signup" && <SignupScreen links={socialLinks} onSubmit={requestRegistration} onLogin={() => go("login")} onPrivacy={() => go("privacy")} onDelete={() => go("accountDeletion")} />}
-              {route !== "signup" && <SocialDock links={socialLinks} appearance={appearance} />}
+              {route === "signup" && <SignupScreen onSubmit={requestRegistration} onLogin={() => go("login")} onPrivacy={() => go("privacy")} onDelete={() => go("accountDeletion")} />}
             </>
           )}
         </SafeAreaView>
         )}
       </PageTransition>
-      <SideMenu visible={menuOpen} role={role} user={currentUser} onClose={() => setMenuOpen(false)} go={openDirectCatalogRoute} setRole={setRole} setCurrentUser={(user) => { setCurrentUser(user); if (!user) setAuthToken(undefined); }} />
+      <SideMenu visible={menuOpen} role={role} user={currentUser} links={socialLinks} onClose={() => setMenuOpen(false)} go={openDirectCatalogRoute} setRole={setRole} setCurrentUser={(user) => { setCurrentUser(user); if (!user) setAuthToken(undefined); }} />
     </View>
   );
 }
@@ -1284,7 +1283,7 @@ function LoginScreen({ onLogin, onSignup, onCatalog, onPrivacy, onDelete, links,
     </SafeAreaView>
   );
 }
-function SignupScreen({ links, onSubmit, onLogin, onPrivacy, onDelete }: { links: SocialLinks; onSubmit: (request: RegistrationRequest) => void; onLogin: () => void; onPrivacy: () => void; onDelete: () => void }) {
+function SignupScreen({ onSubmit, onLogin, onPrivacy, onDelete }: { onSubmit: (request: RegistrationRequest) => void; onLogin: () => void; onPrivacy: () => void; onDelete: () => void }) {
   const [form, setForm] = useState<RegistrationRequest>({ nome: "", empresa: "", telefone: "", email: "", cnpj: "", observacoes: "" });
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const requiredFieldsReady = Boolean(form.empresa.trim() && form.nome.trim() && form.telefone.trim() && form.email.trim() && form.cnpj.trim());
@@ -1302,7 +1301,6 @@ function SignupScreen({ links, onSubmit, onLogin, onPrivacy, onDelete }: { links
       <Pressable disabled={!privacyAccepted || !requiredFieldsReady} style={[styles.yellowButton, (!privacyAccepted || !requiredFieldsReady) && styles.disabledButton]} onPress={() => onSubmit(form)}><Text style={styles.yellowButtonText}>Cadastrar</Text></Pressable>
       <Pressable onPress={onLogin}><Text style={styles.loginLink}>Já tem uma conta? <Text style={styles.yellowText}>Entrar</Text></Text></Pressable>
       <Pressable onPress={onDelete}><Text style={styles.inlineLegalLink}>Solicitar exclusão de cadastro</Text></Pressable>
-      <SocialDock links={links} />
     </ScrollView>
   );
 }
@@ -1898,22 +1896,50 @@ function AdminTextInput({ label, value, onChangeText, keyboard, multiline }: { l
   );
 }
 
-function SideMenu({ visible, onClose, go, role, user, setRole, setCurrentUser }: { visible: boolean; onClose: () => void; go: (route: Route) => void; role: Role; user: Usuario | null; setRole: (role: Role) => void; setCurrentUser: (user: Usuario | null) => void }) {
-  const items: [Route, string, IconName][] = [["home", "Início", "home-outline"], ["categories", "Categorias", "grid-outline"], ["vehicleBrands", "Montadoras", "car-sport-outline"], ["products", "Produtos", "bag-outline"], ["launches", "Lançamentos", "star-outline"], ["promotions", "Promoções", "pricetag-outline"], ["contact", "Contatos", "headset-outline"], ["about", "Sobre a Briland", "business-outline"], ["privacy", "Privacidade", "shield-checkmark-outline"], ["accountDeletion", "Excluir cadastro", "person-remove-outline"]];
+function SideMenu({ visible, onClose, go, role, user, links, setRole, setCurrentUser }: { visible: boolean; onClose: () => void; go: (route: Route) => void; role: Role; user: Usuario | null; links: SocialLinks; setRole: (role: Role) => void; setCurrentUser: (user: Usuario | null) => void }) {
+  const sections: { title: string; items: [Route, string, IconName][] }[] = [
+    { title: "Catálogo", items: [["home", "Início", "home-outline"], ["categories", "Categorias", "grid-outline"], ["vehicleBrands", "Montadoras", "car-sport-outline"], ["products", "Produtos", "cube-outline"], ["launches", "Lançamentos", "star-outline"], ["promotions", "Promoções", "pricetag-outline"]] },
+    { title: "Atendimento", items: [["contact", "Contatos", "headset-outline"]] },
+    { title: "Briland", items: [["about", "Sobre a Briland", "information-circle-outline"]] },
+    { title: "Privacidade e conta", items: [["privacy", "Política de Privacidade", "shield-checkmark-outline"], ["accountDeletion", "Excluir cadastro", "trash-outline"]] }
+  ];
+  const accountAction = () => {
+    setRole("VISITANTE");
+    setCurrentUser(null);
+    go(role === "VISITANTE" ? "login" : "initial");
+  };
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.menuOverlay} onPress={onClose}><BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} /></Pressable>
       <View style={styles.sideMenu}>
-        <View style={styles.sideHeader}><Image source={logo} style={styles.sideLogo} resizeMode="contain" /></View>
+        <View style={styles.sideHeader}>
+          <View style={styles.sideBrandPlate}><Image source={logo} style={styles.sideLogo} resizeMode="contain" /></View>
+          <Pressable style={styles.sideClose} onPress={onClose}><Ionicons name="close" size={24} color={colors.navy} /></Pressable>
+        </View>
         <ScrollView style={styles.sideMenuScroll} contentContainerStyle={styles.sideMenuContent} showsVerticalScrollIndicator={false} bounces>
-          {user && <Text style={styles.sideUser}>{user.name} • {role}</Text>}
-          {items.map(([target, label, icon]) => {
-            const compact = target === "privacy";
-            return <Pressable key={label} style={[styles.sideItem, compact && styles.sideItemCompact]} onPress={() => go(target)}><Ionicons name={icon} size={compact ? 18 : 25} color={label === "Início" ? colors.yellow : compact ? colors.muted : colors.navy} /><Text style={[styles.sideLabel, label === "Início" && styles.yellowText, compact && styles.sideLabelCompact]}>{label}</Text></Pressable>;
-          })}
-          {isAdminRole(role) && <Pressable style={styles.sideItem} onPress={() => go("admin")}><Ionicons name="speedometer-outline" size={25} color={colors.navy} /><Text style={styles.sideLabel}>Painel admin</Text></Pressable>}
-          <Pressable style={styles.sideItem} onPress={() => { setRole("VISITANTE"); setCurrentUser(null); go(role === "VISITANTE" ? "login" : "initial"); }}><Ionicons name="log-in-outline" size={25} color={colors.navy} /><Text style={styles.sideLabel}>{role === "VISITANTE" ? "Login" : "Sair"}</Text></Pressable>
-          <View style={styles.sidePromo}><Text style={styles.sidePromoText}>Copyright Briland 2026. Todos os direitos reservados.</Text></View>
+          <View style={styles.sideTitleBlock}><Text style={styles.sideTitle}>Menu</Text><Text style={styles.sideSubtitle}>Acessos e informações</Text></View>
+          <View style={styles.sideAccountCard}>
+            <View style={styles.sideAccountIcon}><Ionicons name="person-outline" size={27} color={colors.navy} /></View>
+            <View style={styles.flex}><Text style={styles.sideAccountTitle}>{user?.name || "Acesse sua conta"}</Text>{user && <Text style={styles.sideAccountMeta}>{role}</Text>}</View>
+            <Pressable style={styles.sideAccountButton} onPress={accountAction}><Text style={styles.sideAccountButtonText}>{role === "VISITANTE" ? "Entrar" : "Sair"}</Text></Pressable>
+          </View>
+          {sections.map((section) => (
+            <View key={section.title} style={styles.sideSection}>
+              <Text style={styles.sideSectionTitle}>{section.title}</Text>
+              {section.items.map(([target, label, icon]) => {
+                const danger = target === "accountDeletion";
+                return <Pressable key={label} style={styles.sideItem} onPress={() => go(target)}><Ionicons name={icon} size={23} color={danger ? colors.red : colors.navy} /><Text style={[styles.sideLabel, danger && styles.sideLabelDanger]}>{label}</Text><Ionicons name="chevron-forward" size={20} color={danger ? colors.red : colors.navy} /></Pressable>;
+              })}
+            </View>
+          ))}
+          {isAdminRole(role) && <View style={styles.sideSection}><Text style={styles.sideSectionTitle}>Gestão</Text><Pressable style={styles.sideItem} onPress={() => go("admin")}><Ionicons name="speedometer-outline" size={23} color={colors.navy} /><Text style={styles.sideLabel}>Painel admin</Text><Ionicons name="chevron-forward" size={20} color={colors.navy} /></Pressable></View>}
+          <View style={styles.sideSocialDock}>
+            <Pressable style={styles.sideSocialIcon} onPress={() => Linking.openURL(links.instagram)}><Ionicons name="logo-instagram" size={24} color={colors.navy} /></Pressable>
+            <Pressable style={styles.sideSocialIcon} onPress={() => Linking.openURL(links.linkedin)}><Ionicons name="logo-linkedin" size={24} color={colors.navy} /></Pressable>
+            <Pressable style={styles.sideSocialIcon} onPress={() => Linking.openURL(links.whatsapp)}><Ionicons name="logo-whatsapp" size={24} color={colors.navy} /></Pressable>
+            <Pressable style={styles.sideSocialIcon} onPress={() => Linking.openURL(links.site)}><Ionicons name="globe-outline" size={24} color={colors.navy} /></Pressable>
+          </View>
+          <Text style={styles.sideCopyright}>© 2026 Briland. Todos os direitos reservados.</Text>
         </ScrollView>
       </View>
     </Modal>
@@ -1980,22 +2006,6 @@ function DarkInput({ icon, value, onChangeText, placeholder, secure }: { icon: I
 
 function Divider({ text, dark, compact }: { text: string; dark?: boolean; compact?: boolean }) {
   return <View style={[styles.divider, compact && styles.dividerCompact]}><View style={[styles.dividerLine, dark && styles.dividerLineDark]} /><Text style={[styles.dividerText, dark && styles.dividerTextDark]}>{text}</Text><View style={[styles.dividerLine, dark && styles.dividerLineDark]} /></View>;
-}
-
-function SocialDock({ links, appearance = defaultAppearance }: { links: SocialLinks; appearance?: CatalogAppearance }) {
-  const socialItems: [IconName, string, string][] = [
-    ["logo-instagram", "Instagram", links.instagram],
-    ["logo-linkedin", "LinkedIn", links.linkedin],
-    ["logo-whatsapp", "WhatsApp", links.whatsapp],
-    ["globe-outline", "Site", links.site]
-  ];
-  const position = appearance.dockPosition === "top" ? { top: 14, bottom: undefined } : { bottom: 14, top: undefined };
-  return <View style={[styles.socialDock, position, { height: appearance.dockHeight, borderRadius: appearance.dockHeight / 2, backgroundColor: hexToRgba(appearance.surfaceColor, appearance.dockOpacity / 100) }]}>{socialItems.map(([icon, label, url]) => <Pressable key={label} style={styles.socialItem} onPress={() => Linking.openURL(url)}><Ionicons name={icon} size={25} color={appearance.primaryColor} /><Text style={[styles.socialLabel, { color: appearance.textColor }]}>{label}</Text></Pressable>)}</View>;
-}
-
-function hexToRgba(hex: string, alpha: number) {
-  const safe = /^#[0-9a-f]{6}$/i.test(hex) ? hex.slice(1) : "FFFFFF";
-  return `rgba(${parseInt(safe.slice(0, 2), 16)},${parseInt(safe.slice(2, 4), 16)},${parseInt(safe.slice(4, 6), 16)},${alpha})`;
 }
 
 function AdminPanel({ title, children }: { title: string; children: React.ReactNode }) {
@@ -2215,9 +2225,6 @@ const styles = StyleSheet.create({
   aboutCard: { minHeight: 520, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, padding: 22, ...shadow },
   aboutText: { color: colors.muted, fontSize: 18, lineHeight: 27 },
   aboutBody: { color: colors.navy, fontSize: 16, lineHeight: 25, marginTop: 28 },
-  socialDock: { position: "absolute", left: 32, right: 32, bottom: 14, height: 62, borderRadius: 31, backgroundColor: "rgba(255,255,255,0.72)", borderWidth: 1, borderColor: "rgba(255,255,255,0.68)", flexDirection: "row", alignItems: "center", justifyContent: "space-around", ...shadow },
-  socialItem: { alignItems: "center", gap: 1 },
-  socialLabel: { color: colors.navy, fontSize: 10 },
   adminSafe: { flex: 1, backgroundColor: colors.navy },
   adminHeader: { height: 78, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   adminBack: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
@@ -2280,18 +2287,30 @@ const styles = StyleSheet.create({
   openLeadText: { color: colors.yellow, fontWeight: "900", marginTop: 10 },
   leadMessageFull: { color: colors.navy, fontSize: 15, lineHeight: 23, backgroundColor: colors.soft, borderRadius: 12, padding: 14 },
   menuOverlay: { flex: 1 },
-  sideMenu: { position: "absolute", left: 0, top: 0, bottom: 0, width: "82%", backgroundColor: colors.white },
-  sideHeader: { height: 145, backgroundColor: colors.navy, borderBottomRightRadius: 34, justifyContent: "center", paddingHorizontal: 26, borderBottomWidth: 4, borderBottomColor: colors.yellow },
-  sideLogo: { width: "100%", height: 60 },
+  sideMenu: { position: "absolute", left: 0, top: 0, bottom: 0, width: "90%", maxWidth: 430, backgroundColor: colors.white, borderTopRightRadius: 28, borderBottomRightRadius: 28, overflow: "hidden", ...shadow },
+  sideHeader: { height: 92, paddingHorizontal: 20, backgroundColor: colors.white, borderBottomWidth: 1, borderBottomColor: colors.line, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  sideBrandPlate: { width: 190, height: 58, borderRadius: 14, backgroundColor: colors.navy, paddingHorizontal: 20, justifyContent: "center" },
+  sideLogo: { width: "100%", height: 42 },
+  sideClose: { width: 42, height: 42, borderRadius: 21, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center", backgroundColor: colors.white },
   sideMenuScroll: { flex: 1 },
-  sideMenuContent: { paddingBottom: 24 },
-  sideUser: { marginHorizontal: 24, marginTop: 14, color: colors.muted, fontWeight: "800" },
-  sideItem: { height: 58, marginHorizontal: 24, borderBottomWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", gap: 18 },
-  sideLabel: { color: colors.navy, fontWeight: "900", fontSize: 17 },
-  sideItemCompact: { height: 42, marginHorizontal: 28, gap: 14 },
-  sideLabelCompact: { color: colors.muted, fontSize: 12, fontWeight: "700" },
-  sidePromo: { margin: 24, height: 126, borderRadius: 14, backgroundColor: colors.navy, borderBottomWidth: 4, borderBottomColor: colors.yellow, justifyContent: "flex-end", padding: 18 },
-  sidePromoText: { color: colors.white, fontWeight: "900", fontSize: 16, lineHeight: 23 },
+  sideMenuContent: { paddingBottom: 38 },
+  sideTitleBlock: { paddingHorizontal: 22, paddingTop: 22, paddingBottom: 16 },
+  sideTitle: { color: colors.navy, fontSize: 34, lineHeight: 40, fontWeight: "900" },
+  sideSubtitle: { color: colors.muted, fontSize: 15, marginTop: 2 },
+  sideAccountCard: { minHeight: 82, marginHorizontal: 20, marginBottom: 22, borderRadius: 18, borderWidth: 1, borderColor: colors.line, padding: 13, flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: colors.white },
+  sideAccountIcon: { width: 50, height: 50, borderRadius: 25, borderWidth: 1, borderColor: colors.line, alignItems: "center", justifyContent: "center" },
+  sideAccountTitle: { color: colors.navy, fontSize: 15, fontWeight: "800" },
+  sideAccountMeta: { color: colors.muted, fontSize: 10, marginTop: 2 },
+  sideAccountButton: { minWidth: 68, height: 40, borderRadius: 13, backgroundColor: colors.yellow, alignItems: "center", justifyContent: "center", paddingHorizontal: 13 },
+  sideAccountButtonText: { color: colors.navy, fontSize: 14, fontWeight: "900" },
+  sideSection: { marginHorizontal: 22, marginBottom: 18 },
+  sideSectionTitle: { color: colors.navy, fontSize: 16, fontWeight: "900", marginBottom: 4 },
+  sideItem: { minHeight: 58, borderBottomWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", gap: 15 },
+  sideLabel: { flex: 1, color: colors.navy, fontWeight: "600", fontSize: 16 },
+  sideLabelDanger: { color: colors.red },
+  sideSocialDock: { height: 60, marginHorizontal: 32, marginTop: 8, marginBottom: 18, borderRadius: 30, backgroundColor: colors.soft, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", justifyContent: "space-around", ...shadow },
+  sideSocialIcon: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
+  sideCopyright: { color: "#A7ADB8", fontSize: 10, textAlign: "center", fontWeight: "500", paddingHorizontal: 24 },
   emptyState: { minHeight: 120, borderRadius: 16, backgroundColor: colors.white, alignItems: "center", justifyContent: "center", gap: 10, padding: 18, ...shadow }
   ,
   sheetOverlay: { flex: 1, backgroundColor: "rgba(2,17,38,0.45)" },
