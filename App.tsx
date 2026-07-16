@@ -946,8 +946,29 @@ function ProductList({
   launch?: boolean;
 }) {
   const listRef = useRef<FlatList<Produto>>(null);
-  const restoredScroll = useRef(false);
-  const trackScroll = useRef(savedScrollOffset <= 0);
+  const latestScrollOffset = useRef(savedScrollOffset);
+  const restoringScroll = useRef(savedScrollOffset > 0);
+  useEffect(() => {
+    if (savedScrollOffset <= 0) {
+      restoringScroll.current = false;
+      return;
+    }
+
+    let active = true;
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      listRef.current?.scrollToOffset({ offset: savedScrollOffset, animated: false });
+      secondFrame = requestAnimationFrame(() => {
+        if (active) restoringScroll.current = false;
+      });
+    });
+
+    return () => {
+      active = false;
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame) cancelAnimationFrame(secondFrame);
+    };
+  }, []);
   const activeCategory = categoryFilter ? categoryById.get(categoryFilter)?.nome : "Todas categorias";
   const activeBrand = brandFilter ? brands.find((item) => item.id === brandFilter)?.nome : "Todas marcas";
   const activeMontadora = montadoraFilter ? montadoras.find((item) => item.id === montadoraFilter)?.nome : "Todas montadoras";
@@ -998,25 +1019,15 @@ function ProductList({
         windowSize={5}
         removeClippedSubviews={Platform.OS === "android"}
         contentOffset={{ x: 0, y: savedScrollOffset }}
-        onContentSizeChange={() => {
-          if (restoredScroll.current) return;
-          restoredScroll.current = true;
-          if (savedScrollOffset <= 0) {
-            trackScroll.current = true;
-            return;
-          }
-          requestAnimationFrame(() => {
-            listRef.current?.scrollToOffset({ offset: savedScrollOffset, animated: false });
-            requestAnimationFrame(() => { trackScroll.current = true; });
-          });
-        }}
         onScroll={(event) => {
-          if (trackScroll.current) onScrollOffset(Math.max(0, event.nativeEvent.contentOffset.y));
+          const offset = Math.max(0, event.nativeEvent.contentOffset.y);
+          latestScrollOffset.current = offset;
+          if (!restoringScroll.current) onScrollOffset(offset);
         }}
         scrollEventThrottle={32}
         showsVerticalScrollIndicator={false}
         renderItem={({ item: product }) => (
-          <Pressable style={[listMode === "grid" ? styles.productCard : styles.productListCard, { backgroundColor: appearance.surfaceColor, borderRadius: appearance.cardRadius }, promo && styles.promoCard, launch && styles.launchCard]} onPressIn={() => { const detailUrl = productImageUrl(product, "detail", imageVersion); if (detailUrl) void ExpoImage.prefetch(detailUrl); }} onPress={() => onOpen(product)}>
+          <Pressable style={[listMode === "grid" ? styles.productCard : styles.productListCard, { backgroundColor: appearance.surfaceColor, borderRadius: appearance.cardRadius }, promo && styles.promoCard, launch && styles.launchCard]} onPressIn={() => { const detailUrl = productImageUrl(product, "detail", imageVersion); if (detailUrl) void ExpoImage.prefetch(detailUrl); }} onPress={() => { onScrollOffset(latestScrollOffset.current); onOpen(product); }}>
             <View style={listMode === "grid" ? undefined : styles.listImageWrap}>
               {product.imagemPrincipal ? <Image recyclingKey={product.id} source={{ uri: productImageUrl(product, "card", imageVersion) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : listMode === "grid" ? <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" card /> : <View style={styles.productListPlaceholder}><Ionicons name="image-outline" size={28} color={colors.yellow} /></View>}
               {promo && <Ribbon text="PROMOÇÃO" color={colors.red} />}
