@@ -144,6 +144,7 @@ export default function App() {
   const [imageRefreshVersion, setImageRefreshVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const realtimeReloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const catalogScrollOffsets = useRef<Record<"products" | "promotions" | "launches", number>>({ products: 0, promotions: 0, launches: 0 });
   const appState = useRef(AppState.currentState);
   const [data, setData] = useState<AppData>({
     produtos: [],
@@ -569,6 +570,8 @@ export default function App() {
                   catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
                   imageVersion={imageRefreshVersion}
                   appearance={appearance}
+                  savedScrollOffset={catalogScrollOffsets.current.products}
+                  onScrollOffset={(offset) => { catalogScrollOffsets.current.products = offset; }}
                 />
               )}
               {route === "promotions" && (
@@ -603,6 +606,8 @@ export default function App() {
                   catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
                   imageVersion={imageRefreshVersion}
                   appearance={appearance}
+                  savedScrollOffset={catalogScrollOffsets.current.promotions}
+                  onScrollOffset={(offset) => { catalogScrollOffsets.current.promotions = offset; }}
                   promo
                 />
               )}
@@ -638,6 +643,8 @@ export default function App() {
                   catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
                   imageVersion={imageRefreshVersion}
                   appearance={appearance}
+                  savedScrollOffset={catalogScrollOffsets.current.launches}
+                  onScrollOffset={(offset) => { catalogScrollOffsets.current.launches = offset; }}
                   launch
                 />
               )}
@@ -898,6 +905,8 @@ function ProductList({
   catalogPdfUrl,
   imageVersion,
   appearance,
+  savedScrollOffset,
+  onScrollOffset,
   promo,
   launch
 }: {
@@ -931,9 +940,14 @@ function ProductList({
   catalogPdfUrl: string;
   imageVersion: number;
   appearance: CatalogAppearance;
+  savedScrollOffset: number;
+  onScrollOffset: (offset: number) => void;
   promo?: boolean;
   launch?: boolean;
 }) {
+  const listRef = useRef<FlatList<Produto>>(null);
+  const restoredScroll = useRef(false);
+  const trackScroll = useRef(savedScrollOffset <= 0);
   const activeCategory = categoryFilter ? categoryById.get(categoryFilter)?.nome : "Todas categorias";
   const activeBrand = brandFilter ? brands.find((item) => item.id === brandFilter)?.nome : "Todas marcas";
   const activeMontadora = montadoraFilter ? montadoras.find((item) => item.id === montadoraFilter)?.nome : "Todas montadoras";
@@ -969,6 +983,7 @@ function ProductList({
   return (
     <View style={[styles.screen, { backgroundColor: appearance.backgroundColor }]}>
       <FlatList
+        ref={listRef}
         key={listMode}
         data={products}
         keyExtractor={(product) => product.id}
@@ -982,6 +997,23 @@ function ProductList({
         updateCellsBatchingPeriod={50}
         windowSize={5}
         removeClippedSubviews={Platform.OS === "android"}
+        contentOffset={{ x: 0, y: savedScrollOffset }}
+        onContentSizeChange={() => {
+          if (restoredScroll.current) return;
+          restoredScroll.current = true;
+          if (savedScrollOffset <= 0) {
+            trackScroll.current = true;
+            return;
+          }
+          requestAnimationFrame(() => {
+            listRef.current?.scrollToOffset({ offset: savedScrollOffset, animated: false });
+            requestAnimationFrame(() => { trackScroll.current = true; });
+          });
+        }}
+        onScroll={(event) => {
+          if (trackScroll.current) onScrollOffset(Math.max(0, event.nativeEvent.contentOffset.y));
+        }}
+        scrollEventThrottle={32}
         showsVerticalScrollIndicator={false}
         renderItem={({ item: product }) => (
           <Pressable style={[listMode === "grid" ? styles.productCard : styles.productListCard, { backgroundColor: appearance.surfaceColor, borderRadius: appearance.cardRadius }, promo && styles.promoCard, launch && styles.launchCard]} onPressIn={() => { const detailUrl = productImageUrl(product, "detail", imageVersion); if (detailUrl) void ExpoImage.prefetch(detailUrl); }} onPress={() => onOpen(product)}>
