@@ -28,7 +28,7 @@ import {
   View
 } from "react-native";
 
-import { CONFIG_STORAGE_KEY, signInWithPassword, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRealtime, supabaseRpc, trackTelemetry, uploadStorageObject } from "./src/api/supabase";
+import { CONFIG_STORAGE_KEY, getPersistedSession, signInWithPassword, signOutSession, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRealtime, supabaseRpc, trackTelemetry, uploadStorageObject } from "./src/api/supabase";
 import { colors, defaultAbout, defaultSocialLinks } from "./src/config/brand";
 import type { AboutSettings, Aplicacao, AppData, CatalogAppearance, CatalogPdfRole, CatalogPdfSettings, Categoria, Lead, Marca, MediaSettings, ModeloVeiculo, Montadora, Permission, Produto, ProdutoModeloVeiculo, ProdutoModeloVeiculoView, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
 import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage, money, optimizedImageUrl, parseCsv, slugify } from "./src/utils/helpers";
@@ -233,13 +233,45 @@ export default function App() {
   };
 
   useEffect(() => {
-    void reload("VISITANTE", undefined);
+    let active = true;
+    const restoreLogin = async () => {
+      try {
+        const session = await getPersistedSession();
+        if (session) {
+          const users = await supabaseGet<Usuario>("User", `select=${userSelect}&authUserId=eq.${session.user.id}`, session.access_token);
+          const user = users[0];
+          if (user && user.status === "ACTIVE") {
+            if (!active) return;
+            setAuthToken(session.access_token);
+            setCurrentUser(user);
+            setRole(user.role);
+            await reload(user.role, session.access_token);
+            if (active && initialAppRoute() === "initial") setRoute(isAdminRole(user.role) ? "admin" : "products");
+            return;
+          }
+          await signOutSession();
+        }
+      } catch {
+        // Mantém a sessão armazenada para uma nova tentativa se a rede estiver indisponível.
+      }
+      if (active) await reload("VISITANTE", undefined);
+    };
+    void restoreLogin();
     void AsyncStorage.getItem(CONFIG_STORAGE_KEY).then((stored) => {
       if (!stored) return;
       const parsed = JSON.parse(stored) as { socialLinks?: SocialLinks; aboutSettings?: AboutSettings };
       if (parsed.socialLinks) setSocialLinks(parsed.socialLinks);
       if (parsed.aboutSettings) setAboutSettings({ ...defaultAbout, ...parsed.aboutSettings });
     }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    const { data: { subscription } } = supabaseRealtime.auth.onAuthStateChange((event, session) => {
+      if (event === "TOKEN_REFRESHED" && session) setAuthToken(session.access_token);
+      if (event === "SIGNED_OUT") setAuthToken(undefined);
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -265,14 +297,22 @@ export default function App() {
   }, [authToken, role]);
 
   useEffect(() => {
+    if (Platform.OS !== "web" && appState.current === "active") supabaseRealtime.auth.startAutoRefresh();
     const subscription = AppState.addEventListener("change", (nextState) => {
       const wasInBackground = appState.current === "inactive" || appState.current === "background";
       appState.current = nextState;
+      if (Platform.OS !== "web") {
+        if (nextState === "active") supabaseRealtime.auth.startAutoRefresh();
+        else supabaseRealtime.auth.stopAutoRefresh();
+      }
       if (wasInBackground && nextState === "active") {
         void reload(role, authToken, { silent: true });
       }
     });
-    return () => subscription.remove();
+    return () => {
+      subscription.remove();
+      if (Platform.OS !== "web") supabaseRealtime.auth.stopAutoRefresh();
+    };
   }, [authToken, role]);
 
   useEffect(() => {
@@ -411,9 +451,12 @@ export default function App() {
       const session = await signInWithPassword(email, password);
       const users = await supabaseGet<Usuario>("User", `select=${userSelect}&authUserId=eq.${session.user.id}`, session.access_token);
       const user = users[0];
-      if (!user) throw new Error("Usuário Auth sem vínculo na tabela User.");
-      if (user.status === "PENDING") throw new Error("Seu cadastro ainda está aguardando aprovação.");
-      if (user.status === "INACTIVE") throw new Error("Este usuário está inativo.");
+      if (!user || user.status !== "ACTIVE") {
+        await signOutSession();
+        if (!user) throw new Error("Usuário Auth sem vínculo na tabela User.");
+        if (user.status === "PENDING") throw new Error("Seu cadastro ainda está aguardando aprovação.");
+        throw new Error("Este usuário está inativo.");
+      }
       setAuthToken(session.access_token);
       setCurrentUser(user);
       setRole(user.role);
@@ -443,7 +486,12 @@ export default function App() {
     }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      await signOutSession();
+    } catch {
+      // A limpeza local abaixo mantém a saída funcional mesmo sem conexão.
+    }
     setAuthToken(undefined);
     setCurrentUser(null);
     setRole("VISITANTE");
@@ -506,6 +554,7 @@ export default function App() {
         p_reason: reason.trim() || "Solicitação enviada pelo aplicativo Briland."
       }, authToken);
       if (currentUser) {
+        try { await signOutSession(); } catch { /* A solicitação já foi registrada. */ }
         setAuthToken(undefined);
         setCurrentUser(null);
         setRole("VISITANTE");
@@ -672,7 +721,7 @@ export default function App() {
         </SafeAreaView>
         )}
       </PageTransition>
-      <SideMenu visible={menuOpen} role={role} user={currentUser} links={socialLinks} onClose={() => setMenuOpen(false)} go={openDirectCatalogRoute} setRole={setRole} setCurrentUser={(user) => { setCurrentUser(user); if (!user) setAuthToken(undefined); }} />
+      <SideMenu visible={menuOpen} role={role} user={currentUser} links={socialLinks} onClose={() => setMenuOpen(false)} go={openDirectCatalogRoute} onLogout={() => void logout()} />
     </View>
   );
 }
@@ -1896,7 +1945,7 @@ function AdminTextInput({ label, value, onChangeText, keyboard, multiline }: { l
   );
 }
 
-function SideMenu({ visible, onClose, go, role, user, links, setRole, setCurrentUser }: { visible: boolean; onClose: () => void; go: (route: Route) => void; role: Role; user: Usuario | null; links: SocialLinks; setRole: (role: Role) => void; setCurrentUser: (user: Usuario | null) => void }) {
+function SideMenu({ visible, onClose, go, onLogout, role, user, links }: { visible: boolean; onClose: () => void; go: (route: Route) => void; onLogout: () => void; role: Role; user: Usuario | null; links: SocialLinks }) {
   const sections: { title: string; items: [Route, string, IconName][] }[] = [
     { title: "Catálogo", items: [["home", "Início", "home-outline"], ["categories", "Categorias", "grid-outline"], ["vehicleBrands", "Montadoras", "car-sport-outline"], ["products", "Produtos", "cube-outline"], ["launches", "Lançamentos", "star-outline"], ["promotions", "Promoções", "pricetag-outline"]] },
     { title: "Atendimento", items: [["contact", "Contatos", "headset-outline"]] },
@@ -1904,9 +1953,8 @@ function SideMenu({ visible, onClose, go, role, user, links, setRole, setCurrent
     { title: "Privacidade e conta", items: [["privacy", "Política de Privacidade", "shield-checkmark-outline"], ["accountDeletion", "Excluir cadastro", "trash-outline"]] }
   ];
   const accountAction = () => {
-    setRole("VISITANTE");
-    setCurrentUser(null);
-    go(role === "VISITANTE" ? "login" : "initial");
+    if (role === "VISITANTE") go("login");
+    else onLogout();
   };
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>

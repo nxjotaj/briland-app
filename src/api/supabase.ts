@@ -1,4 +1,5 @@
 import type { AuthSession } from "../types/domain";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient } from "@supabase/supabase-js";
 
 export const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim() || "";
@@ -12,8 +13,9 @@ export const CONFIG_STORAGE_KEY = "briland-admin-config";
 
 export const supabaseRealtime = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
-    persistSession: false,
-    autoRefreshToken: false,
+    storage: AsyncStorage,
+    persistSession: true,
+    autoRefreshToken: true,
     detectSessionInUrl: false
   }
 });
@@ -127,14 +129,19 @@ export async function uploadStorageObject(uri: string, path: string, contentType
 }
 
 export async function signInWithPassword(email: string, password: string) {
-  const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-    method: "POST",
-    headers: {
-      apikey: SUPABASE_ANON_KEY,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ email, password })
-  });
-  if (!response.ok) throw new Error(await response.text());
-  return (await response.json()) as AuthSession;
+  const { data, error } = await supabaseRealtime.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  if (!data.session) throw new Error("O Supabase não retornou uma sessão válida.");
+  return data.session as AuthSession;
+}
+
+export async function getPersistedSession() {
+  const { data, error } = await supabaseRealtime.auth.getSession();
+  if (error) throw error;
+  return data.session as AuthSession | null;
+}
+
+export async function signOutSession() {
+  const { error } = await supabaseRealtime.auth.signOut({ scope: "local" });
+  if (error) throw error;
 }
