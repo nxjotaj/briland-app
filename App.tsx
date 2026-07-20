@@ -12,6 +12,7 @@ import {
   Alert,
   Animated,
   AppState,
+  Easing,
   FlatList,
   Linking,
   Modal,
@@ -38,6 +39,7 @@ type RegistrationRequest = { nome: string; empresa: string; telefone: string; em
 type CachedImageProps = ImageProps & { resizeMode?: ImageProps["contentFit"] };
 
 const logo = require("./assets/briland-logo.png");
+const loadingBlueprint = require("./assets/loading-automotive-blueprint.png");
 const PRIVACY_POLICY_URL = "https://briland-catalogo.vercel.app/privacidade.html";
 const ACCOUNT_DELETION_URL = "https://briland-catalogo.vercel.app/excluir-conta.html";
 function initialAppRoute(): Route {
@@ -144,6 +146,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [imageRefreshVersion, setImageRefreshVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const initialLoadCompleted = useRef(false);
   const realtimeReloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const catalogScrollOffsets = useRef<Record<"products" | "promotions" | "launches", number>>({ products: 0, promotions: 0, launches: 0 });
   const appState = useRef(AppState.currentState);
@@ -229,7 +232,14 @@ export default function App() {
         message
       }, token);
     } finally {
-      if (!options?.silent) setLoading(false);
+      if (!options?.silent) {
+        if (!initialLoadCompleted.current) {
+          const remainingIntroTime = Math.max(0, 1000 - (Date.now() - startedAt));
+          if (remainingIntroTime > 0) await new Promise((resolve) => setTimeout(resolve, remainingIntroTime));
+          initialLoadCompleted.current = true;
+        }
+        setLoading(false);
+      }
     }
   };
 
@@ -566,7 +576,7 @@ export default function App() {
 
   return (
     <View style={[styles.appRoot, { backgroundColor: appearance.backgroundColor }]}>
-      <StatusBar hidden={route === "initial"} style={route === "login" || route === "admin" ? "light" : "dark"} />
+      <StatusBar hidden={route === "initial" && !loading} style={loading || route === "login" || route === "admin" ? "light" : "dark"} />
       {loading && <LoadingOverlay />}
       <PageTransition key={pageTransitionKey}>
         {route === "initial" ? (
@@ -716,10 +726,53 @@ export default function App() {
 }
 
 function LoadingOverlay() {
+  const pulse = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 750, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 750, easing: Easing.in(Easing.quad), useNativeDriver: true })
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [pulse]);
+
   return (
-    <View style={styles.loadingOverlay}>
-      <ActivityIndicator size="large" color={colors.yellow} />
-      <Text style={styles.loadingText}>Carregando dados da Briland...</Text>
+    <View style={styles.loadingOverlay} accessibilityRole="progressbar" accessibilityLabel="Carregando o catálogo Briland">
+      <ExpoImage source={loadingBlueprint} style={StyleSheet.absoluteFillObject} contentFit="cover" />
+      <View style={styles.loadingCenter}>
+        <ExpoImage source={logo} style={styles.loadingLogo} contentFit="contain" />
+        <Text style={styles.loadingTitle}>Seu catálogo está a caminho</Text>
+        <Text style={styles.loadingText}>Carregando produtos e aplicações...</Text>
+      </View>
+
+      <View style={styles.loadingRoute} accessibilityElementsHidden>
+        <View style={styles.loadingRouteStart} />
+        <View style={styles.loadingRouteDown} />
+        <View style={styles.loadingRouteMiddle} />
+        <View style={styles.loadingRouteUp} />
+        <View style={styles.loadingRouteEnd} />
+        <Animated.View
+          style={[
+            styles.loadingRouteGlow,
+            {
+              opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.38, 0.9] }),
+              transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1.35] }) }]
+            }
+          ]}
+        />
+        <View style={styles.loadingRouteDot} />
+      </View>
+
+      <View style={styles.loadingFooter}>
+        <Text style={styles.loadingFooterText}>Produtos</Text>
+        <View style={styles.loadingFooterDot} />
+        <Text style={styles.loadingFooterText}>Aplicações</Text>
+        <View style={styles.loadingFooterDot} />
+        <Text style={styles.loadingFooterText}>Novidades</Text>
+      </View>
     </View>
   );
 }
@@ -2090,8 +2143,22 @@ const styles = StyleSheet.create({
   initialScreen: { flex: 1, justifyContent: "flex-end", backgroundColor: colors.soft, overflow: "hidden" },
   initialBackgroundImage: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, width: "100%", height: "100%", backgroundColor: colors.white },
   initialFallback: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0 },
-  loadingOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 30, backgroundColor: "rgba(2,17,38,0.82)", alignItems: "center", justifyContent: "center" },
-  loadingText: { color: colors.white, fontWeight: "800", marginTop: 14 },
+  loadingOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, zIndex: 30, overflow: "hidden", backgroundColor: "#021126", alignItems: "center" },
+  loadingCenter: { position: "absolute", top: "36%", left: 24, right: 24, alignItems: "center" },
+  loadingLogo: { width: 285, maxWidth: "86%", height: 92 },
+  loadingTitle: { color: colors.white, marginTop: 22, fontSize: 25, lineHeight: 31, fontWeight: "900", textAlign: "center", letterSpacing: -0.5 },
+  loadingText: { color: "#6784AC", marginTop: 13, fontSize: 16, lineHeight: 22, fontWeight: "500", textAlign: "center" },
+  loadingRoute: { position: "absolute", top: "66%", width: 330, maxWidth: "88%", height: 52 },
+  loadingRouteStart: { position: "absolute", left: 0, top: 15, width: "34%", height: 4, borderRadius: 4, backgroundColor: colors.yellow, shadowColor: colors.yellow, shadowOpacity: 0.75, shadowRadius: 7, elevation: 6 },
+  loadingRouteDown: { position: "absolute", left: "32%", top: 22, width: 34, height: 4, borderRadius: 4, backgroundColor: colors.yellow, transform: [{ rotate: "25deg" }] },
+  loadingRouteMiddle: { position: "absolute", left: "41%", top: 29, width: "23%", height: 4, borderRadius: 4, backgroundColor: colors.yellow },
+  loadingRouteUp: { position: "absolute", left: "62%", top: 22, width: 28, height: 4, borderRadius: 4, backgroundColor: colors.yellow, transform: [{ rotate: "-25deg" }] },
+  loadingRouteEnd: { position: "absolute", left: "69%", top: 15, right: 8, height: 4, borderRadius: 4, backgroundColor: colors.yellow, shadowColor: colors.yellow, shadowOpacity: 0.75, shadowRadius: 7, elevation: 6 },
+  loadingRouteGlow: { position: "absolute", right: -4, top: 7, width: 22, height: 22, borderRadius: 11, backgroundColor: colors.yellow, shadowColor: colors.yellow, shadowOpacity: 1, shadowRadius: 15, elevation: 10 },
+  loadingRouteDot: { position: "absolute", right: 0, top: 11, width: 14, height: 14, borderRadius: 7, borderWidth: 2, borderColor: colors.white, backgroundColor: colors.yellow },
+  loadingFooter: { position: "absolute", bottom: 48, left: 20, right: 20, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 13 },
+  loadingFooterText: { color: "#6784AC", fontSize: 14, fontWeight: "500" },
+  loadingFooterDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: colors.yellow },
   errorBanner: { backgroundColor: "#FFF4D6", borderBottomWidth: 1, borderColor: colors.yellow, padding: 12, gap: 8 },
   errorText: { color: colors.navy, fontSize: 12 },
   errorButton: { alignSelf: "flex-start", backgroundColor: colors.navy, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
