@@ -1176,9 +1176,23 @@ function productPermission(product: Produto, key: string, fallback = true) {
 }
 
 function ProductDetail({ product, role, category, brand, vehicleApplications, whatsappUrl, imageVersion, onQuote }: { product: Produto; role: Role; category?: Categoria; brand?: Marca; vehicleApplications: ProdutoModeloVeiculoView[]; whatsappUrl: string; imageVersion: number; onQuote: () => void }) {
-  const gallery = [product.imagemPrincipal, ...(product.imagensExtras ?? [])].filter(Boolean) as string[];
-  const cardImage = productImageUrl(product, "card", imageVersion);
+  const { width: windowWidth } = useWindowDimensions();
+  const [activeImage, setActiveImage] = useState(0);
+  const galleryRef = useRef<FlatList<string>>(null);
   const detailImage = productImageUrl(product, "detail", imageVersion);
+  const gallery = useMemo(() => Array.from(new Set([
+    detailImage,
+    ...(product.imagensExtras ?? []).map((url) => liveImageUrl(url, imageSize.productDetail, imageVersion))
+  ].filter(Boolean) as string[])), [detailImage, product.imagensExtras, imageVersion]);
+  const galleryWidth = Math.max(280, windowWidth - 40);
+  useEffect(() => {
+    setActiveImage(0);
+    galleryRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, [product.id]);
+  const selectImage = (index: number) => {
+    setActiveImage(index);
+    galleryRef.current?.scrollToOffset({ offset: index * galleryWidth, animated: true });
+  };
   const showBrand = productPermission(product, "marca", true);
   const showCa = productPermission(product, "ca", role !== "VISITANTE" && role !== "NAO_CLIENTE");
   const showManual = Boolean(product.manualPdf) && productPermission(product, "manualPdf", role !== "VISITANTE" && role !== "NAO_CLIENTE");
@@ -1188,11 +1202,31 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <View style={styles.detailMedia}>
-        {gallery[0] ? <View style={styles.detailImageStack}>
-          <Image recyclingKey={`${product.id}-card-detail`} source={{ uri: cardImage }} transition={0} style={styles.detailImage} resizeMode="contain" />
-          {detailImage !== cardImage && <Image recyclingKey={`${product.id}-high-detail`} source={{ uri: detailImage }} transition={140} style={[styles.detailImage, styles.detailImageOverlay]} resizeMode="contain" />}
-        </View> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Cadastre a imagem principal no painel admin" tall />}
-        <View style={styles.dotsOverlay}><View style={styles.dotActive} />{gallery.slice(1, 5).map((item) => <View key={item} style={styles.dotLight} />)}</View>
+        {gallery[0] ? <>
+          <FlatList
+            ref={galleryRef}
+            data={gallery}
+            horizontal
+            pagingEnabled
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator={false}
+            keyExtractor={(item, index) => `${index}-${item}`}
+            onMomentumScrollEnd={(event) => setActiveImage(Math.round(event.nativeEvent.contentOffset.x / galleryWidth))}
+            renderItem={({ item, index }) => (
+              <View style={[styles.detailGalleryPage, { width: galleryWidth }]}>
+                <Image recyclingKey={`${product.id}-detail-${index}`} source={{ uri: item }} transition={140} style={styles.detailImage} resizeMode="contain" />
+              </View>
+            )}
+          />
+          {gallery.length > 1 && <View style={styles.detailThumbnailBar}>
+            {gallery.slice(0, 6).map((item, index) => (
+              <Pressable key={`${index}-${item}`} style={[styles.detailThumbnailButton, activeImage === index && styles.detailThumbnailButtonActive]} onPress={() => selectImage(index)}>
+                <Image source={{ uri: liveImageUrl(index === 0 ? product.imagemPrincipal : product.imagensExtras?.[index - 1], imageSize.thumb, imageVersion) }} style={styles.detailThumbnail} resizeMode="contain" />
+              </Pressable>
+            ))}
+          </View>}
+          {gallery.length > 1 && <View style={styles.dotsOverlay}>{gallery.map((item, index) => <View key={`${index}-${item}`} style={activeImage === index ? styles.dotActive : styles.dotGalleryInactive} />)}</View>}
+        </> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Cadastre a imagem principal no painel admin" tall />}
       </View>
       <Text style={styles.smallYellow}>{product.codigoInterno || "Sem código"}</Text>
       <Text style={styles.detailTitle}>{product.nome}</Text>
@@ -2256,11 +2290,17 @@ const styles = StyleSheet.create({
   metaValue: { color: colors.navy, fontSize: 12, flexShrink: 1 },
   price: { color: colors.red, fontWeight: "900", fontSize: 16 },
   loginHint: { color: colors.yellow, fontWeight: "900", marginTop: 4 },
-  detailMedia: { height: 390, borderRadius: 22, overflow: "hidden", backgroundColor: colors.white, marginBottom: 20, ...shadow },
+  detailMedia: { height: 450, borderRadius: 22, overflow: "hidden", backgroundColor: colors.white, marginBottom: 20, ...shadow },
+  detailGalleryPage: { height: 375, backgroundColor: colors.white },
   detailImageStack: { flex: 1, backgroundColor: colors.white },
   detailImage: { width: "100%", height: "100%", backgroundColor: colors.white },
   detailImageOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, backgroundColor: "transparent" },
-  dotsOverlay: { position: "absolute", bottom: 22, alignSelf: "center", flexDirection: "row", gap: 8 },
+  detailThumbnailBar: { position: "absolute", left: 14, right: 14, bottom: 14, height: 58, flexDirection: "row", justifyContent: "center", gap: 8 },
+  detailThumbnailButton: { width: 58, height: 58, padding: 3, borderRadius: 10, borderWidth: 2, borderColor: colors.line, backgroundColor: colors.white, overflow: "hidden" },
+  detailThumbnailButtonActive: { borderColor: colors.yellow },
+  detailThumbnail: { width: "100%", height: "100%" },
+  dotsOverlay: { position: "absolute", bottom: 80, alignSelf: "center", flexDirection: "row", gap: 8 },
+  dotGalleryInactive: { width: 9, height: 9, borderRadius: 5, backgroundColor: "#C7CED8" },
   smallYellow: { color: colors.yellow, fontWeight: "900", marginBottom: 6 },
   detailTitle: { color: colors.navy, fontSize: 27, fontWeight: "900", lineHeight: 34 },
   statRow: { flexDirection: "row", gap: 12, marginVertical: 20 },
