@@ -20,6 +20,7 @@ import {
   Platform,
   Pressable,
   SafeAreaView,
+  Share,
   ScrollView,
   StyleSheet,
   Switch,
@@ -37,9 +38,17 @@ import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage
 type IconName = keyof typeof Ionicons.glyphMap;
 type RegistrationRequest = { nome: string; empresa: string; telefone: string; email: string; cnpj: string; observacoes: string; senha: string; confirmarSenha: string };
 type CachedImageProps = ImageProps & { resizeMode?: ImageProps["contentFit"] };
+type QuoteItems = Record<string, number>;
+type CatalogNotification = { id: string; type: "launch" | "promotion" | "availability"; title: string; message: string; productId: string; createdAt: string; read?: boolean };
 
 const logo = require("./assets/briland-logo.png");
 const loadingBlueprint = require("./assets/loading-automotive-blueprint.png");
+const QUOTE_STORAGE_KEY = "briland-quote-items";
+const FAVORITES_STORAGE_KEY = "briland-favorite-products";
+const VISIT_STORAGE_KEY = "briland-last-visit";
+const NOTIFICATION_STORAGE_KEY = "briland-catalog-notifications";
+const PRODUCT_SNAPSHOT_STORAGE_KEY = "briland-product-snapshot";
+const CATALOG_PUBLIC_URL = "https://briland-catalogo.vercel.app";
 const PRIVACY_POLICY_URL = "https://briland-catalogo.vercel.app/privacidade.html";
 const ACCOUNT_DELETION_URL = "https://briland-catalogo.vercel.app/excluir-conta.html";
 function initialAppRoute(): Route {
@@ -50,6 +59,21 @@ function initialAppRoute(): Route {
     if (action === "login") return "login";
   }
   return "initial";
+}
+
+function initialProductReference() {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    return new URL(window.location.href).searchParams.get("produto") || "";
+  }
+  return "";
+}
+
+function productPublicUrl(product: Produto) {
+  return `${CATALOG_PUBLIC_URL}/?produto=${encodeURIComponent(product.slug || product.id)}`;
+}
+
+function whatsappWithText(baseUrl: string, text: string) {
+  return `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}text=${encodeURIComponent(text)}`;
 }
 const defaultAppearance: CatalogAppearance = { version: 1, primaryColor: "#021126", accentColor: "#FCB900", backgroundColor: "#F4F6FA", surfaceColor: "#FFFFFF", textColor: "#021126", fontFamily: "system", cardRadius: 12, dockOpacity: 72, dockHeight: 62, dockPosition: "bottom", showProductCategory: true, showProductBrand: true, logoUrl: "" };
 function safeAppearance(value?: Partial<CatalogAppearance> | null): CatalogAppearance {
@@ -143,10 +167,16 @@ export default function App() {
   const [catalogPdfSettings, setCatalogPdfSettings] = useState<CatalogPdfSettings>({});
   const [aboutSettings, setAboutSettings] = useState<AboutSettings>(defaultAbout);
   const [appearance, setAppearance] = useState<CatalogAppearance>(defaultAppearance);
+  const [quoteItems, setQuoteItems] = useState<QuoteItems>({});
+  const [favoriteProductIds, setFavoriteProductIds] = useState<string[]>([]);
+  const [catalogNotifications, setCatalogNotifications] = useState<CatalogNotification[]>([]);
+  const [pendingProductReference, setPendingProductReference] = useState(initialProductReference);
   const [loading, setLoading] = useState(true);
   const [imageRefreshVersion, setImageRefreshVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const initialLoadCompleted = useRef(false);
+  const discoveryStartedAt = useRef(Date.now());
+  const lastSearchTelemetry = useRef("");
   const realtimeReloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const catalogScrollOffsets = useRef<Record<"products" | "promotions" | "launches", number>>({ products: 0, promotions: 0, launches: 0 });
   const appState = useRef(AppState.currentState);
@@ -347,6 +377,95 @@ export default function App() {
     }, authToken);
   }, [authToken, currentUser?.id, role, route]);
 
+  useEffect(() => {
+    void (async () => {
+      const [savedQuote, savedFavorites, lastVisit, savedNotifications] = await Promise.all([
+        AsyncStorage.getItem(QUOTE_STORAGE_KEY),
+        AsyncStorage.getItem(FAVORITES_STORAGE_KEY),
+        AsyncStorage.getItem(VISIT_STORAGE_KEY),
+        AsyncStorage.getItem(NOTIFICATION_STORAGE_KEY)
+      ]);
+      if (savedQuote) {
+        try { setQuoteItems(JSON.parse(savedQuote) as QuoteItems); } catch { /* ignora cache inválido */ }
+      }
+      if (savedFavorites) {
+        try { setFavoriteProductIds(JSON.parse(savedFavorites) as string[]); } catch { /* ignora cache inválido */ }
+      }
+      if (savedNotifications) {
+        try { setCatalogNotifications(JSON.parse(savedNotifications) as CatalogNotification[]); } catch { /* ignora cache inválido */ }
+      }
+      const now = Date.now();
+      const previous = lastVisit ? Number(lastVisit) : 0;
+      await AsyncStorage.setItem(VISIT_STORAGE_KEY, String(now));
+      void trackTelemetry({
+        eventType: "session_start",
+        screen: "app",
+        route,
+        userId: currentUser?.id ?? null,
+        userRole: role,
+        success: true,
+        metadata: { returning: previous > 0, daysSinceLastVisit: previous > 0 ? Math.round((now - previous) / 86400000) : null }
+      }, authToken);
+    })();
+
+    if (Platform.OS !== "web") {
+      void Linking.getInitialURL().then((url) => {
+        if (!url) return;
+        const match = url.match(/[?&]produto=([^&]+)/);
+        if (match?.[1]) setPendingProductReference(decodeURIComponent(match[1]));
+      });
+    }
+    const subscription = Linking.addEventListener("url", ({ url }) => {
+      const match = url.match(/[?&]produto=([^&]+)/);
+      if (match?.[1]) setPendingProductReference(decodeURIComponent(match[1]));
+    });
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
+    if (!data.produtos.length || !pendingProductReference) return;
+    const reference = pendingProductReference.toLowerCase();
+    const product = data.produtos.find((item) => [item.id, item.slug, item.codigoInterno].some((value) => String(value || "").toLowerCase() === reference));
+    if (!product) return;
+    setSelectedProduct(product);
+    setRoute("detail");
+    setPendingProductReference("");
+  }, [data.produtos, pendingProductReference]);
+
+  useEffect(() => {
+    if (!data.produtos.length) return;
+    void (async () => {
+      const previousRaw = await AsyncStorage.getItem(PRODUCT_SNAPSHOT_STORAGE_KEY);
+      const snapshot = Object.fromEntries(data.produtos.map((product) => [product.id, {
+        updatedAt: product.updatedAt,
+        estoque: product.estoque,
+        lancamento: product.lancamento,
+        promocao: product.promocao
+      }]));
+      await AsyncStorage.setItem(PRODUCT_SNAPSHOT_STORAGE_KEY, JSON.stringify(snapshot));
+      if (!previousRaw) return;
+      let previous: Record<string, { updatedAt?: string | null; estoque?: number | null; lancamento?: boolean | null; promocao?: boolean | null }> = {};
+      try { previous = JSON.parse(previousRaw); } catch { return; }
+      const additions: CatalogNotification[] = [];
+      for (const product of data.produtos) {
+        const before = previous[product.id];
+        if (!before && product.ativo !== false) {
+          additions.push({ id: `launch-${product.id}-${product.updatedAt}`, type: "launch", title: "Novo produto no catálogo", message: `${product.codigoInterno || ""} — ${product.nome}`, productId: product.id, createdAt: new Date().toISOString() });
+        } else if (before && !before.promocao && product.promocao) {
+          additions.push({ id: `promotion-${product.id}-${product.updatedAt}`, type: "promotion", title: "Produto em promoção", message: `${product.codigoInterno || ""} — ${product.nome}`, productId: product.id, createdAt: new Date().toISOString() });
+        } else if (before && before.estoque !== product.estoque) {
+          additions.push({ id: `availability-${product.id}-${product.updatedAt}`, type: "availability", title: "Disponibilidade atualizada", message: `${product.codigoInterno || ""} — ${product.nome}`, productId: product.id, createdAt: new Date().toISOString() });
+        }
+      }
+      if (!additions.length) return;
+      setCatalogNotifications((current) => {
+        const next = [...additions, ...current].slice(0, 50);
+        void AsyncStorage.setItem(NOTIFICATION_STORAGE_KEY, JSON.stringify(next));
+        return next;
+      });
+    })();
+  }, [data.produtos]);
+
   const saveAdminConfig = async (nextSocialLinks = socialLinks, nextMediaSettings = mediaSettings, nextAboutSettings = aboutSettings) => {
     setSocialLinks(nextSocialLinks);
     setMediaSettings(nextMediaSettings);
@@ -408,6 +527,30 @@ export default function App() {
     });
   }, [activeProducts, query, categoryFilter, brandFilter, montadoraFilter, modeloFilter, sortMode, categoryById, brandById, vehicleApplicationsByProduct]);
 
+  useEffect(() => {
+    const normalized = query.trim().toLowerCase();
+    if (normalized.length < 2) return;
+    const timer = setTimeout(() => {
+      const telemetryKey = `${normalized}:${filteredProducts.length}`;
+      if (lastSearchTelemetry.current === telemetryKey) return;
+      lastSearchTelemetry.current = telemetryKey;
+      void trackTelemetry({
+        eventType: filteredProducts.length ? "search_results" : "search_zero_results",
+        screen: "products",
+        route,
+        userId: currentUser?.id ?? null,
+        userRole: role,
+        success: true,
+        metadata: { query: normalized.slice(0, 80), resultCount: filteredProducts.length }
+      }, authToken);
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [authToken, currentUser?.id, filteredProducts.length, query, role, route]);
+
+  useEffect(() => {
+    if (route === "products" || route === "promotions" || route === "launches") discoveryStartedAt.current = Date.now();
+  }, [categoryFilter, brandFilter, montadoraFilter, modeloFilter, query, route]);
+
   const transitionTo = (next: Route) => {
     if (next === route) {
       setMenuOpen(false);
@@ -452,7 +595,61 @@ export default function App() {
 
   const openProduct = (product: Produto) => {
     setSelectedProduct(product);
+    void trackTelemetry({
+      eventType: "product_view",
+      screen: "detail",
+      route: "detail",
+      userId: currentUser?.id ?? null,
+      userRole: role,
+      durationMs: Date.now() - discoveryStartedAt.current,
+      success: true,
+      metadata: {
+        productId: product.id,
+        code: product.codigoInterno,
+        query: query.trim().slice(0, 80),
+        resultCount: filteredProducts.length,
+        categoryFilter,
+        montadoraFilter,
+        modeloFilter
+      }
+    }, authToken);
     go("detail");
+  };
+
+  const saveQuoteItems = (next: QuoteItems) => {
+    setQuoteItems(next);
+    void AsyncStorage.setItem(QUOTE_STORAGE_KEY, JSON.stringify(next));
+  };
+
+  const addToQuote = (product: Produto) => {
+    const next = { ...quoteItems, [product.id]: (quoteItems[product.id] || 0) + 1 };
+    saveQuoteItems(next);
+    void trackTelemetry({ eventType: "quote_start", screen: "detail", route: "detail", userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { productId: product.id, quantity: next[product.id] } }, authToken);
+    notify("Adicionado ao orçamento", `${product.codigoInterno || ""} — ${product.nome}`);
+  };
+
+  const toggleFavorite = (product: Produto) => {
+    const active = !favoriteProductIds.includes(product.id);
+    const next = active ? [...favoriteProductIds, product.id] : favoriteProductIds.filter((id) => id !== product.id);
+    setFavoriteProductIds(next);
+    void AsyncStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(next));
+    void trackTelemetry({ eventType: "favorite_toggle", screen: "detail", route: "detail", userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { productId: product.id, active } }, authToken);
+  };
+
+  const selectedVehicleText = [montadoraFilter ? montadoraById.get(montadoraFilter)?.nome : "", modeloFilter ? modeloById.get(modeloFilter)?.nome : ""].filter(Boolean).join(" ");
+
+  const openMissingProductHelp = (searchText: string) => {
+    void trackTelemetry({ eventType: "whatsapp_open", screen: "products", route, userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { source: "zero_results", query: searchText.trim().slice(0, 80) } }, authToken);
+    void Linking.openURL(whatsappWithText(socialLinks.whatsapp, `Olá! Não encontrei a peça que procuro no catálogo Briland.\n\nBusca realizada: ${searchText.trim() || "não informada"}\nVeículo selecionado: ${selectedVehicleText || "não informado"}`));
+  };
+
+  const trackVehicleFilter = (kind: "montadora" | "modelo", id: string | null) => {
+    discoveryStartedAt.current = Date.now();
+    void trackTelemetry({ eventType: "vehicle_filter", screen: "products", route, userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { kind, id } }, authToken);
+  };
+
+  const trackProductEvent = (eventType: string, metadata?: Record<string, unknown>) => {
+    void trackTelemetry({ eventType, screen: "detail", route: "detail", userId: currentUser?.id ?? null, userRole: role, success: true, metadata }, authToken);
   };
 
   const login = async (email: string, password: string) => {
@@ -532,6 +729,33 @@ export default function App() {
     }
   };
 
+  const quoteMessage = () => {
+    const lines = Object.entries(quoteItems).map(([productId, quantity]) => {
+      const product = data.produtos.find((item) => item.id === productId);
+      return product ? `• ${quantity}x ${product.codigoInterno || ""} — ${product.nome}` : "";
+    }).filter(Boolean);
+    return `Olá! Gostaria de solicitar um orçamento para:\n\n${lines.join("\n")}\n\nVeículo selecionado: ${selectedVehicleText || "não informado"}`;
+  };
+
+  const sendQuoteLead = async () => {
+    const firstProductId = Object.keys(quoteItems)[0] || null;
+    await createLead({ produtoId: firstProductId, mensagem: quoteMessage(), origem: "lista-orcamento" });
+    void trackTelemetry({ eventType: "quote_sent", screen: "quote", route: "quote", userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { channel: "lead", itemCount: Object.keys(quoteItems).length } }, authToken);
+  };
+
+  const sendQuoteWhatsapp = () => {
+    void trackTelemetry({ eventType: "quote_sent", screen: "quote", route: "quote", userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { channel: "whatsapp", itemCount: Object.keys(quoteItems).length } }, authToken);
+    void Linking.openURL(whatsappWithText(socialLinks.whatsapp, quoteMessage()));
+  };
+
+  const openNotification = (notification: CatalogNotification) => {
+    const next = catalogNotifications.map((item) => item.id === notification.id ? { ...item, read: true } : item);
+    setCatalogNotifications(next);
+    void AsyncStorage.setItem(NOTIFICATION_STORAGE_KEY, JSON.stringify(next));
+    const product = data.produtos.find((item) => item.id === notification.productId);
+    if (product) openProduct(product);
+  };
+
   const requestRegistration = async (payload: RegistrationRequest) => {
     try {
       await signUpRegistration(payload);
@@ -573,6 +797,8 @@ export default function App() {
       ? previousRoute
       : null;
   const pageTransitionKey = route === "detail" && retainedCatalogRoute ? retainedCatalogRoute : route;
+  const quoteCount = Object.values(quoteItems).reduce((total, quantity) => total + quantity, 0);
+  const unreadNotificationCount = catalogNotifications.filter((item) => !item.read).length;
 
   return (
     <View style={[styles.appRoot, { backgroundColor: appearance.backgroundColor }]}>
@@ -589,11 +815,11 @@ export default function App() {
             <AdminScreen role={role} data={data} active={adminTab} setActive={setAdminTab} onBack={() => go("home")} onLogout={logout} reload={() => reload(role, authToken)} authToken={authToken} socialLinks={socialLinks} setSocialLinks={(links) => void saveAdminConfig(links, mediaSettings, aboutSettings)} mediaSettings={mediaSettings} setMediaSettings={(settings) => void saveAdminConfig(socialLinks, settings, aboutSettings)} aboutSettings={aboutSettings} setAboutSettings={(settings) => void saveAdminConfig(socialLinks, mediaSettings, settings)} onAction={(text) => notify("Painel admin", text)} />
           ) : (
             <>
-              <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} whatsappUrl={socialLinks.whatsapp} appearance={appearance} />
+              <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} appearance={appearance} quoteCount={quoteCount} notificationCount={unreadNotificationCount} onQuote={() => go("quote")} onNotifications={() => go("notifications")} />
               {error && <ErrorBanner message={error} onRetry={reload} />}
               {route === "home" && <HomeScreen go={openDirectCatalogRoute} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""} imageVersion={imageRefreshVersion} />}
               {route === "categories" && <CategoriesScreen categories={data.categorias} imageVersion={imageRefreshVersion} onPick={(id) => { clearCatalogFilters(); setCategoryFilter(id); go("products"); }} />}
-              {route === "vehicleBrands" && <VehicleBrandsScreen montadoras={data.montadoras} applications={data.produtoModelosVeiculo} imageVersion={imageRefreshVersion} onPick={(id) => { clearCatalogFilters(); setMontadoraFilter(id); go("products"); }} />}
+              {route === "vehicleBrands" && <VehicleBrandsScreen montadoras={data.montadoras} applications={data.produtoModelosVeiculo} imageVersion={imageRefreshVersion} onPick={(id) => { clearCatalogFilters(); setMontadoraFilter(id); trackVehicleFilter("montadora", id); go("products"); }} />}
               {retainedCatalogRoute && (
                 <View style={styles.catalogStage}>
               {retainedCatalogRoute === "products" && (
@@ -628,8 +854,10 @@ export default function App() {
                   catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
                   imageVersion={imageRefreshVersion}
                   appearance={appearance}
-                  savedScrollOffset={catalogScrollOffsets.current.products}
-                  onScrollOffset={(offset) => { catalogScrollOffsets.current.products = offset; }}
+                   savedScrollOffset={catalogScrollOffsets.current.products}
+                   onScrollOffset={(offset) => { catalogScrollOffsets.current.products = offset; }}
+                   onMissingProduct={openMissingProductHelp}
+                   onVehicleFilterUsed={trackVehicleFilter}
                 />
               )}
               {retainedCatalogRoute === "promotions" && (
@@ -664,8 +892,10 @@ export default function App() {
                   catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
                   imageVersion={imageRefreshVersion}
                   appearance={appearance}
-                  savedScrollOffset={catalogScrollOffsets.current.promotions}
-                  onScrollOffset={(offset) => { catalogScrollOffsets.current.promotions = offset; }}
+                   savedScrollOffset={catalogScrollOffsets.current.promotions}
+                   onScrollOffset={(offset) => { catalogScrollOffsets.current.promotions = offset; }}
+                   onMissingProduct={openMissingProductHelp}
+                   onVehicleFilterUsed={trackVehicleFilter}
                   promo
                 />
               )}
@@ -701,16 +931,20 @@ export default function App() {
                   catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
                   imageVersion={imageRefreshVersion}
                   appearance={appearance}
-                  savedScrollOffset={catalogScrollOffsets.current.launches}
-                  onScrollOffset={(offset) => { catalogScrollOffsets.current.launches = offset; }}
+                   savedScrollOffset={catalogScrollOffsets.current.launches}
+                   onScrollOffset={(offset) => { catalogScrollOffsets.current.launches = offset; }}
+                   onMissingProduct={openMissingProductHelp}
+                   onVehicleFilterUsed={trackVehicleFilter}
                   launch
                 />
               )}
-              {route === "detail" && selectedProduct && <View style={[styles.detailOverlay, { backgroundColor: appearance.backgroundColor }]}><ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} imageVersion={imageRefreshVersion} onQuote={() => createLead({ produtoId: selectedProduct.id, mensagem: `Tenho interesse no produto ${selectedProduct.codigoInterno} - ${selectedProduct.nome}.`, origem: "produto" })} /></View>}
+              {route === "detail" && selectedProduct && <View style={[styles.detailOverlay, { backgroundColor: appearance.backgroundColor }]}><ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} imageVersion={imageRefreshVersion} selectedVehicle={selectedVehicleText} favorite={favoriteProductIds.includes(selectedProduct.id)} onFavorite={() => toggleFavorite(selectedProduct)} onQuote={() => addToQuote(selectedProduct)} onTrack={trackProductEvent} /></View>}
                 </View>
               )}
-              {route === "detail" && !retainedCatalogRoute && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} imageVersion={imageRefreshVersion} onQuote={() => createLead({ produtoId: selectedProduct.id, mensagem: `Tenho interesse no produto ${selectedProduct.codigoInterno} - ${selectedProduct.nome}.`, origem: "produto" })} />}
+              {route === "detail" && !retainedCatalogRoute && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} imageVersion={imageRefreshVersion} selectedVehicle={selectedVehicleText} favorite={favoriteProductIds.includes(selectedProduct.id)} onFavorite={() => toggleFavorite(selectedProduct)} onQuote={() => addToQuote(selectedProduct)} onTrack={trackProductEvent} />}
               {route === "contact" && <ContactScreen onSubmit={createLead} />}
+              {route === "quote" && <QuoteScreen products={data.produtos} items={quoteItems} onChange={(productId, quantity) => { const next = { ...quoteItems }; if (quantity <= 0) delete next[productId]; else next[productId] = quantity; saveQuoteItems(next); }} onSendLead={() => void sendQuoteLead()} onSendWhatsapp={sendQuoteWhatsapp} />}
+              {route === "notifications" && <NotificationsScreen notifications={catalogNotifications} products={data.produtos} onOpen={openNotification} />}
               {route === "about" && <AboutScreen settings={aboutSettings} />}
               {route === "privacy" && <PrivacyScreen />}
               {route === "accountDeletion" && <AccountDeletionScreen initialEmail={currentUser?.email || ""} onSubmit={requestAccountDeletion} />}
@@ -801,16 +1035,17 @@ function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => voi
   );
 }
 
-function Header({ back, onBack, onMenu, whatsappUrl, appearance }: { back?: boolean; onBack: () => void; onMenu: () => void; whatsappUrl: string; appearance: CatalogAppearance }) {
+function Header({ back, onBack, onMenu, appearance, quoteCount, notificationCount, onQuote, onNotifications }: { back?: boolean; onBack: () => void; onMenu: () => void; appearance: CatalogAppearance; quoteCount: number; notificationCount: number; onQuote: () => void; onNotifications: () => void }) {
   return (
     <View style={styles.header}>
       <Pressable style={styles.iconButton} onPress={back ? onBack : onMenu}>
         <Ionicons name={back ? "chevron-back" : "menu"} size={28} color={colors.navy} />
       </Pressable>
       <LogoPlate compact logoUrl={appearance.logoUrl} />
-      <Pressable style={styles.iconButton} onPress={() => Linking.openURL(whatsappUrl)}>
-        <Ionicons name="logo-whatsapp" size={25} color={colors.navy} />
-      </Pressable>
+      <View style={styles.headerActions}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Abrir notificações" style={styles.headerSmallButton} onPress={onNotifications}><Ionicons name="notifications-outline" size={23} color={colors.navy} />{notificationCount > 0 && <View style={styles.headerBadge}><Text style={styles.headerBadgeText}>{Math.min(notificationCount, 9)}</Text></View>}</Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Abrir lista de orçamento" style={styles.headerSmallButton} onPress={onQuote}><Ionicons name="document-text-outline" size={23} color={colors.navy} />{quoteCount > 0 && <View style={styles.headerBadge}><Text style={styles.headerBadgeText}>{Math.min(quoteCount, 9)}</Text></View>}</Pressable>
+      </View>
     </View>
   );
 }
@@ -1010,6 +1245,8 @@ function ProductList({
   appearance,
   savedScrollOffset,
   onScrollOffset,
+  onMissingProduct,
+  onVehicleFilterUsed,
   promo,
   launch
 }: {
@@ -1045,6 +1282,8 @@ function ProductList({
   appearance: CatalogAppearance;
   savedScrollOffset: number;
   onScrollOffset: (offset: number) => void;
+  onMissingProduct: (query: string) => void;
+  onVehicleFilterUsed: (kind: "montadora" | "modelo", id: string | null) => void;
   promo?: boolean;
   launch?: boolean;
 }) {
@@ -1084,6 +1323,18 @@ function ProductList({
         <View style={styles.searchBox}><Ionicons name="search" size={22} color={colors.navy} /><TextInput value={query} onChangeText={setQuery} placeholder="Buscar código, EAN, NCM ou descricao..." placeholderTextColor="#9BA0AA" style={styles.searchInput} /></View>
         <Pressable style={styles.filterButton} onPress={() => setFilterOpen(true)}><Ionicons name="filter" size={22} color={colors.navy} /><Text style={styles.filterText}>Filtros</Text></Pressable>
       </View>
+      {query.trim().length >= 2 && products.length > 0 && (
+        <View style={styles.searchSuggestions}>
+          <Text style={styles.suggestionLabel}>Sugestões</Text>
+          {products.slice(0, 4).map((product) => (
+            <Pressable key={product.id} style={styles.suggestionItem} onPress={() => onOpen(product)}>
+              <Ionicons name="search-outline" size={17} color={colors.navy} />
+              <View style={styles.flex}><Text style={styles.suggestionCode}>{product.codigoInterno}</Text><Text style={styles.suggestionName} numberOfLines={1}>{product.nome}</Text></View>
+              <Ionicons name="arrow-forward" size={17} color={colors.yellow} />
+            </Pressable>
+          ))}
+        </View>
+      )}
       {catalogPdfUrl ? <CatalogPdfButton url={catalogPdfUrl} /> : null}
       <View style={styles.chips}>
         <Chip text={activeCategory ?? "Categorias"} onPress={() => setFilterOpen(true)} />
@@ -1096,8 +1347,8 @@ function ProductList({
         <View style={styles.modelFilterPanel}>
           <Text style={styles.sheetLabel}>Modelo do veículo</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetOptions}>
-            <OptionPill label="Todos" selected={!modeloFilter} onPress={() => setModeloFilter(null)} />
-            {availableModels.map((item) => <OptionPill key={item.id} label={item.nome} selected={modeloFilter === item.id} onPress={() => setModeloFilter(item.id)} />)}
+            <OptionPill label="Todos" selected={!modeloFilter} onPress={() => { setModeloFilter(null); onVehicleFilterUsed("modelo", null); }} />
+            {availableModels.map((item) => <OptionPill key={item.id} label={item.nome} selected={modeloFilter === item.id} onPress={() => { setModeloFilter(item.id); onVehicleFilterUsed("modelo", item.id); }} />)}
           </ScrollView>
         </View>
       )}
@@ -1115,7 +1366,7 @@ function ProductList({
         columnWrapperStyle={listMode === "grid" ? styles.productColumns : undefined}
         contentContainerStyle={styles.contentWithDock}
         ListHeaderComponent={listHeader}
-        ListEmptyComponent={<EmptyState text="Nenhum produto encontrado com os filtros atuais." />}
+        ListEmptyComponent={<View style={styles.emptySearchCard}><Ionicons name="search-outline" size={38} color={colors.yellow} /><Text style={styles.emptySearchTitle}>Não encontramos essa peça</Text><Text style={styles.muted}>Revise o código ou fale com nossa equipe. Nós ajudamos a localizar a aplicação correta.</Text><Pressable style={styles.emptySearchButton} onPress={() => onMissingProduct(query)}><Ionicons name="logo-whatsapp" size={20} color={colors.white} /><Text style={styles.emptySearchButtonText}>Pedir ajuda pelo WhatsApp</Text></Pressable></View>}
         initialNumToRender={6}
         maxToRenderPerBatch={6}
         updateCellsBatchingPeriod={50}
@@ -1160,9 +1411,9 @@ function ProductList({
         brandFilter={brandFilter}
         setBrandFilter={setBrandFilter}
         montadoraFilter={montadoraFilter}
-        setMontadoraFilter={(id) => { setMontadoraFilter(id); setModeloFilter(null); }}
+        setMontadoraFilter={(id) => { setMontadoraFilter(id); setModeloFilter(null); onVehicleFilterUsed("montadora", id); }}
         modeloFilter={modeloFilter}
-        setModeloFilter={setModeloFilter}
+        setModeloFilter={(id) => { setModeloFilter(id); onVehicleFilterUsed("modelo", id); }}
         sortMode={sortMode}
         setSortMode={setSortMode}
       />
@@ -1175,9 +1426,10 @@ function productPermission(product: Produto, key: string, fallback = true) {
   return fallback;
 }
 
-function ProductDetail({ product, role, category, brand, vehicleApplications, whatsappUrl, imageVersion, onQuote }: { product: Produto; role: Role; category?: Categoria; brand?: Marca; vehicleApplications: ProdutoModeloVeiculoView[]; whatsappUrl: string; imageVersion: number; onQuote: () => void }) {
+function ProductDetail({ product, role, category, brand, vehicleApplications, whatsappUrl, imageVersion, selectedVehicle, favorite, onFavorite, onQuote, onTrack }: { product: Produto; role: Role; category?: Categoria; brand?: Marca; vehicleApplications: ProdutoModeloVeiculoView[]; whatsappUrl: string; imageVersion: number; selectedVehicle: string; favorite: boolean; onFavorite: () => void; onQuote: () => void; onTrack: (eventType: string, metadata?: Record<string, unknown>) => void }) {
   const { width: windowWidth } = useWindowDimensions();
   const [activeImage, setActiveImage] = useState(0);
+  const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
   const galleryRef = useRef<FlatList<string>>(null);
   const detailImage = productImageUrl(product, "detail", imageVersion);
   const gallery = useMemo(() => Array.from(new Set([
@@ -1192,6 +1444,17 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
   const selectImage = (index: number) => {
     setActiveImage(index);
     galleryRef.current?.scrollToOffset({ offset: index * galleryWidth, animated: true });
+    onTrack("gallery_interaction", { productId: product.id, action: "thumbnail", imageIndex: index });
+  };
+  const openWhatsApp = () => {
+    onTrack("whatsapp_open", { productId: product.id, source: "product_detail", selectedVehicle: selectedVehicle || null });
+    void Linking.openURL(whatsappWithText(whatsappUrl, `Olá! Tenho interesse neste produto Briland:\n\n${product.codigoInterno || "Sem código"} — ${product.nome}\nVeículo selecionado: ${selectedVehicle || "não informado"}\n${productPublicUrl(product)}`));
+  };
+  const shareProduct = async () => {
+    const url = productPublicUrl(product);
+    const image = product.imagemPrincipal ? `\nFoto: ${product.imagemPrincipal}` : "";
+    await Share.share({ title: `${product.codigoInterno || ""} — ${product.nome}`, message: `${product.codigoInterno || ""} — ${product.nome}\n${url}${image}`, url });
+    onTrack("product_share", { productId: product.id, code: product.codigoInterno });
   };
   const showBrand = productPermission(product, "marca", true);
   const showCa = productPermission(product, "ca", role !== "VISITANTE" && role !== "NAO_CLIENTE");
@@ -1199,7 +1462,7 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
   const showVehicleApplications = vehicleApplications.length > 0 && productPermission(product, "aplicacoesVeiculo", true);
   const showQuote = productPermission(product, "botaoOrcamento", role !== "VISITANTE");
   const showWhatsApp = productPermission(product, "botaoWhatsApp", role !== "VISITANTE");
-  return (
+  return (<>
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <View style={styles.detailMedia}>
         {gallery[0] ? <>
@@ -1211,10 +1474,17 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
             nestedScrollEnabled
             showsHorizontalScrollIndicator={false}
             keyExtractor={(item, index) => `${index}-${item}`}
-            onMomentumScrollEnd={(event) => setActiveImage(Math.round(event.nativeEvent.contentOffset.x / galleryWidth))}
+            onMomentumScrollEnd={(event) => {
+              const index = Math.round(event.nativeEvent.contentOffset.x / galleryWidth);
+              setActiveImage(index);
+              onTrack("gallery_interaction", { productId: product.id, action: "swipe", imageIndex: index });
+            }}
             renderItem={({ item, index }) => (
               <View style={[styles.detailGalleryPage, { width: galleryWidth }]}>
-                <Image recyclingKey={`${product.id}-detail-${index}`} source={{ uri: item }} transition={140} style={styles.detailImage} resizeMode="contain" />
+                <Pressable accessibilityRole="button" accessibilityLabel={`Ampliar imagem ${index + 1} de ${gallery.length}`} style={styles.detailImagePressable} onPress={() => { setFullscreenImage(item); onTrack("gallery_interaction", { productId: product.id, action: "fullscreen", imageIndex: index }); }}>
+                  <Image recyclingKey={`${product.id}-detail-${index}`} source={{ uri: item }} transition={140} style={styles.detailImage} resizeMode="contain" />
+                  <View style={styles.zoomHint}><Ionicons name="expand-outline" size={18} color={colors.navy} /><Text style={styles.zoomHintText}>Ampliar</Text></View>
+                </Pressable>
               </View>
             )}
           />
@@ -1229,7 +1499,7 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
         </> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Cadastre a imagem principal no painel admin" tall />}
       </View>
       <Text style={styles.smallYellow}>{product.codigoInterno || "Sem código"}</Text>
-      <Text style={styles.detailTitle}>{product.nome}</Text>
+      <View style={styles.detailTitleRow}><Text style={[styles.detailTitle, styles.flex]}>{product.nome}</Text><Pressable accessibilityRole="button" accessibilityLabel={favorite ? "Remover dos favoritos" : "Adicionar aos favoritos"} style={styles.shareButton} onPress={onFavorite}><Ionicons name={favorite ? "heart" : "heart-outline"} size={22} color={favorite ? colors.red : colors.navy} /></Pressable><Pressable accessibilityRole="button" accessibilityLabel="Compartilhar produto" style={styles.shareButton} onPress={() => void shareProduct()}><Ionicons name="share-social-outline" size={22} color={colors.navy} /></Pressable></View>
       <Text style={styles.muted}>{product.descricaoCurta || "Produto cadastrado no catálogo Briland."}</Text>
       <View style={styles.statRow}>
         <InfoCard icon="document-text-outline" label="Preço" value={role === "VISITANTE" ? "Login requerido" : money(product.preco)} />
@@ -1266,11 +1536,21 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
         <Text style={styles.detailText}>{product.observacaoComercial}</Text>
       </Accordion>
       <View style={styles.actionRow}>
-        {showQuote && <Pressable style={styles.yellowButton} onPress={onQuote}><Ionicons name="document-text-outline" size={20} color={colors.navy} /><Text style={styles.yellowButtonText}>Solicitar orçamento</Text></Pressable>}
-        {showWhatsApp && <Pressable style={styles.whatsButton} onPress={() => Linking.openURL(`${whatsappUrl}${whatsappUrl.includes("?") ? "&" : "?"}text=${encodeURIComponent(`Tenho interesse no produto ${product.codigoInterno} - ${product.nome}`)}`)}><Ionicons name="logo-whatsapp" size={24} color={colors.green} /></Pressable>}
+        {showQuote && <Pressable accessibilityRole="button" accessibilityLabel="Adicionar produto ao orçamento" style={styles.yellowButton} onPress={onQuote}><Ionicons name="document-text-outline" size={20} color={colors.navy} /><Text style={styles.yellowButtonText}>Adicionar ao orçamento</Text></Pressable>}
+        {showWhatsApp && <Pressable style={styles.whatsButton} onPress={openWhatsApp}><Ionicons name="logo-whatsapp" size={24} color={colors.green} /></Pressable>}
       </View>
     </ScrollView>
-  );
+    <Modal visible={Boolean(fullscreenImage)} animationType="fade" transparent={false} onRequestClose={() => setFullscreenImage(null)}>
+      <View style={styles.fullscreenGallery}>
+        <StatusBar style="light" />
+        <Pressable style={styles.fullscreenClose} onPress={() => setFullscreenImage(null)}><Ionicons name="close" size={28} color={colors.white} /></Pressable>
+        <ScrollView style={styles.fullscreenZoom} contentContainerStyle={styles.fullscreenZoomContent} minimumZoomScale={1} maximumZoomScale={4} bouncesZoom>
+          {fullscreenImage && <Image source={{ uri: fullscreenImage }} style={{ width: windowWidth, height: "100%" }} resizeMode="contain" />}
+        </ScrollView>
+        <Text style={styles.fullscreenHint}>Use dois dedos para ampliar</Text>
+      </View>
+    </Modal>
+  </>);
 }
 
 function FilterSheet({
@@ -1516,6 +1796,44 @@ function AboutScreen({ settings }: { settings: AboutSettings }) {
     </ScrollView>
   );
 }
+
+function QuoteScreen({ products, items, onChange, onSendLead, onSendWhatsapp }: { products: Produto[]; items: QuoteItems; onChange: (productId: string, quantity: number) => void; onSendLead: () => void; onSendWhatsapp: () => void }) {
+  const rows = Object.entries(items).map(([productId, quantity]) => ({ product: products.find((item) => item.id === productId), quantity })).filter((item): item is { product: Produto; quantity: number } => Boolean(item.product));
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
+      <PageTitle title="Lista de orçamento" subtitle="Revise os produtos, ajuste as quantidades e envie tudo de uma vez." />
+      {rows.length === 0 ? <View style={styles.emptySearchCard}><Ionicons name="document-text-outline" size={40} color={colors.yellow} /><Text style={styles.emptySearchTitle}>Sua lista está vazia</Text><Text style={styles.muted}>Abra um produto e toque em “Adicionar ao orçamento”.</Text></View> : <>
+        {rows.map(({ product, quantity }) => (
+          <View key={product.id} style={styles.quoteItem}>
+            <Image source={{ uri: productImageUrl(product, "thumb", 0) }} style={styles.quoteImage} resizeMode="contain" />
+            <View style={styles.flex}><Text style={styles.productCode}>{product.codigoInterno}</Text><Text style={styles.quoteName} numberOfLines={2}>{product.nome}</Text><Text style={styles.mutedSmall}>{money(product.preco)}</Text></View>
+            <View style={styles.quantityControl}><Pressable style={styles.quantityButton} onPress={() => onChange(product.id, quantity - 1)}><Ionicons name={quantity === 1 ? "trash-outline" : "remove"} size={18} color={colors.navy} /></Pressable><Text style={styles.quantityText}>{quantity}</Text><Pressable style={styles.quantityButton} onPress={() => onChange(product.id, quantity + 1)}><Ionicons name="add" size={18} color={colors.navy} /></Pressable></View>
+          </View>
+        ))}
+        <View style={styles.quoteSummary}><Text style={styles.quoteSummaryTitle}>{rows.length} produto(s) na solicitação</Text><Text style={styles.muted}>As quantidades serão enviadas junto com os códigos dos produtos.</Text></View>
+        <Pressable style={styles.yellowButton} onPress={onSendLead}><Ionicons name="send-outline" size={20} color={colors.navy} /><Text style={styles.yellowButtonText}>Enviar solicitação</Text></Pressable>
+        <Pressable style={styles.quoteWhatsappButton} onPress={onSendWhatsapp}><Ionicons name="logo-whatsapp" size={22} color={colors.white} /><Text style={styles.quoteWhatsappText}>Enviar pelo WhatsApp</Text></Pressable>
+      </>}
+    </ScrollView>
+  );
+}
+
+function NotificationsScreen({ notifications, products, onOpen }: { notifications: CatalogNotification[]; products: Produto[]; onOpen: (notification: CatalogNotification) => void }) {
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
+      <PageTitle title="Novidades para você" subtitle="Novos produtos, promoções e atualizações de disponibilidade." />
+      {notifications.length === 0 ? <View style={styles.emptySearchCard}><Ionicons name="notifications-outline" size={40} color={colors.yellow} /><Text style={styles.emptySearchTitle}>Tudo em dia</Text><Text style={styles.muted}>As próximas novidades do catálogo aparecerão aqui.</Text></View> : notifications.map((notification) => {
+        const product = products.find((item) => item.id === notification.productId);
+        return <Pressable key={notification.id} style={[styles.notificationItem, !notification.read && styles.notificationUnread]} onPress={() => onOpen(notification)}>
+          <View style={styles.notificationIcon}><Ionicons name={notification.type === "promotion" ? "pricetag-outline" : notification.type === "availability" ? "cube-outline" : "sparkles-outline"} size={22} color={colors.navy} /></View>
+          <View style={styles.flex}><Text style={styles.notificationTitle}>{notification.title}</Text><Text style={styles.muted}>{notification.message}</Text>{product && <Text style={styles.notificationLink}>Ver produto</Text>}</View>
+          {!notification.read && <View style={styles.notificationDot} />}
+        </Pressable>;
+      })}
+    </ScrollView>
+  );
+}
+
 function AdminScreen({ role, data, active, setActive, onBack, onLogout, reload, authToken, socialLinks, setSocialLinks, mediaSettings, setMediaSettings, aboutSettings, setAboutSettings, onAction }: { role: Role; data: AppData; active: string; setActive: (tab: string) => void; onBack: () => void; onLogout: () => void; reload: () => void; authToken?: string; socialLinks: SocialLinks; setSocialLinks: (links: SocialLinks) => void; mediaSettings: MediaSettings; setMediaSettings: (settings: MediaSettings) => void; aboutSettings: AboutSettings; setAboutSettings: (settings: AboutSettings) => void; onAction: (message: string) => void }) {
   const tabs = isMasterRole(role)
     ? ["Dashboard", "Produtos", "Categorias", "Marcas", "Aplicações", "Usuários", "Permissões", "Leads", "Mídia", "Links", "Conteúdo"]
@@ -2198,7 +2516,7 @@ const styles = StyleSheet.create({
   errorButton: { alignSelf: "flex-start", backgroundColor: colors.navy, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
   errorButtonText: { color: colors.white, fontWeight: "800", fontSize: 12 },
   logoPlate: { width: "100%", height: 76, borderRadius: 8, backgroundColor: colors.navy, paddingHorizontal: 26, justifyContent: "center", ...shadow },
-  logoPlateCompact: { width: 220, height: 70 },
+  logoPlateCompact: { width: 190, height: 70 },
   logo: { width: "100%", height: "100%" },
   tagline: { marginVertical: 22, fontSize: 21, color: colors.ink },
   bold: { fontWeight: "800", color: colors.navy },
@@ -2223,6 +2541,10 @@ const styles = StyleSheet.create({
   secondaryText: { color: colors.navy, fontWeight: "800", fontSize: 18 },
   header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: colors.soft },
   iconButton: { width: 48, height: 48, alignItems: "center", justifyContent: "center" },
+  headerActions: { width: 82, flexDirection: "row", justifyContent: "flex-end", gap: 2 },
+  headerSmallButton: { width: 40, height: 44, alignItems: "center", justifyContent: "center" },
+  headerBadge: { position: "absolute", right: 1, top: 2, minWidth: 17, height: 17, paddingHorizontal: 4, borderRadius: 9, backgroundColor: colors.yellow, alignItems: "center", justifyContent: "center" },
+  headerBadgeText: { color: colors.navy, fontSize: 10, fontWeight: "900" },
   heroCard: { height: 285, overflow: "hidden", borderRadius: 25, backgroundColor: colors.white, ...shadow },
   heroImage: { width: "100%", height: "100%" },
   heroCta: { position: "absolute", right: 18, bottom: 20, borderRadius: 28, backgroundColor: colors.yellow, paddingVertical: 13, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", gap: 10 },
@@ -2259,6 +2581,15 @@ const styles = StyleSheet.create({
   vehicleBrandName: { color: colors.navy, fontSize: 19, lineHeight: 23, fontWeight: "900", marginBottom: 6 },
   vehicleBrandArrow: { position: "absolute", right: 14, bottom: 14 },
   searchRow: { flexDirection: "row", gap: 12 },
+  searchSuggestions: { marginTop: 10, borderRadius: 15, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.white, overflow: "hidden" },
+  suggestionLabel: { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 7, color: colors.muted, fontSize: 11, fontWeight: "900", textTransform: "uppercase" },
+  suggestionItem: { minHeight: 52, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 10, borderTopWidth: 1, borderTopColor: colors.line },
+  suggestionCode: { color: colors.navy, fontSize: 12, fontWeight: "900" },
+  suggestionName: { color: colors.muted, fontSize: 12 },
+  emptySearchCard: { marginTop: 22, padding: 26, borderRadius: 20, backgroundColor: colors.white, alignItems: "center", gap: 12, ...shadow },
+  emptySearchTitle: { color: colors.navy, fontSize: 20, fontWeight: "900", textAlign: "center" },
+  emptySearchButton: { minHeight: 50, marginTop: 8, paddingHorizontal: 18, borderRadius: 13, backgroundColor: colors.green, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9 },
+  emptySearchButtonText: { color: colors.white, fontWeight: "900" },
   searchBox: { flex: 1, height: 58, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 15, flexDirection: "row", alignItems: "center", gap: 10, ...shadow },
   searchInput: { flex: 1, fontSize: 15, color: colors.navy },
   filterButton: { height: 58, paddingHorizontal: 14, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", gap: 8, ...shadow },
@@ -2292,6 +2623,7 @@ const styles = StyleSheet.create({
   loginHint: { color: colors.yellow, fontWeight: "900", marginTop: 4 },
   detailMedia: { height: 450, borderRadius: 22, overflow: "hidden", backgroundColor: colors.white, marginBottom: 20, ...shadow },
   detailGalleryPage: { height: 375, backgroundColor: colors.white },
+  detailImagePressable: { flex: 1 },
   detailImageStack: { flex: 1, backgroundColor: colors.white },
   detailImage: { width: "100%", height: "100%", backgroundColor: colors.white },
   detailImageOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, backgroundColor: "transparent" },
@@ -2301,8 +2633,17 @@ const styles = StyleSheet.create({
   detailThumbnail: { width: "100%", height: "100%" },
   dotsOverlay: { position: "absolute", bottom: 80, alignSelf: "center", flexDirection: "row", gap: 8 },
   dotGalleryInactive: { width: 9, height: 9, borderRadius: 5, backgroundColor: "#C7CED8" },
+  zoomHint: { position: "absolute", right: 14, top: 14, minHeight: 34, paddingHorizontal: 11, borderRadius: 17, backgroundColor: "rgba(255,255,255,0.92)", flexDirection: "row", alignItems: "center", gap: 6, ...shadow },
+  zoomHintText: { color: colors.navy, fontSize: 11, fontWeight: "900" },
   smallYellow: { color: colors.yellow, fontWeight: "900", marginBottom: 6 },
   detailTitle: { color: colors.navy, fontSize: 27, fontWeight: "900", lineHeight: 34 },
+  detailTitleRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  shareButton: { width: 46, height: 46, borderRadius: 23, backgroundColor: colors.white, alignItems: "center", justifyContent: "center", ...shadow },
+  fullscreenGallery: { flex: 1, backgroundColor: "#010916" },
+  fullscreenClose: { position: "absolute", zIndex: 4, right: 18, top: 52, width: 46, height: 46, borderRadius: 23, backgroundColor: "rgba(255,255,255,0.14)", alignItems: "center", justifyContent: "center" },
+  fullscreenZoom: { flex: 1 },
+  fullscreenZoomContent: { flexGrow: 1, alignItems: "center", justifyContent: "center" },
+  fullscreenHint: { position: "absolute", bottom: 34, alignSelf: "center", color: colors.white, fontSize: 13, fontWeight: "800", backgroundColor: "rgba(0,0,0,0.45)", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16 },
   statRow: { flexDirection: "row", gap: 12, marginVertical: 20 },
   infoCard: { flex: 1, minHeight: 88, borderRadius: 14, backgroundColor: colors.white, padding: 14, flexDirection: "row", alignItems: "center", gap: 12, ...shadow },
   infoCardContent: { flex: 1, minWidth: 0 },
@@ -2322,6 +2663,22 @@ const styles = StyleSheet.create({
   yellowButton: { minHeight: 58, borderRadius: 13, backgroundColor: colors.yellow, flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
   yellowButtonText: { color: colors.navy, fontWeight: "900", fontSize: 17 },
   whatsButton: { width: 58, height: 58, borderRadius: 14, backgroundColor: colors.white, alignItems: "center", justifyContent: "center", ...shadow },
+  quoteItem: { minHeight: 110, marginBottom: 12, padding: 12, borderRadius: 16, backgroundColor: colors.white, flexDirection: "row", alignItems: "center", gap: 12, ...shadow },
+  quoteImage: { width: 76, height: 76 },
+  quoteName: { color: colors.navy, fontSize: 14, lineHeight: 18, fontWeight: "800" },
+  quantityControl: { flexDirection: "row", alignItems: "center", borderRadius: 12, borderWidth: 1, borderColor: colors.line, overflow: "hidden" },
+  quantityButton: { width: 34, height: 38, alignItems: "center", justifyContent: "center", backgroundColor: colors.soft },
+  quantityText: { minWidth: 30, textAlign: "center", color: colors.navy, fontWeight: "900" },
+  quoteSummary: { marginVertical: 14, padding: 18, borderRadius: 16, backgroundColor: colors.white, gap: 5 },
+  quoteSummaryTitle: { color: colors.navy, fontSize: 17, fontWeight: "900" },
+  quoteWhatsappButton: { minHeight: 58, marginTop: 12, borderRadius: 13, backgroundColor: colors.green, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
+  quoteWhatsappText: { color: colors.white, fontWeight: "900" },
+  notificationItem: { minHeight: 92, marginBottom: 10, padding: 15, borderRadius: 16, backgroundColor: colors.white, flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: colors.line },
+  notificationUnread: { borderColor: colors.yellow, backgroundColor: "#FFFCF0" },
+  notificationIcon: { width: 46, height: 46, borderRadius: 15, backgroundColor: colors.yellow, alignItems: "center", justifyContent: "center" },
+  notificationTitle: { color: colors.navy, fontSize: 14, fontWeight: "900" },
+  notificationLink: { color: colors.navy, marginTop: 5, fontSize: 12, fontWeight: "900" },
+  notificationDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.yellow },
   formCard: { backgroundColor: colors.white, borderRadius: 18, padding: 18, ...shadow },
   label: { color: colors.navy, fontWeight: "800", fontSize: 15, marginBottom: 8 },
   required: { color: colors.red },

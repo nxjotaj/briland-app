@@ -7,6 +7,8 @@ export type Route =
   | "promotions"
   | "launches"
   | "contact"
+  | "quote"
+  | "notifications"
   | "detail"
   | "login"
   | "signup"

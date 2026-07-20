@@ -164,6 +164,24 @@ function canShowField(map: Record<string, boolean>, key: string, fallback = true
   return key in map ? Boolean(map[key]) : fallback;
 }
 
+function productCompleteness(product: Produto, data: AppData) {
+  const checks = [
+    ["Imagem principal", Boolean(product.imagemPrincipal)],
+    ["Imagens extras", Boolean(product.imagensExtras?.length)],
+    ["Descrição", Boolean(product.descricaoCurta || product.descricaoCompleta)],
+    ["Aplicações", data.produtoModelosVeiculo.some((item) => item.produtoId === product.id) || data.produtoAplicacoes.some((item) => item.produtoId === product.id)],
+    ["Categoria e marca", Boolean(product.categoriaId && product.marcaId)],
+    ["EAN/NCM", Boolean(product.ean && product.ncm)],
+    ["Ficha técnica", Boolean(product.fichaTecnica)],
+    ["Preço e estoque", product.preco != null && product.estoque != null]
+  ] as const;
+  const completed = checks.filter(([, ready]) => ready).length;
+  return {
+    score: Math.round((completed / checks.length) * 100),
+    missing: checks.filter(([, ready]) => !ready).map(([label]) => label)
+  };
+}
+
 function normalizeImportKey(value: unknown) {
   return String(value ?? "")
     .normalize("NFD")
@@ -759,7 +777,7 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
   const [pendingFilter, setPendingFilter] = useState("all");
   const [sortMode, setSortMode] = useState("newest");
   const lower = query.toLowerCase();
-  const essentialMissing = (item: Produto) => !item.codigoInterno || !item.nome || !item.categoriaId || !item.marcaId || !item.imagemPrincipal || item.preco == null || !item.descricaoCurta || !item.ean || !item.ncm || !item.caixaMaster;
+  const essentialMissing = (item: Produto) => productCompleteness(item, data).score < 100;
   const products = data.produtos
     .filter((item) => [item.nome, item.codigoInterno, item.ean, item.ncm].join(" ").toLowerCase().includes(lower))
     .filter((item) => !categoryFilter || item.categoriaId === categoryFilter)
@@ -958,13 +976,14 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
       </div>
       <Panel title={`${products.length} de ${data.produtos.length} produtos`}>
         <Table>
-          <thead><tr><Th>Imagem</Th><Th>Código</Th><Th>Nome</Th><Th>Categoria</Th><Th>Marca</Th><Th>Preço</Th><Th>Status</Th><Th /></tr></thead>
+          <thead><tr><Th>Imagem</Th><Th>Código</Th><Th>Nome</Th><Th>Completude</Th><Th>Categoria</Th><Th>Marca</Th><Th>Preço</Th><Th>Status</Th><Th /></tr></thead>
           <tbody>
             {products.map((product) => (
               <tr key={product.id}>
                 <Td>{product.imagemPrincipal ? <img src={product.imagemCard || product.imagemPrincipal} alt="" className="h-12 w-16 rounded-lg object-contain" /> : <div className="h-12 w-16 rounded-lg bg-soft" />}</Td>
                 <Td className="font-black">{product.codigoInterno}</Td>
                 <Td>{product.nome}</Td>
+                <Td>{(() => { const completeness = productCompleteness(product, data); return <div className="min-w-32" title={completeness.missing.length ? `Faltando: ${completeness.missing.join(", ")}` : "Cadastro completo"}><div className="mb-1 flex items-center justify-between text-xs font-black"><span>{completeness.score}%</span><span className={completeness.score === 100 ? "text-emerald-600" : completeness.score >= 75 ? "text-amber-600" : "text-red-600"}>{completeness.score === 100 ? "Completo" : `${completeness.missing.length} pendência(s)`}</span></div><div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${completeness.score === 100 ? "bg-emerald-500" : completeness.score >= 75 ? "bg-amber-400" : "bg-red-500"}`} style={{ width: `${completeness.score}%` }} /></div></div>; })()}</Td>
                 <Td>{data.categorias.find((item) => item.id === product.categoriaId)?.nome || "-"}</Td>
                 <Td>{data.marcas.find((item) => item.id === product.marcaId)?.nome || "-"}</Td>
                 <Td>{money(product.preco)}</Td>
@@ -1827,6 +1846,15 @@ function Diagnostics({ data }: { data: AppData }) {
   const criticalLoadLimitMs = 3000;
   const incompleteProducts = data.produtos.filter((product) => !product.codigoInterno || !product.nome || !product.categoriaId || !product.marcaId);
   const productsWithoutImage = data.produtos.filter((product) => product.ativo !== false && !product.imagemPrincipal);
+  const completenessRows = data.produtos.map((product) => ({ product, ...productCompleteness(product, data) })).sort((a, b) => a.score - b.score);
+  const catalogCompleteness = completenessRows.length ? Math.round(completenessRows.reduce((total, item) => total + item.score, 0) / completenessRows.length) : 0;
+  const journeyEvents = data.telemetry.filter((event) => ["product_view", "search_results", "search_zero_results", "gallery_interaction", "product_share", "favorite_toggle", "whatsapp_open", "quote_start", "quote_sent", "vehicle_filter", "session_start"].includes(event.eventType));
+  const eventCount = (type: string) => journeyEvents.filter((event) => event.eventType === type).length;
+  const searchEvents = eventCount("search_results") + eventCount("search_zero_results");
+  const productViews = eventCount("product_view");
+  const discoveryDurations = journeyEvents.filter((event) => event.eventType === "product_view" && event.durationMs != null).map((event) => Number(event.durationMs));
+  const averageDiscoveryTime = discoveryDurations.length ? Math.round(discoveryDurations.reduce((total, value) => total + value, 0) / discoveryDurations.length) : 0;
+  const returningSessions = journeyEvents.filter((event) => event.eventType === "session_start" && event.metadata?.returning === true).length;
   const orphanVehicleLinks = data.produtoModelosVeiculo.filter((link) => !data.produtos.some((product) => product.id === link.produtoId) || !data.modelosVeiculo.some((model) => model.id === link.modeloId));
   const slowScreens = loadRows.filter((row) => row.avg > performanceLimitMs || row.max > criticalLoadLimitMs);
   const detectedProblems = [
@@ -1860,6 +1888,28 @@ function Diagnostics({ data }: { data: AppData }) {
           <thead><tr><Th>Nível</Th><Th>Área</Th><Th>Problema / padrão esperado</Th></tr></thead>
           <tbody>{detectedProblems.map((problem, index) => <tr key={`${problem.area}-${index}`}><Td className="font-black">{problem.severity}</Td><Td>{problem.area}</Td><Td>{problem.detail}</Td></tr>)}</tbody>
         </Table>}
+      </Panel>
+      <Panel title="Experiência do cliente">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <Info label="Tempo médio até o produto" value={averageDiscoveryTime ? `${Math.round(averageDiscoveryTime / 1000)} s` : "Sem dados"} />
+          <Info label="Pesquisas sem resultado" value={searchEvents ? `${Math.round((eventCount("search_zero_results") / searchEvents) * 100)}%` : "Sem dados"} />
+          <Info label="Busca → produto" value={searchEvents ? `${Math.round((productViews / searchEvents) * 100)}%` : "Sem dados"} />
+          <Info label="Produto → contato" value={productViews ? `${Math.round(((eventCount("whatsapp_open") + eventCount("quote_start")) / productViews) * 100)}%` : "Sem dados"} />
+          <Info label="Filtros de veículo" value={String(eventCount("vehicle_filter"))} />
+          <Info label="Interações com imagens" value={String(eventCount("gallery_interaction"))} />
+          <Info label="Produtos compartilhados" value={String(eventCount("product_share"))} />
+          <Info label="Produtos favoritados" value={String(journeyEvents.filter((event) => event.eventType === "favorite_toggle" && event.metadata?.active === true).length)} />
+          <Info label="Orçamentos enviados" value={String(eventCount("quote_sent"))} />
+          <Info label="Sessões de retorno" value={String(returningSessions)} />
+          <Info label="Completude média" value={`${catalogCompleteness}%`} />
+        </div>
+      </Panel>
+      <Panel title="Produtos com cadastro incompleto">
+        <Table>
+          <thead><tr><Th>Produto</Th><Th>Completude</Th><Th>Informações pendentes</Th></tr></thead>
+          <tbody>{completenessRows.filter((item) => item.score < 100).slice(0, 30).map(({ product, score, missing }) => <tr key={product.id}><Td><span className="font-black">{product.codigoInterno || "Sem código"}</span><div className="text-xs text-muted">{product.nome}</div></Td><Td className="font-black">{score}%</Td><Td>{missing.join(", ")}</Td></tr>)}</tbody>
+        </Table>
+        {!completenessRows.some((item) => item.score < 100) && <div className="py-8 text-center text-sm font-bold text-emerald-700">Todos os produtos estão completos.</div>}
       </Panel>
       <Panel title="Telas mais lentas">
         <Table>
