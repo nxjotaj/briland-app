@@ -51,6 +51,11 @@ const PRODUCT_SNAPSHOT_STORAGE_KEY = "briland-product-snapshot";
 const CATALOG_PUBLIC_URL = "https://briland-catalogo.vercel.app";
 const PRIVACY_POLICY_URL = "https://briland-catalogo.vercel.app/privacidade.html";
 const ACCOUNT_DELETION_URL = "https://briland-catalogo.vercel.app/excluir-conta.html";
+const vehicleYears = () => Array.from({ length: new Date().getFullYear() + 2 - 1950 }, (_, index) => 1950 + index).reverse();
+const vehicleApplicationLabel = (application: ProdutoModeloVeiculoView) => {
+  if (!application.anoInicial || !application.anoFinal) return "Todos os anos";
+  return application.anoInicial === application.anoFinal ? String(application.anoInicial) : `${application.anoInicial} a ${application.anoFinal}`;
+};
 function initialAppRoute(): Route {
   if (Platform.OS === "web" && typeof window !== "undefined") {
     const action = new URL(window.location.href).searchParams.get("acao");
@@ -158,6 +163,7 @@ export default function App() {
   const [brandFilter, setBrandFilter] = useState<string | null>(null);
   const [montadoraFilter, setMontadoraFilter] = useState<string | null>(null);
   const [modeloFilter, setModeloFilter] = useState<string | null>(null);
+  const [anoFilter, setAnoFilter] = useState<number | null>(null);
   const [sortMode, setSortMode] = useState<"order" | "name" | "newest">("order");
   const [listMode, setListMode] = useState<"grid" | "list">("grid");
   const [filterOpen, setFilterOpen] = useState(false);
@@ -498,7 +504,9 @@ export default function App() {
         montadoraNome: montadora?.nome,
         montadoraSlug: montadora?.slug,
         modeloNome: modelo?.nome,
-        modeloSlug: modelo?.slug
+        modeloSlug: modelo?.slug,
+        modeloAnoInicial: modelo?.anoInicial,
+        modeloAnoFinal: modelo?.anoFinal
       };
       map.set(link.produtoId, [...(map.get(link.produtoId) || []), view]);
     }
@@ -513,10 +521,11 @@ export default function App() {
       const vehicleText = vehicleApplications.map((app) => `${app.montadoraNome || ""} ${app.modeloNome || ""}`).join(" ");
       const text = [item.nome, item.codigoInterno, item.descricaoCurta, item.ean, item.ncm, categoria, marca, vehicleText].join(" ").toLowerCase();
       const vehicleOk =
-        (!montadoraFilter && !modeloFilter) ||
+        (!montadoraFilter && !modeloFilter && !anoFilter) ||
         vehicleApplications.some((app) =>
           (!montadoraFilter || app.montadoraId === montadoraFilter) &&
-          (!modeloFilter || app.modeloId === modeloFilter)
+          (!modeloFilter || app.modeloId === modeloFilter) &&
+          (!anoFilter || (!app.anoInicial && !app.anoFinal) || ((app.anoInicial ?? 1950) <= anoFilter && (app.anoFinal ?? new Date().getFullYear() + 1) >= anoFilter))
         );
       return (!q || text.includes(q)) && (!categoryFilter || item.categoriaId === categoryFilter) && (!brandFilter || item.marcaId === brandFilter) && vehicleOk;
     });
@@ -525,7 +534,7 @@ export default function App() {
       if (sortMode === "newest") return String(b.createdAt).localeCompare(String(a.createdAt));
       return (a.ordem ?? 0) - (b.ordem ?? 0);
     });
-  }, [activeProducts, query, categoryFilter, brandFilter, montadoraFilter, modeloFilter, sortMode, categoryById, brandById, vehicleApplicationsByProduct]);
+  }, [activeProducts, query, categoryFilter, brandFilter, montadoraFilter, modeloFilter, anoFilter, sortMode, categoryById, brandById, vehicleApplicationsByProduct]);
 
   useEffect(() => {
     const normalized = query.trim().toLowerCase();
@@ -549,7 +558,7 @@ export default function App() {
 
   useEffect(() => {
     if (route === "products" || route === "promotions" || route === "launches") discoveryStartedAt.current = Date.now();
-  }, [categoryFilter, brandFilter, montadoraFilter, modeloFilter, query, route]);
+  }, [categoryFilter, brandFilter, montadoraFilter, modeloFilter, anoFilter, query, route]);
 
   const transitionTo = (next: Route) => {
     if (next === route) {
@@ -579,6 +588,7 @@ export default function App() {
     setBrandFilter(null);
     setMontadoraFilter(null);
     setModeloFilter(null);
+    setAnoFilter(null);
     setSortMode("order");
   };
 
@@ -610,7 +620,8 @@ export default function App() {
         resultCount: filteredProducts.length,
         categoryFilter,
         montadoraFilter,
-        modeloFilter
+        modeloFilter,
+        anoFilter
       }
     }, authToken);
     go("detail");
@@ -636,7 +647,7 @@ export default function App() {
     void trackTelemetry({ eventType: "favorite_toggle", screen: "detail", route: "detail", userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { productId: product.id, active } }, authToken);
   };
 
-  const selectedVehicleText = [montadoraFilter ? montadoraById.get(montadoraFilter)?.nome : "", modeloFilter ? modeloById.get(modeloFilter)?.nome : ""].filter(Boolean).join(" ");
+  const selectedVehicleText = [montadoraFilter ? montadoraById.get(montadoraFilter)?.nome : "", modeloFilter ? modeloById.get(modeloFilter)?.nome : "", anoFilter ? String(anoFilter) : ""].filter(Boolean).join(" ");
 
   const openMissingProductHelp = (searchText: string) => {
     void trackTelemetry({ eventType: "whatsapp_open", screen: "products", route, userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { source: "zero_results", query: searchText.trim().slice(0, 80) } }, authToken);
@@ -840,6 +851,8 @@ export default function App() {
                   setMontadoraFilter={setMontadoraFilter}
                   modeloFilter={modeloFilter}
                   setModeloFilter={setModeloFilter}
+                  anoFilter={anoFilter}
+                  setAnoFilter={setAnoFilter}
                   sortMode={sortMode}
                   setSortMode={setSortMode}
                   brands={data.marcas}
@@ -878,6 +891,8 @@ export default function App() {
                   setMontadoraFilter={setMontadoraFilter}
                   modeloFilter={modeloFilter}
                   setModeloFilter={setModeloFilter}
+                  anoFilter={anoFilter}
+                  setAnoFilter={setAnoFilter}
                   sortMode={sortMode}
                   setSortMode={setSortMode}
                   brands={data.marcas}
@@ -917,6 +932,8 @@ export default function App() {
                   setMontadoraFilter={setMontadoraFilter}
                   modeloFilter={modeloFilter}
                   setModeloFilter={setModeloFilter}
+                  anoFilter={anoFilter}
+                  setAnoFilter={setAnoFilter}
                   sortMode={sortMode}
                   setSortMode={setSortMode}
                   brands={data.marcas}
@@ -1229,6 +1246,8 @@ function ProductList({
   setMontadoraFilter,
   modeloFilter,
   setModeloFilter,
+  anoFilter,
+  setAnoFilter,
   sortMode,
   setSortMode,
   brands,
@@ -1266,6 +1285,8 @@ function ProductList({
   setMontadoraFilter: (id: string | null) => void;
   modeloFilter: string | null;
   setModeloFilter: (id: string | null) => void;
+  anoFilter: number | null;
+  setAnoFilter: (year: number | null) => void;
   sortMode: "order" | "name" | "newest";
   setSortMode: (mode: "order" | "name" | "newest") => void;
   brands: Marca[];
@@ -1316,6 +1337,8 @@ function ProductList({
   const activeMontadora = montadoraFilter ? montadoras.find((item) => item.id === montadoraFilter)?.nome : "Todas montadoras";
   const activeModelo = modeloFilter ? modelosVeiculo.find((item) => item.id === modeloFilter)?.nome : "Todos modelos";
   const availableModels = montadoraFilter ? modelosVeiculo.filter((item) => item.montadoraId === montadoraFilter) : [];
+  const selectedModel = modeloFilter ? modelosVeiculo.find((item) => item.id === modeloFilter) : undefined;
+  const availableYears = vehicleYears().filter((year) => (!selectedModel?.anoInicial || year >= selectedModel.anoInicial) && (!selectedModel?.anoFinal || year <= selectedModel.anoFinal));
   const listHeader = (
     <>
       <PageTitle title={title} subtitle={subtitle} badge={launch ? "NOVO" : undefined} />
@@ -1341,15 +1364,17 @@ function ProductList({
         <Chip text={activeBrand ?? "Marcas"} onPress={() => setFilterOpen(true)} />
         <Chip text={activeMontadora ?? "Montadoras"} onPress={() => setFilterOpen(true)} />
         {montadoraFilter && <Chip text={activeModelo ?? "Modelos"} onPress={() => setFilterOpen(true)} />}
-        <Chip text="Limpar" onPress={() => { setQuery(""); setCategoryFilter(null); setBrandFilter(null); setMontadoraFilter(null); setModeloFilter(null); setSortMode("order"); }} />
+        {modeloFilter && <Chip text={anoFilter ? `Ano ${anoFilter}` : "Todos os anos"} onPress={() => setFilterOpen(true)} />}
+        <Chip text="Limpar" onPress={() => { setQuery(""); setCategoryFilter(null); setBrandFilter(null); setMontadoraFilter(null); setModeloFilter(null); setAnoFilter(null); setSortMode("order"); }} />
       </View>
       {montadoraFilter && availableModels.length > 0 && (
         <View style={styles.modelFilterPanel}>
           <Text style={styles.sheetLabel}>Modelo do veículo</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetOptions}>
             <OptionPill label="Todos" selected={!modeloFilter} onPress={() => { setModeloFilter(null); onVehicleFilterUsed("modelo", null); }} />
-            {availableModels.map((item) => <OptionPill key={item.id} label={item.nome} selected={modeloFilter === item.id} onPress={() => { setModeloFilter(item.id); onVehicleFilterUsed("modelo", item.id); }} />)}
+            {availableModels.map((item) => <OptionPill key={item.id} label={item.nome} selected={modeloFilter === item.id} onPress={() => { setModeloFilter(item.id); setAnoFilter(null); onVehicleFilterUsed("modelo", item.id); }} />)}
           </ScrollView>
+          {modeloFilter && <><Text style={styles.sheetLabel}>Ano do veículo</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetOptions}><OptionPill label="Todos" selected={!anoFilter} onPress={() => setAnoFilter(null)} />{availableYears.map((year) => <OptionPill key={year} label={String(year)} selected={anoFilter === year} onPress={() => setAnoFilter(year)} />)}</ScrollView></>}
         </View>
       )}
       <View style={styles.resultRow}><Text style={styles.muted}>{products.length} produtos encontrados</Text><Segmented value={listMode} setValue={setListMode} /></View>
@@ -1413,7 +1438,9 @@ function ProductList({
         montadoraFilter={montadoraFilter}
         setMontadoraFilter={(id) => { setMontadoraFilter(id); setModeloFilter(null); onVehicleFilterUsed("montadora", id); }}
         modeloFilter={modeloFilter}
-        setModeloFilter={(id) => { setModeloFilter(id); onVehicleFilterUsed("modelo", id); }}
+        setModeloFilter={(id) => { setModeloFilter(id); setAnoFilter(null); onVehicleFilterUsed("modelo", id); }}
+        anoFilter={anoFilter}
+        setAnoFilter={setAnoFilter}
         sortMode={sortMode}
         setSortMode={setSortMode}
       />
@@ -1526,6 +1553,7 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
             <View key={app.id} style={styles.vehicleApplicationItem}>
               <DetailItem label="Montadora" value={app.montadoraNome || "A cadastrar"} />
               <DetailItem label="Modelo" value={app.modeloNome || "A cadastrar"} />
+              <DetailItem label="Compatibilidade" value={vehicleApplicationLabel(app)} />
               {app.observacaoComercial ? <Text style={styles.detailText}>{app.observacaoComercial}</Text> : null}
             </View>
           ))}
@@ -1603,6 +1631,8 @@ function FilterSheet({
   setMontadoraFilter,
   modeloFilter,
   setModeloFilter,
+  anoFilter,
+  setAnoFilter,
   sortMode,
   setSortMode
 }: {
@@ -1620,11 +1650,15 @@ function FilterSheet({
   setMontadoraFilter: (id: string | null) => void;
   modeloFilter: string | null;
   setModeloFilter: (id: string | null) => void;
+  anoFilter: number | null;
+  setAnoFilter: (year: number | null) => void;
   sortMode: "order" | "name" | "newest";
   setSortMode: (mode: "order" | "name" | "newest") => void;
 }) {
   const sorts: Array<["order" | "name" | "newest", string]> = [["order", "Ordem"], ["name", "Nome"], ["newest", "Mais novos"]];
   const filteredModels = montadoraFilter ? modelosVeiculo.filter((item) => item.montadoraId === montadoraFilter) : modelosVeiculo;
+  const selectedModel = modeloFilter ? modelosVeiculo.find((item) => item.id === modeloFilter) : undefined;
+  const filteredYears = vehicleYears().filter((year) => (!selectedModel?.anoInicial || year >= selectedModel.anoInicial) && (!selectedModel?.anoFinal || year <= selectedModel.anoFinal));
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.sheetOverlay} onPress={onClose} />
@@ -1642,14 +1676,15 @@ function FilterSheet({
         </ScrollView>
         <Text style={styles.sheetLabel}>Filtrar por Montadora</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetOptions}>
-          <OptionPill label="Todas" selected={!montadoraFilter} onPress={() => { setMontadoraFilter(null); setModeloFilter(null); }} />
-          {montadoras.map((item) => <OptionPill key={item.id} label={item.nome} selected={montadoraFilter === item.id} onPress={() => setMontadoraFilter(item.id)} />)}
+          <OptionPill label="Todas" selected={!montadoraFilter} onPress={() => { setMontadoraFilter(null); setModeloFilter(null); setAnoFilter(null); }} />
+          {montadoras.map((item) => <OptionPill key={item.id} label={item.nome} selected={montadoraFilter === item.id} onPress={() => { setMontadoraFilter(item.id); setModeloFilter(null); setAnoFilter(null); }} />)}
         </ScrollView>
         <Text style={styles.sheetLabel}>Modelo</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetOptions}>
-          <OptionPill label="Todos" selected={!modeloFilter} onPress={() => setModeloFilter(null)} />
-          {filteredModels.map((item) => <OptionPill key={item.id} label={item.nome} selected={modeloFilter === item.id} onPress={() => setModeloFilter(item.id)} />)}
+          <OptionPill label="Todos" selected={!modeloFilter} onPress={() => { setModeloFilter(null); setAnoFilter(null); }} />
+          {filteredModels.map((item) => <OptionPill key={item.id} label={item.nome} selected={modeloFilter === item.id} onPress={() => { setModeloFilter(item.id); setAnoFilter(null); }} />)}
         </ScrollView>
+        {modeloFilter && <><Text style={styles.sheetLabel}>Ano</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetOptions}><OptionPill label="Todos" selected={!anoFilter} onPress={() => setAnoFilter(null)} />{filteredYears.map((year) => <OptionPill key={year} label={String(year)} selected={anoFilter === year} onPress={() => setAnoFilter(year)} />)}</ScrollView></>}
         <Text style={styles.sheetLabel}>Ordenacao</Text>
         <View style={styles.wrapOptions}>{sorts.map(([value, label]) => <OptionPill key={value} label={label} selected={sortMode === value} onPress={() => setSortMode(value)} />)}</View>
         <Pressable style={styles.yellowButton} onPress={onClose}><Text style={styles.yellowButtonText}>Aplicar filtros</Text></Pressable>

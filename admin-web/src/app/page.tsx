@@ -83,6 +83,9 @@ type Tab =
   | "Conteúdo"
   | "Aparência";
 
+const VEHICLE_YEARS = Array.from({ length: new Date().getFullYear() + 2 - 1950 }, (_, index) => 1950 + index).reverse();
+const yearRangeLabel = (start?: number | null, end?: number | null) => !start || !end ? "Todos os anos" : start === end ? String(start) : `${start} a ${end}`;
+
 const tabs: { id: Tab; icon: React.ElementType }[] = [
   { id: "Dashboard", icon: BarChart3 },
   { id: "Produtos", icon: Boxes },
@@ -1082,6 +1085,8 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
           produtoId: draft.id,
           montadoraId: item.montadoraId,
           modeloId: item.modeloId,
+          anoInicial: item.anoInicial ?? null,
+          anoFinal: item.anoFinal ?? null,
           observacaoComercial: item.observacaoComercial || null,
           updatedAt: new Date().toISOString()
         };
@@ -1177,26 +1182,30 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
             <div className="font-black">Aplicação por Montadora</div>
-            <div className="text-xs text-muted">Vincule este produto a uma ou mais montadoras/modelos.</div>
+            <div className="text-xs text-muted">Selecione montadora, modelo e todos os anos, um ano específico ou um intervalo.</div>
           </div>
           <button className="btn-white" onClick={() => {
             const montadoraId = data.montadoras[0]?.id || "";
             const modeloId = data.modelosVeiculo.find((item) => item.montadoraId === montadoraId)?.id || "";
-            setVehicleLinks([...vehicleLinks, { id: createId("pmv"), produtoId: draft.id, montadoraId, modeloId, observacaoComercial: "" }]);
+            setVehicleLinks([...vehicleLinks, { id: createId("pmv"), produtoId: draft.id, montadoraId, modeloId, anoInicial: null, anoFinal: null, observacaoComercial: "" }]);
           }}><Plus size={15} /> Adicionar</button>
         </div>
         <div className="space-y-3">
           {vehicleLinks.length === 0 && <div className="rounded-xl bg-soft p-4 text-sm text-muted">Nenhuma aplicação por montadora cadastrada.</div>}
           {vehicleLinks.map((link, index) => {
             const models = data.modelosVeiculo.filter((item) => item.montadoraId === link.montadoraId);
+            const selectedVehicleModel = models.find((item) => item.id === link.modeloId);
+            const applicationYears = VEHICLE_YEARS.filter((year) => (!selectedVehicleModel?.anoInicial || year >= selectedVehicleModel.anoInicial) && (!selectedVehicleModel?.anoFinal || year <= selectedVehicleModel.anoFinal));
             return (
-              <div key={link.id} className="grid gap-3 rounded-xl bg-soft p-3 lg:grid-cols-[1fr_1fr_2fr_auto]">
+              <div key={link.id} className="grid gap-3 rounded-xl bg-soft p-3 lg:grid-cols-[1fr_1fr_1fr_1fr_2fr_auto]">
                 <select className="input" value={link.montadoraId} onChange={(event) => {
                   const montadoraId = event.target.value;
                   const modeloId = data.modelosVeiculo.find((item) => item.montadoraId === montadoraId)?.id || "";
                   setVehicleLinks(vehicleLinks.map((item, current) => current === index ? { ...item, montadoraId, modeloId } : item));
                 }}>{data.montadoras.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select>
-                <select className="input" value={link.modeloId} onChange={(event) => setVehicleLinks(vehicleLinks.map((item, current) => current === index ? { ...item, modeloId: event.target.value } : item))}>{models.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select>
+                <select className="input" value={link.modeloId} onChange={(event) => setVehicleLinks(vehicleLinks.map((item, current) => current === index ? { ...item, modeloId: event.target.value, anoInicial: null, anoFinal: null } : item))}>{models.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select>
+                <select className="input" aria-label="Ano inicial da aplicação" value={link.anoInicial ?? ""} onChange={(event) => { const anoInicial = event.target.value ? Number(event.target.value) : null; setVehicleLinks(vehicleLinks.map((item, current) => current === index ? { ...item, anoInicial, anoFinal: anoInicial ? (item.anoFinal && item.anoFinal >= anoInicial ? item.anoFinal : anoInicial) : null } : item)); }}><option value="">Todos os anos</option>{applicationYears.map((year) => <option key={year} value={year}>De {year}</option>)}</select>
+                <select className="input" aria-label="Ano final da aplicação" disabled={!link.anoInicial} value={link.anoFinal ?? ""} onChange={(event) => setVehicleLinks(vehicleLinks.map((item, current) => current === index ? { ...item, anoFinal: event.target.value ? Number(event.target.value) : item.anoInicial ?? null } : item))}><option value="">Até</option>{applicationYears.filter((year) => year >= (link.anoInicial ?? 1950)).map((year) => <option key={year} value={year}>Até {year}</option>)}</select>
                 <input className="input" placeholder="Observação comercial" value={link.observacaoComercial || ""} onChange={(event) => setVehicleLinks(vehicleLinks.map((item, current) => current === index ? { ...item, observacaoComercial: event.target.value } : item))} />
                 <button className="icon-btn" onClick={() => setVehicleLinks(vehicleLinks.filter((_, current) => current !== index))}><Trash2 size={16} /></button>
               </div>
@@ -1296,13 +1305,13 @@ function VehicleSection({ data, query, reload, notify, canDelete }: { data: AppD
     <div className="space-y-6">
       <div className="flex flex-wrap gap-3">
         <button onClick={() => setEditingBrand({ id: createId("mont"), nome: "Nova montadora", slug: "nova-montadora", imagem: "", ativo: true })} className="btn-yellow"><Plus size={17} /> Criar montadora</button>
-        <button onClick={() => setEditingModel({ id: createId("modelo"), nome: "Novo modelo", slug: "novo-modelo", montadoraId: data.montadoras[0]?.id || "", ativo: true })} className="btn-white"><Plus size={17} /> Criar modelo</button>
+        <button onClick={() => setEditingModel({ id: createId("modelo"), nome: "Novo modelo", slug: "novo-modelo", montadoraId: data.montadoras[0]?.id || "", anoInicial: new Date().getFullYear(), anoFinal: new Date().getFullYear() + 1, ativo: true })} className="btn-white"><Plus size={17} /> Criar modelo</button>
       </div>
       <Panel title={`${brands.length} montadoras`}>
         <Table><thead><tr><Th>Imagem</Th><Th>Nome</Th><Th>Slug</Th><Th>Status</Th><Th>Modelos</Th><Th /></tr></thead><tbody>{brands.map((brand) => <tr key={brand.id}><Td>{brand.imagem ? <img src={brand.imagem} alt="" className="h-12 w-12 rounded-xl object-contain" /> : <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-soft"><ImageIcon size={18} /></div>}</Td><Td>{brand.nome}</Td><Td>{brand.slug}</Td><Td><Toggle checked={brand.ativo !== false} onChange={(checked) => updateRow("Montadora", brand.id, { ativo: checked, updatedAt: new Date().toISOString() }, reload, notify)} /></Td><Td>{data.modelosVeiculo.filter((item) => item.montadoraId === brand.id).length}</Td><Td><button className="icon-btn" onClick={() => setEditingBrand(brand)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table>
       </Panel>
       <Panel title={`${models.length} modelos`}>
-        <Table><thead><tr><Th>Modelo</Th><Th>Montadora</Th><Th>Slug</Th><Th>Status</Th><Th /></tr></thead><tbody>{models.map((model) => <tr key={model.id}><Td>{model.nome}</Td><Td>{data.montadoras.find((brand) => brand.id === model.montadoraId)?.nome || "-"}</Td><Td>{model.slug}</Td><Td><Toggle checked={model.ativo !== false} onChange={(checked) => updateRow("ModeloVeiculo", model.id, { ativo: checked, updatedAt: new Date().toISOString() }, reload, notify)} /></Td><Td><button className="icon-btn" onClick={() => setEditingModel(model)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table>
+        <Table><thead><tr><Th>Modelo</Th><Th>Montadora</Th><Th>Período</Th><Th>Slug</Th><Th>Status</Th><Th /></tr></thead><tbody>{models.map((model) => <tr key={model.id}><Td>{model.nome}</Td><Td>{data.montadoras.find((brand) => brand.id === model.montadoraId)?.nome || "-"}</Td><Td>{yearRangeLabel(model.anoInicial, model.anoFinal)}</Td><Td>{model.slug}</Td><Td><Toggle checked={model.ativo !== false} onChange={(checked) => updateRow("ModeloVeiculo", model.id, { ativo: checked, updatedAt: new Date().toISOString() }, reload, notify)} /></Td><Td><button className="icon-btn" onClick={() => setEditingModel(model)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table>
       </Panel>
       {editingBrand && <VehicleBrandModal item={editingBrand} reload={reload} notify={notify} canDelete={canDelete} onClose={() => setEditingBrand(null)} />}
       {editingModel && <VehicleModelModal item={editingModel} brands={data.montadoras} reload={reload} notify={notify} canDelete={canDelete} onClose={() => setEditingModel(null)} />}
@@ -1378,7 +1387,8 @@ function VehicleModelModal({ item, brands, reload, notify, canDelete, onClose }:
   const [draft, setDraft] = useState(item);
   const isNew = !item.createdAt;
   const save = async () => {
-    const payload = { nome: draft.nome, slug: slugify(draft.nome), montadoraId: draft.montadoraId || brands[0]?.id || "", ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
+    if (!draft.anoInicial || !draft.anoFinal) return notify("Selecione o ano inicial e o ano final do modelo.");
+    const payload = { nome: draft.nome, slug: slugify(draft.nome), montadoraId: draft.montadoraId || brands[0]?.id || "", anoInicial: draft.anoInicial, anoFinal: draft.anoFinal, ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
     const { error } = isNew ? await supabase.from("ModeloVeiculo").insert({ id: draft.id, ...payload }) : await supabase.from("ModeloVeiculo").update(payload).eq("id", item.id);
     if (error) notify(error.message);
     else {
@@ -1397,7 +1407,7 @@ function VehicleModelModal({ item, brands, reload, notify, canDelete, onClose }:
       onClose();
     }
   };
-  return <Modal title="Modelo de veículo" onClose={onClose}><div className="grid gap-4 lg:grid-cols-3"><Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value, slug: slugify(e.target.value) })} /></Field><Field label="Slug automático"><input className="input bg-soft text-muted" value={slugify(draft.nome)} readOnly /></Field><Field label="Montadora"><select className="input" value={draft.montadoraId} onChange={(e) => setDraft({ ...draft, montadoraId: e.target.value })}>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.nome}</option>)}</select></Field></div><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativo</label><ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} /></Modal>;
+  return <Modal title="Modelo de veículo" onClose={onClose}><div className="grid gap-4 lg:grid-cols-5"><Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value, slug: slugify(e.target.value) })} /></Field><Field label="Slug automático"><input className="input bg-soft text-muted" value={slugify(draft.nome)} readOnly /></Field><Field label="Montadora"><select className="input" value={draft.montadoraId} onChange={(e) => setDraft({ ...draft, montadoraId: e.target.value })}>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.nome}</option>)}</select></Field><Field label="Ano inicial (de)"><select className="input" value={draft.anoInicial ?? ""} onChange={(e) => { const anoInicial = Number(e.target.value); setDraft({ ...draft, anoInicial, anoFinal: draft.anoFinal && draft.anoFinal >= anoInicial ? draft.anoFinal : anoInicial }); }}><option value="">Selecione</option>{VEHICLE_YEARS.map((year) => <option key={year} value={year}>{year}</option>)}</select></Field><Field label="Ano final (até)"><select className="input" value={draft.anoFinal ?? ""} onChange={(e) => setDraft({ ...draft, anoFinal: Number(e.target.value) })}><option value="">Selecione</option>{VEHICLE_YEARS.filter((year) => year >= (draft.anoInicial ?? 1950)).map((year) => <option key={year} value={year}>{year}</option>)}</select></Field></div><p className="mt-3 text-xs font-semibold text-muted">A lista vai de 1950 até o próximo ano e se atualiza automaticamente a cada virada de ano.</p><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativo</label><ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} /></Modal>;
 }
 
 function Applications({ items, query, reload, notify, canDelete }: { items: Aplicacao[]; query: string; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean }) {
