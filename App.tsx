@@ -1544,13 +1544,48 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
       <View style={styles.fullscreenGallery}>
         <StatusBar style="light" />
         <Pressable style={styles.fullscreenClose} onPress={() => setFullscreenImage(null)}><Ionicons name="close" size={28} color={colors.white} /></Pressable>
-        <ScrollView style={styles.fullscreenZoom} contentContainerStyle={styles.fullscreenZoomContent} minimumZoomScale={1} maximumZoomScale={4} bouncesZoom>
-          {fullscreenImage && <Image source={{ uri: fullscreenImage }} style={{ width: windowWidth, height: "100%" }} resizeMode="contain" />}
-        </ScrollView>
+        {fullscreenImage && <TransientZoomImage uri={fullscreenImage} width={windowWidth} />}
         <Text style={styles.fullscreenHint}>Use dois dedos para ampliar</Text>
       </View>
     </Modal>
   </>);
+}
+
+function TransientZoomImage({ uri, width }: { uri: string; width: number }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const initialDistance = useRef(0);
+  const touchDistance = (touches: readonly { pageX: number; pageY: number }[]) => {
+    if (touches.length < 2) return 0;
+    return Math.hypot(touches[0].pageX - touches[1].pageX, touches[0].pageY - touches[1].pageY);
+  };
+  const resetZoom = () => {
+    initialDistance.current = 0;
+    Animated.spring(scale, { toValue: 1, friction: 7, tension: 75, useNativeDriver: true }).start();
+  };
+  const panResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: (event) => event.nativeEvent.touches.length >= 2,
+    onMoveShouldSetPanResponder: (event) => event.nativeEvent.touches.length >= 2,
+    onPanResponderGrant: (event) => { initialDistance.current = touchDistance(event.nativeEvent.touches); },
+    onPanResponderMove: (event) => {
+      const distance = touchDistance(event.nativeEvent.touches);
+      if (!distance || !initialDistance.current) return;
+      scale.setValue(Math.max(1, Math.min(4, distance / initialDistance.current)));
+    },
+    onPanResponderRelease: resetZoom,
+    onPanResponderTerminate: resetZoom,
+    onPanResponderTerminationRequest: () => false,
+    onShouldBlockNativeResponder: () => true
+  }), [scale]);
+
+  useEffect(() => { scale.setValue(1); }, [scale, uri]);
+
+  return (
+    <View style={styles.fullscreenZoom} {...panResponder.panHandlers}>
+      <Animated.View style={[styles.fullscreenZoomContent, { transform: [{ scale }] }]}>
+        <Image source={{ uri }} style={{ width, height: "100%" }} resizeMode="contain" />
+      </Animated.View>
+    </View>
+  );
 }
 
 function FilterSheet({
@@ -2642,7 +2677,7 @@ const styles = StyleSheet.create({
   fullscreenGallery: { flex: 1, backgroundColor: "#010916" },
   fullscreenClose: { position: "absolute", zIndex: 4, right: 18, top: 52, width: 46, height: 46, borderRadius: 23, backgroundColor: "rgba(255,255,255,0.14)", alignItems: "center", justifyContent: "center" },
   fullscreenZoom: { flex: 1 },
-  fullscreenZoomContent: { flexGrow: 1, alignItems: "center", justifyContent: "center" },
+  fullscreenZoomContent: { flex: 1, alignItems: "center", justifyContent: "center" },
   fullscreenHint: { position: "absolute", bottom: 34, alignSelf: "center", color: colors.white, fontSize: 13, fontWeight: "800", backgroundColor: "rgba(0,0,0,0.45)", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16 },
   statRow: { flexDirection: "row", gap: 12, marginVertical: 20 },
   infoCard: { flex: 1, minHeight: 88, borderRadius: 14, backgroundColor: colors.white, padding: 14, flexDirection: "row", alignItems: "center", gap: 12, ...shadow },
