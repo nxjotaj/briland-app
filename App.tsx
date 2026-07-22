@@ -293,7 +293,6 @@ export default function App() {
             setCurrentUser(user);
             setRole(user.role);
             await reload(user.role, session.access_token);
-            if (active && initialAppRoute() === "initial") setRoute(isAdminRole(user.role) ? "admin" : "products");
             return;
           }
           await signOutSession();
@@ -680,7 +679,7 @@ export default function App() {
       setCurrentUser(user);
       setRole(user.role);
       await reload(user.role, session.access_token);
-      setRoute(isAdminRole(user.role) ? "admin" : "products");
+      setRoute("products");
       void trackTelemetry({
         eventType: "login",
         screen: "login",
