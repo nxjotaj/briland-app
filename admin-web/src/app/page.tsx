@@ -239,6 +239,23 @@ class SpreadsheetImportError extends Error {
   constructor(public details: string[], public imported = 0) { super("A planilha contém informações que precisam ser corrigidas."); }
 }
 
+function friendlyAdminError(error: unknown, action = "concluir esta operação") {
+  const raw = error instanceof Error ? error.message : String(error || "");
+  if (/invalid login credentials/i.test(raw)) return "E-mail ou senha incorretos. Confira os dados e tente novamente.";
+  if (/email not confirmed/i.test(raw)) return "Seu e-mail ainda não foi confirmado. Abra a mensagem de confirmação recebida antes de entrar.";
+  if (/user not found|sem vínculo|inactive|inativo/i.test(raw)) return "Este usuário não está disponível para acesso. Procure o administrador responsável.";
+  if (/ProdutoModeloVeiculo_modeloId_fkey|ModeloVeiculo.*foreign key|foreign key.*ModeloVeiculo/i.test(raw)) return "Este modelo não pode ser excluído porque está vinculado a um ou mais produtos. Remova o modelo das aplicações desses produtos ou deixe o modelo inativo.";
+  if (/ProdutoModeloVeiculo_montadoraId_fkey|ModeloVeiculo_montadoraId_fkey|Montadora.*foreign key|foreign key.*Montadora/i.test(raw)) return "Esta montadora não pode ser excluída porque possui modelos ou produtos vinculados. Remova primeiro esses vínculos ou deixe a montadora inativa.";
+  if (/categoriaId.*foreign key|foreign key.*Categoria/i.test(raw)) return "Esta categoria ainda está sendo usada por produtos. Altere a categoria desses produtos antes de excluí-la.";
+  if (/marcaId.*foreign key|foreign key.*Marca/i.test(raw)) return "Esta marca ainda está sendo usada por produtos. Altere a marca desses produtos antes de excluí-la.";
+  if (/foreign key|violates.*constraint/i.test(raw)) return `Não foi possível ${action} porque este item ainda está sendo usado em outro cadastro. Remova os vínculos relacionados ou deixe o item inativo.`;
+  if (/duplicate|unique|already exists/i.test(raw)) return "Já existe um cadastro com essas informações. Confira o nome, código ou identificação antes de salvar.";
+  if (/permission|policy|row-level|rls|not allowed|forbidden|unauthorized/i.test(raw)) return "Seu usuário não tem permissão para realizar esta ação. Entre com uma conta autorizada ou solicite acesso ao administrador responsável.";
+  if (/network|fetch|timeout|failed to connect/i.test(raw)) return "Não foi possível conectar ao sistema. Verifique sua internet e tente novamente.";
+  if (/invalid input|numeric|integer|number|check constraint/i.test(raw)) return "Alguma informação foi preenchida em formato inválido. Revise os campos destacados e tente novamente.";
+  return `Não foi possível ${action}. Revise as informações preenchidas e tente novamente. Se o problema continuar, informe ao responsável pelo sistema.`;
+}
+
 function friendlySpreadsheetError(error: unknown, line: number, code?: string) {
   const raw = error instanceof Error ? error.message : String(error || "Erro desconhecido");
   const prefix = `Linha ${line}${code ? ` — produto ${code}` : ""}: `;
@@ -549,7 +566,7 @@ export default function Page() {
         message: error instanceof Error ? error.message : "Falha ao carregar dados.",
         metadata: { source: "admin-web" }
       });
-      notify(error instanceof Error ? error.message : "Falha ao carregar dados.");
+      notify(friendlyAdminError(error, "carregar os dados"));
     } finally {
       setLoading(false);
     }
@@ -561,7 +578,7 @@ export default function Page() {
         const session = current.session;
         if (session) await loadAdmin(session.access_token, session.user.id);
       } catch (error) {
-        setLoginError(error instanceof Error ? error.message : "Falha ao validar acesso.");
+        setLoginError(friendlyAdminError(error, "validar o acesso"));
       } finally {
         setAuthLoading(false);
       }
@@ -580,7 +597,7 @@ export default function Page() {
       notify("Login realizado.");
     } catch (error) {
       void trackAdminTelemetry({ eventType: "login", screen: "login", route: "admin-web", success: false, message: error instanceof Error ? error.message : "Falha de login", metadata: { source: "admin-web", email } });
-      setLoginError(error instanceof Error ? error.message : "Não foi possível entrar.");
+      setLoginError(friendlyAdminError(error, "entrar"));
     } finally {
       setAuthLoading(false);
     }
@@ -843,7 +860,7 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
           }).eq("id", product.id);
           if (error) throw error;
         } catch (error) {
-          failures.push(`${product.codigoInterno || product.nome}: ${error instanceof Error ? error.message : "falha desconhecida"}`);
+          failures.push(`${product.codigoInterno || product.nome}: ${friendlyAdminError(error, "otimizar a imagem")}`);
         } finally {
           completed += 1;
           setImageProgress({ completed, total: pending.length });
@@ -1102,7 +1119,7 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
       await reload();
       onClose();
     } catch (error) {
-      notify(error instanceof Error ? error.message : "Falha ao salvar produto.");
+      notify(friendlyAdminError(error, "salvar o produto"));
     } finally {
       setSaving(false);
     }
@@ -1111,7 +1128,7 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
   const remove = async () => {
     if (!confirm("Excluir produto?")) return;
     const { error } = await supabase.from("Produto").delete().eq("id", draft.id);
-    if (error) notify(error.message);
+    if (error) notify(friendlyAdminError(error, "excluir o produto"));
     else {
       notify("Produto excluído.");
       await reload();
@@ -1267,7 +1284,7 @@ function CategoryBrandModal({ table, imageField, item, reload, notify, canDelete
       await reload();
       onClose();
     } catch (error) {
-      notify(error instanceof Error ? error.message : "Falha ao salvar.");
+      notify(friendlyAdminError(error, "salvar o cadastro"));
     } finally {
       setSaving(false);
     }
@@ -1275,7 +1292,7 @@ function CategoryBrandModal({ table, imageField, item, reload, notify, canDelete
   const remove = async () => {
     if (!confirm("Excluir registro?")) return;
     const { error } = await supabase.from(table).delete().eq("id", item.id);
-    if (error) notify(error.message);
+    if (error) notify(friendlyAdminError(error, "excluir o cadastro"));
     else {
       notify("Registro excluído.");
       await reload();
@@ -1328,7 +1345,7 @@ function VehicleBrandModal({ item, reload, notify, canDelete, onClose }: { item:
   const save = async () => {
     const payload = { nome: draft.nome, slug: slugify(draft.nome), imagem: draft.imagem || null, ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
     const { error } = isNew ? await supabase.from("Montadora").insert({ id: draft.id, ...payload }) : await supabase.from("Montadora").update(payload).eq("id", item.id);
-    if (error) notify(error.message);
+    if (error) notify(friendlyAdminError(error, "salvar a montadora"));
     else {
       notify("Montadora salva.");
       await reload();
@@ -1344,7 +1361,7 @@ function VehicleBrandModal({ item, reload, notify, canDelete, onClose }: { item:
       setDraft({ ...draft, imagem: url });
       notify("Imagem enviada.");
     } catch (error) {
-      notify(error instanceof Error ? error.message : "Falha ao enviar imagem.");
+      notify(friendlyAdminError(error, "enviar a imagem"));
     } finally {
       setUploading(false);
     }
@@ -1352,7 +1369,7 @@ function VehicleBrandModal({ item, reload, notify, canDelete, onClose }: { item:
   const remove = async () => {
     if (!confirm("Excluir montadora?")) return;
     const { error } = await supabase.from("Montadora").delete().eq("id", item.id);
-    if (error) notify(error.message);
+    if (error) notify(friendlyAdminError(error, "excluir a montadora"));
     else {
       notify("Montadora excluída.");
       await reload();
@@ -1393,7 +1410,7 @@ function VehicleModelModal({ item, brands, reload, notify, canDelete, onClose }:
     const anoFinal = anoInicial ? (draft.anoFinal || anoInicial) : null;
     const payload = { nome: draft.nome, slug: slugify(draft.nome), montadoraId: draft.montadoraId || brands[0]?.id || "", anoInicial, anoFinal, ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
     const { error } = isNew ? await supabase.from("ModeloVeiculo").insert({ id: draft.id, ...payload }) : await supabase.from("ModeloVeiculo").update(payload).eq("id", item.id);
-    if (error) notify(error.message);
+    if (error) notify(friendlyAdminError(error, "salvar o modelo"));
     else {
       notify("Modelo salvo.");
       await reload();
@@ -1403,7 +1420,7 @@ function VehicleModelModal({ item, brands, reload, notify, canDelete, onClose }:
   const remove = async () => {
     if (!confirm("Excluir modelo?")) return;
     const { error } = await supabase.from("ModeloVeiculo").delete().eq("id", item.id);
-    if (error) notify(error.message);
+    if (error) notify(friendlyAdminError(error, "excluir o modelo"));
     else {
       notify("Modelo excluído.");
       await reload();
@@ -1433,7 +1450,7 @@ function ApplicationModal({ item, reload, notify, canDelete, onClose }: { item: 
   const save = async () => {
     const payload = { nome: draft.nome, slug: draft.slug || slugify(draft.nome), tipo: draft.tipo || null, ativo: draft.ativo !== false };
     const { error } = isNew ? await supabase.from("Aplicacao").insert({ id: draft.id, ...payload }) : await supabase.from("Aplicacao").update(payload).eq("id", item.id);
-    if (error) notify(error.message);
+    if (error) notify(friendlyAdminError(error, "salvar a aplicação"));
     else {
       notify("Aplicação salva.");
       await reload();
@@ -1443,7 +1460,7 @@ function ApplicationModal({ item, reload, notify, canDelete, onClose }: { item: 
   const remove = async () => {
     if (!confirm("Excluir aplicação?")) return;
     const { error } = await supabase.from("Aplicacao").delete().eq("id", item.id);
-    if (error) notify(error.message);
+    if (error) notify(friendlyAdminError(error, "excluir a aplicação"));
     else {
       notify("Aplicação excluída.");
       await reload();
@@ -1459,7 +1476,7 @@ function Leads({ leads, products, query, reload, notify, canCompleteDeletion }: 
   const completeDeletion = async (lead: Lead) => {
     if (!lead.email || !confirm(`Excluir definitivamente a conta e os dados associados a ${lead.email}?`)) return;
     const { error } = await supabase.rpc("complete_account_deletion", { p_email: lead.email });
-    if (error) notify(error.message);
+    if (error) notify(friendlyAdminError(error, "concluir a exclusão da conta"));
     else {
       notify("Exclusão de conta concluída e dados pessoais removidos.");
       setSelected(null);
@@ -1513,7 +1530,7 @@ function UserModal({ user, reload, notify, adminUser, onClose }: { user?: Usuari
       await reload();
       onClose();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Não foi possível salvar o usuário.";
+      const message = friendlyAdminError(error, "salvar o usuário");
       notify(message.toLowerCase().includes("database error saving new user") ? "Este e-mail já possui conta ou solicitação de cadastro." : message);
     } finally {
       setSaving(false);
@@ -1529,7 +1546,7 @@ function UserModal({ user, reload, notify, adminUser, onClose }: { user?: Usuari
     setSaving(true);
     const { error } = await supabase.rpc("admin_delete_user", { p_user_id: user.id });
     setSaving(false);
-    if (error) notify(error.message);
+    if (error) notify(friendlyAdminError(error, "salvar o usuário"));
     else {
       notify("Cadastro e credencial de login excluídos.");
       await reload();
@@ -1588,7 +1605,7 @@ function CatalogPdfSection({ data, reload, notify }: { data: AppData; reload: ()
       }, reload, notify);
       notify(`PDF ${catalogPdfRoleLabel[role]} gerado.`);
     } catch (error) {
-      notify(error instanceof Error ? error.message : "Falha ao gerar PDF.");
+      notify(friendlyAdminError(error, "gerar o PDF"));
     } finally {
       setGenerating(null);
     }
@@ -1615,7 +1632,7 @@ function CatalogPdfSection({ data, reload, notify }: { data: AppData; reload: ()
       await saveSetting("catalogPdf", nextSettings, reload, notify);
       notify("PDFs do catálogo gerados.");
     } catch (error) {
-      notify(error instanceof Error ? error.message : "Falha ao gerar PDFs.");
+      notify(friendlyAdminError(error, "gerar os PDFs"));
     } finally {
       setGenerating(null);
     }
@@ -2073,7 +2090,7 @@ function AppearanceSection({ draftSettings, publishedSettings, reload, notify }:
 async function saveSetting(key: string, value: unknown, reload: () => Promise<void>, notify: (message: string) => void) {
   const { error } = await supabase.rpc("save_app_setting", { setting_key: key, setting_value: value });
   if (error) {
-    notify(error.message);
+    notify(friendlyAdminError(error, "salvar a configuração"));
     throw error;
   }
   notify("Configuração salva.");
@@ -2082,7 +2099,7 @@ async function saveSetting(key: string, value: unknown, reload: () => Promise<vo
 
 async function updateRow(table: string, id: string, payload: Record<string, unknown>, reload: () => Promise<void>, notify: (message: string) => void) {
   const { error } = await supabase.from(table).update(payload).eq("id", id);
-  if (error) notify(error.message);
+  if (error) notify(friendlyAdminError(error, "salvar a alteração"));
   else {
     notify("Registro atualizado.");
     await reload();
