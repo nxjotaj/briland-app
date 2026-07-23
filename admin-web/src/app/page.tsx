@@ -170,13 +170,15 @@ function canShowField(map: Record<string, boolean>, key: string, fallback = true
 function productCompleteness(product: Produto, data: AppData) {
   const checks = [
     ["Imagem principal", Boolean(product.imagemPrincipal)],
-    ["Imagens extras", Boolean(product.imagensExtras?.length)],
-    ["Descrição", Boolean(product.descricaoCurta || product.descricaoCompleta)],
-    ["Aplicações", data.produtoModelosVeiculo.some((item) => item.produtoId === product.id) || data.produtoAplicacoes.some((item) => item.produtoId === product.id)],
-    ["Categoria e marca", Boolean(product.categoriaId && product.marcaId)],
-    ["EAN/NCM", Boolean(product.ean && product.ncm)],
-    ["Ficha técnica", Boolean(product.fichaTecnica)],
-    ["Preço e estoque", product.preco != null && product.estoque != null]
+    ["Código interno", Boolean(product.codigoInterno)],
+    ["Nome", Boolean(product.nome)],
+    ["Slug", Boolean(product.slug)],
+    ["Categoria", Boolean(product.categoriaId)],
+    ["Marca", Boolean(product.marcaId)],
+    ["EAN", Boolean(product.ean)],
+    ["NCM", Boolean(product.ncm)],
+    ["Caixa master", Boolean(product.caixaMaster)],
+    ["Preço", product.preco != null]
   ] as const;
   const completed = checks.filter(([, ready]) => ready).length;
   return {
@@ -729,8 +731,8 @@ function Dashboard({ data, setActive, role }: { data: AppData; setActive: (tab: 
   const activeProducts = data.produtos.filter((item) => item.ativo !== false).length;
   const pendingUsers = data.usuarios.filter((item) => item.status === "PENDING").length;
   const newLeads = data.leads.filter((item) => item.status === "NOVO").length;
-  const withImages = data.produtos.filter((item) => item.imagemPrincipal).length;
-  const completion = data.produtos.length ? Math.round((withImages / data.produtos.length) * 100) : 0;
+  const completeProducts = data.produtos.filter((item) => productCompleteness(item, data).score === 100).length;
+  const completion = data.produtos.length ? Math.round(data.produtos.reduce((total, item) => total + productCompleteness(item, data).score, 0) / data.produtos.length) : 0;
   const lastSevenDays = Array.from({ length: 7 }, (_, index) => {
     const date = new Date(); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() - (6 - index));
     const next = new Date(date); next.setDate(next.getDate() + 1);
@@ -743,7 +745,7 @@ function Dashboard({ data, setActive, role }: { data: AppData; setActive: (tab: 
     { label: "Produtos cadastrados", value: String(data.produtos.length), helper: `${activeProducts} ativos`, tab: "Produtos", icon: Boxes, tone: "blue" },
     { label: "Novos leads", value: String(newLeads), helper: `${data.leads.length} no total`, tab: "Leads", icon: MessageCircle, tone: "yellow" },
     { label: "Usuários pendentes", value: String(pendingUsers), helper: `${data.usuarios.length} cadastrados`, tab: "Usuários", icon: Users, masterOnly: true, tone: "violet" },
-    { label: "Catálogo completo", value: `${completion}%`, helper: `${withImages} produtos com foto`, tab: "Produtos", icon: CheckCircle2, tone: "green" }
+    { label: "Catálogo completo", value: `${completion}%`, helper: `${completeProducts} produtos com 100%`, tab: "Produtos", icon: CheckCircle2, tone: "green" }
   ].filter((item) => !item.masterOnly || isMaster(role));
   return (
     <div className="space-y-6">
@@ -1305,7 +1307,7 @@ function VehicleSection({ data, query, reload, notify, canDelete }: { data: AppD
     <div className="space-y-6">
       <div className="flex flex-wrap gap-3">
         <button onClick={() => setEditingBrand({ id: createId("mont"), nome: "Nova montadora", slug: "nova-montadora", imagem: "", ativo: true })} className="btn-yellow"><Plus size={17} /> Criar montadora</button>
-        <button onClick={() => setEditingModel({ id: createId("modelo"), nome: "Novo modelo", slug: "novo-modelo", montadoraId: data.montadoras[0]?.id || "", anoInicial: new Date().getFullYear(), anoFinal: new Date().getFullYear() + 1, ativo: true })} className="btn-white"><Plus size={17} /> Criar modelo</button>
+        <button onClick={() => setEditingModel({ id: createId("modelo"), nome: "Novo modelo", slug: "novo-modelo", montadoraId: data.montadoras[0]?.id || "", anoInicial: null, anoFinal: null, ativo: true })} className="btn-white"><Plus size={17} /> Criar modelo</button>
       </div>
       <Panel title={`${brands.length} montadoras`}>
         <Table><thead><tr><Th>Imagem</Th><Th>Nome</Th><Th>Slug</Th><Th>Status</Th><Th>Modelos</Th><Th /></tr></thead><tbody>{brands.map((brand) => <tr key={brand.id}><Td>{brand.imagem ? <img src={brand.imagem} alt="" className="h-12 w-12 rounded-xl object-contain" /> : <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-soft"><ImageIcon size={18} /></div>}</Td><Td>{brand.nome}</Td><Td>{brand.slug}</Td><Td><Toggle checked={brand.ativo !== false} onChange={(checked) => updateRow("Montadora", brand.id, { ativo: checked, updatedAt: new Date().toISOString() }, reload, notify)} /></Td><Td>{data.modelosVeiculo.filter((item) => item.montadoraId === brand.id).length}</Td><Td><button className="icon-btn" onClick={() => setEditingBrand(brand)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table>
@@ -1387,8 +1389,9 @@ function VehicleModelModal({ item, brands, reload, notify, canDelete, onClose }:
   const [draft, setDraft] = useState(item);
   const isNew = !item.createdAt;
   const save = async () => {
-    if (!draft.anoInicial || !draft.anoFinal) return notify("Selecione o ano inicial e o ano final do modelo.");
-    const payload = { nome: draft.nome, slug: slugify(draft.nome), montadoraId: draft.montadoraId || brands[0]?.id || "", anoInicial: draft.anoInicial, anoFinal: draft.anoFinal, ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
+    const anoInicial = draft.anoInicial || null;
+    const anoFinal = anoInicial ? (draft.anoFinal || anoInicial) : null;
+    const payload = { nome: draft.nome, slug: slugify(draft.nome), montadoraId: draft.montadoraId || brands[0]?.id || "", anoInicial, anoFinal, ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
     const { error } = isNew ? await supabase.from("ModeloVeiculo").insert({ id: draft.id, ...payload }) : await supabase.from("ModeloVeiculo").update(payload).eq("id", item.id);
     if (error) notify(error.message);
     else {
@@ -1407,7 +1410,7 @@ function VehicleModelModal({ item, brands, reload, notify, canDelete, onClose }:
       onClose();
     }
   };
-  return <Modal title="Modelo de veículo" onClose={onClose}><div className="grid gap-4 lg:grid-cols-5"><Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value, slug: slugify(e.target.value) })} /></Field><Field label="Slug automático"><input className="input bg-soft text-muted" value={slugify(draft.nome)} readOnly /></Field><Field label="Montadora"><select className="input" value={draft.montadoraId} onChange={(e) => setDraft({ ...draft, montadoraId: e.target.value })}>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.nome}</option>)}</select></Field><Field label="Ano inicial (de)"><select className="input" value={draft.anoInicial ?? ""} onChange={(e) => { const anoInicial = Number(e.target.value); setDraft({ ...draft, anoInicial, anoFinal: draft.anoFinal && draft.anoFinal >= anoInicial ? draft.anoFinal : anoInicial }); }}><option value="">Selecione</option>{VEHICLE_YEARS.map((year) => <option key={year} value={year}>{year}</option>)}</select></Field><Field label="Ano final (até)"><select className="input" value={draft.anoFinal ?? ""} onChange={(e) => setDraft({ ...draft, anoFinal: Number(e.target.value) })}><option value="">Selecione</option>{VEHICLE_YEARS.filter((year) => year >= (draft.anoInicial ?? 1950)).map((year) => <option key={year} value={year}>{year}</option>)}</select></Field></div><p className="mt-3 text-xs font-semibold text-muted">A lista vai de 1950 até o próximo ano e se atualiza automaticamente a cada virada de ano.</p><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativo</label><ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} /></Modal>;
+  return <Modal title="Modelo de veículo" onClose={onClose}><div className="grid gap-4 lg:grid-cols-5"><Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value, slug: slugify(e.target.value) })} /></Field><Field label="Slug automático"><input className="input bg-soft text-muted" value={slugify(draft.nome)} readOnly /></Field><Field label="Montadora"><select className="input" value={draft.montadoraId} onChange={(e) => setDraft({ ...draft, montadoraId: e.target.value })}>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.nome}</option>)}</select></Field><Field label="Ano inicial (de) — opcional"><select className="input" value={draft.anoInicial ?? ""} onChange={(e) => { const anoInicial = e.target.value ? Number(e.target.value) : null; setDraft({ ...draft, anoInicial, anoFinal: anoInicial ? (draft.anoFinal && draft.anoFinal >= anoInicial ? draft.anoFinal : anoInicial) : null }); }}><option value="">Todos os anos</option>{VEHICLE_YEARS.map((year) => <option key={year} value={year}>{year}</option>)}</select></Field><Field label="Ano final (até) — opcional"><select className="input" disabled={!draft.anoInicial} value={draft.anoFinal ?? ""} onChange={(e) => setDraft({ ...draft, anoFinal: e.target.value ? Number(e.target.value) : draft.anoInicial ?? null })}><option value="">Mesmo ano</option>{VEHICLE_YEARS.filter((year) => year >= (draft.anoInicial ?? 1950)).map((year) => <option key={year} value={year}>{year}</option>)}</select></Field></div><p className="mt-3 text-xs font-semibold text-muted">Os anos são opcionais. Sem preencher, o modelo será considerado compatível com todos os anos. Quando usados, a lista vai de 1950 até o próximo ano e se atualiza automaticamente.</p><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativo</label><ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} /></Modal>;
 }
 
 function Applications({ items, query, reload, notify, canDelete }: { items: Aplicacao[]; query: string; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean }) {
