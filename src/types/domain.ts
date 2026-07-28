@@ -92,8 +92,26 @@ export type CatalogAppearance = {
   publishedAt?: string | null;
 };
 export type CatalogPdfRole = "VISITANTE" | "NAO_CLIENTE" | "CLIENTE" | "REPRESENTANTE";
-export type CatalogPdfEntry = { url: string; generatedAt: string; role: CatalogPdfRole; productCount: number };
-export type CatalogPdfSettings = Partial<Record<CatalogPdfRole, CatalogPdfEntry>>;
+export type CatalogPdfEntry = {
+  url: string;
+  generatedAt: string;
+  role: CatalogPdfRole;
+  productCount: number;
+  pageCount?: number;
+  imageWarningCount?: number;
+};
+export type CatalogPdfEditorialSettings = {
+  title?: string;
+  edition?: string;
+  institutionalTitle?: string;
+  institutionalBody?: string;
+  contactText?: string;
+  coverImage?: string;
+  backCoverImage?: string;
+};
+export type CatalogPdfSettings = Partial<Record<CatalogPdfRole, CatalogPdfEntry>> & {
+  editorial?: CatalogPdfEditorialSettings;
+};
 export type AuthSession = { access_token: string; user: { id: string; email?: string } };
 
 export type AppData = {

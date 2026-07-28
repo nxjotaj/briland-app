@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import ExcelJS from "exceljs";
 import brilandLogo from "../../../assets/briland-logo.png";
+import { buildCatalogPdf, type CatalogImageWarning } from "@/lib/catalog-pdf";
 import {
   BarChart3,
   Boxes,
@@ -63,6 +63,7 @@ import type {
   Role,
   SocialLinks,
   AuditLog,
+  CatalogPdfEditorialSettings,
   CatalogPdfRole,
   TelemetryEvent,
   Usuario
@@ -154,22 +155,6 @@ const catalogPdfRoleLabel: Record<CatalogPdfRole, string> = {
   CLIENTE: "Cliente",
   REPRESENTANTE: "Representante"
 };
-
-function permissionAllowed(permission: Permission | undefined, role: CatalogPdfRole) {
-  if (!permission) return true;
-  if (role === "VISITANTE") return permission.visibleToVisitor;
-  if (role === "NAO_CLIENTE") return permission.visibleToNonClient;
-  if (role === "CLIENTE") return permission.visibleToClient;
-  return permission.visibleToRepresentative;
-}
-
-function permissionMapForRole(permissions: Permission[], role: CatalogPdfRole) {
-  return Object.fromEntries(permissions.map((permission) => [permission.fieldKey, permissionAllowed(permission, role)]));
-}
-
-function canShowField(map: Record<string, boolean>, key: string, fallback = true) {
-  return key in map ? Boolean(map[key]) : fallback;
-}
 
 function productCompleteness(product: Produto, data: AppData) {
   const checks = [
@@ -1692,23 +1677,33 @@ function PermissionsSectionV2({ permissions, query, reload, notify }: { permissi
 function CatalogPdfSection({ data, reload, notify }: { data: AppData; reload: () => Promise<void>; notify: (message: string) => void }) {
   const [generating, setGenerating] = useState<CatalogPdfRole | "all" | null>(null);
   const settings = data.settings.catalogPdf || {};
+  const [editorial, setEditorial] = useState<CatalogPdfEditorialSettings>(settings.editorial || {});
+  const [warnings, setWarnings] = useState<CatalogImageWarning[]>([]);
+  useEffect(() => setEditorial(settings.editorial || {}), [settings.editorial]);
+  const saveEditorial = async () => {
+    await saveSetting("catalogPdf", { ...settings, editorial }, reload, notify);
+  };
   const generate = async (role: CatalogPdfRole) => {
     setGenerating(role);
     try {
-      const pdfBytes = await buildCatalogPdf(data, role);
-      const blob = new Blob([pdfBytesToArrayBuffer(pdfBytes)], { type: "application/pdf" });
+      const result = await buildCatalogPdf(data, role, editorial);
+      setWarnings(result.warnings);
+      const blob = new Blob([pdfBytesToArrayBuffer(result.bytes)], { type: "application/pdf" });
       const path = `catalogo/catalogo-${role.toLowerCase().replace("_", "-")}.pdf`;
       const url = await uploadCatalogBlob(path, blob, "application/pdf");
       await saveSetting("catalogPdf", {
         ...settings,
+        editorial,
         [role]: {
           url,
           generatedAt: new Date().toISOString(),
           role,
-          productCount: data.produtos.filter((product) => product.ativo !== false).length
+          productCount: data.produtos.filter((product) => product.ativo !== false).length,
+          pageCount: result.pageCount,
+          imageWarningCount: result.warnings.length
         }
       }, reload, notify);
-      notify(`PDF ${catalogPdfRoleLabel[role]} gerado.`);
+      notify(`PDF ${catalogPdfRoleLabel[role]} gerado com ${result.pageCount} páginas.`);
     } catch (error) {
       notify(friendlyAdminError(error, "gerar o PDF"));
     } finally {
@@ -1718,10 +1713,12 @@ function CatalogPdfSection({ data, reload, notify }: { data: AppData; reload: ()
   const generateAll = async () => {
     setGenerating("all");
     try {
-      let nextSettings = { ...settings };
+      let nextSettings = { ...settings, editorial };
+      let latestWarnings: CatalogImageWarning[] = [];
       for (const role of catalogPdfRoles) {
-        const pdfBytes = await buildCatalogPdf(data, role);
-        const blob = new Blob([pdfBytesToArrayBuffer(pdfBytes)], { type: "application/pdf" });
+        const result = await buildCatalogPdf(data, role, editorial);
+        latestWarnings = result.warnings;
+        const blob = new Blob([pdfBytesToArrayBuffer(result.bytes)], { type: "application/pdf" });
         const path = `catalogo/catalogo-${role.toLowerCase().replace("_", "-")}.pdf`;
         const url = await uploadCatalogBlob(path, blob, "application/pdf");
         nextSettings = {
@@ -1730,10 +1727,13 @@ function CatalogPdfSection({ data, reload, notify }: { data: AppData; reload: ()
             url,
             generatedAt: new Date().toISOString(),
             role,
-            productCount: data.produtos.filter((product) => product.ativo !== false).length
+            productCount: data.produtos.filter((product) => product.ativo !== false).length,
+            pageCount: result.pageCount,
+            imageWarningCount: result.warnings.length
           }
         };
       }
+      setWarnings(latestWarnings);
       await saveSetting("catalogPdf", nextSettings, reload, notify);
       notify("PDFs do catálogo gerados.");
     } catch (error) {
@@ -1744,6 +1744,17 @@ function CatalogPdfSection({ data, reload, notify }: { data: AppData; reload: ()
   };
   return (
     <div className="space-y-6">
+      <SettingsPanel title="Identidade editorial do PDF" onSave={saveEditorial}>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Field label="Título do catálogo"><input className="input" placeholder="Catálogo de Produtos" value={editorial.title || ""} onChange={(event) => setEditorial({ ...editorial, title: event.target.value })} /></Field>
+          <Field label="Edição / ano"><input className="input" placeholder={`Edição ${new Date().getFullYear()}`} value={editorial.edition || ""} onChange={(event) => setEditorial({ ...editorial, edition: event.target.value })} /></Field>
+          <Field label="Título institucional"><input className="input" placeholder="Bem-vindo à Briland" value={editorial.institutionalTitle || ""} onChange={(event) => setEditorial({ ...editorial, institutionalTitle: event.target.value })} /></Field>
+          <Field label="Contato comercial"><textarea className="textarea" value={editorial.contactText || ""} onChange={(event) => setEditorial({ ...editorial, contactText: event.target.value })} /></Field>
+          <div className="lg:col-span-2"><Field label="Apresentação institucional"><textarea className="textarea min-h-32" value={editorial.institutionalBody || ""} onChange={(event) => setEditorial({ ...editorial, institutionalBody: event.target.value })} /></Field></div>
+          <UploadBox label="Imagem de capa - recomendado 1600 x 1100 px" folder="catalogo/editorial/capa" value={editorial.coverImage} onUploaded={(url) => setEditorial({ ...editorial, coverImage: url })} />
+          <UploadBox label="Imagem de contracapa - recomendado 1600 x 1400 px" folder="catalogo/editorial/contracapa" value={editorial.backCoverImage} onUploaded={(url) => setEditorial({ ...editorial, backCoverImage: url })} />
+        </div>
+      </SettingsPanel>
       <Panel title="Download PDF do catálogo">
         <div className="grid gap-4 lg:grid-cols-[1fr_260px]">
           <div className="text-sm leading-6 text-muted">
@@ -1763,6 +1774,8 @@ function CatalogPdfSection({ data, reload, notify }: { data: AppData; reload: ()
               <div className="space-y-3 text-sm">
                 <Info label="Última geração" value={entry?.generatedAt ? formatLocalDateTime(entry.generatedAt) : "Nunca gerado"} />
                 <Info label="Produtos no PDF" value={entry?.productCount != null ? String(entry.productCount) : "-"} />
+                <Info label="Páginas" value={entry?.pageCount != null ? String(entry.pageCount) : "-"} />
+                <Info label="Alertas de imagem" value={entry?.imageWarningCount != null ? String(entry.imageWarningCount) : "-"} />
                 {entry?.url ? <a className="btn-white inline-flex" href={entry.url} target="_blank"><Eye size={17} /> Abrir PDF</a> : <div className="rounded-xl bg-soft p-3 text-muted">Nenhum PDF salvo para este perfil.</div>}
               </div>
               <button onClick={() => void generate(role)} disabled={generating != null} className="btn-yellow mt-5">
@@ -1773,178 +1786,19 @@ function CatalogPdfSection({ data, reload, notify }: { data: AppData; reload: ()
           );
         })}
       </div>
+      {warnings.length > 0 && (
+        <Panel title={`Qualidade das imagens - ${warnings.length} alertas`}>
+          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            O catálogo foi publicado normalmente. Estes produtos merecem uma imagem maior ou melhor enquadrada para elevar a qualidade comercial.
+          </div>
+          <Table>
+            <thead><tr><Th>Código</Th><Th>Produto</Th><Th>Alerta</Th><Th>Orientação</Th></tr></thead>
+            <tbody>{warnings.map((warning, index) => <tr key={`${warning.productId || warning.productName}-${warning.reason}-${index}`}><Td>{warning.productCode || "-"}</Td><Td className="font-black">{warning.productName}</Td><Td>{warning.reason === "missing" ? "Sem imagem" : warning.reason === "low-resolution" ? "Baixa resolução" : "Falha ao carregar"}</Td><Td>{warning.detail}</Td></tr>)}</tbody>
+          </Table>
+        </Panel>
+      )}
     </div>
   );
-}
-
-async function buildCatalogPdf(data: AppData, role: CatalogPdfRole) {
-  const pdf = await PDFDocument.create();
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const permissions = permissionMapForRole(data.permissoes, role);
-  const products = data.produtos.filter((product) => product.ativo !== false);
-  const categoryProducts = data.categorias
-    .filter((category) => category.ativo !== false)
-    .map((category) => ({
-      category,
-      products: products.filter((product) => product.categoriaId === category.id).sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0) || a.nome.localeCompare(b.nome))
-    }))
-    .filter((group) => group.products.length > 0);
-  const uncategorized = products.filter((product) => !data.categorias.some((category) => category.id === product.categoriaId));
-  if (uncategorized.length) categoryProducts.push({ category: { id: "sem-categoria", nome: "Sem categoria", ativo: true }, products: uncategorized });
-
-  let page = pdf.addPage([595.28, 841.89]);
-  let y = 790;
-  const navy = rgb(0.008, 0.067, 0.149);
-  const yellow = rgb(0.988, 0.727, 0);
-  const muted = rgb(0.42, 0.44, 0.5);
-  const line = rgb(0.9, 0.91, 0.94);
-
-  const addPage = () => {
-    page = pdf.addPage([595.28, 841.89]);
-    y = 790;
-    drawPdfHeader(page, bold, font, role);
-  };
-  drawPdfHeader(page, bold, font, role);
-
-  for (const group of categoryProducts) {
-    if (y < 230) addPage();
-    page.drawRectangle({ x: 34, y: y - 72, width: 527, height: 82, color: navy, borderColor: yellow, borderWidth: 1 });
-    page.drawText(group.category.nome, { x: 52, y: y - 32, size: 21, font: bold, color: rgb(1, 1, 1) });
-    page.drawText(`${group.products.length} produtos`, { x: 52, y: y - 54, size: 10, font, color: rgb(0.86, 0.88, 0.92) });
-    if (group.category.imagem) {
-      const image = await loadPdfImage(pdf, group.category.imagem, 440, 150).catch(() => null);
-      if (image) page.drawImage(image.image, { x: 410, y: y - 66, width: 120, height: 66 });
-    }
-    y -= 104;
-
-    for (let index = 0; index < group.products.length; index += 2) {
-      if (y < 190) addPage();
-      const row = group.products.slice(index, index + 2);
-      for (let column = 0; column < row.length; column += 1) {
-        await drawProductCard(pdf, page, row[column], data, permissions, {
-          x: 34 + column * 264,
-          y: y - 170,
-          width: 250,
-          height: 170,
-          font,
-          bold,
-          navy,
-          yellow,
-          muted,
-          line
-        });
-      }
-      y -= 186;
-    }
-  }
-  return pdf.save();
-}
-
-function drawPdfHeader(page: ReturnType<PDFDocument["addPage"]>, bold: Awaited<ReturnType<PDFDocument["embedFont"]>>, font: Awaited<ReturnType<PDFDocument["embedFont"]>>, role: CatalogPdfRole) {
-  const navy = rgb(0.008, 0.067, 0.149);
-  const yellow = rgb(0.988, 0.727, 0);
-  page.drawRectangle({ x: 0, y: 802, width: 595.28, height: 39.89, color: navy });
-  page.drawText("BRILAND", { x: 34, y: 815, size: 17, font: bold, color: rgb(1, 1, 1) });
-  page.drawText("Catálogo de produtos", { x: 126, y: 817, size: 10, font, color: rgb(0.86, 0.88, 0.92) });
-  page.drawText(catalogPdfRoleLabel[role], { x: 492, y: 816, size: 10, font: bold, color: yellow });
-}
-
-async function drawProductCard(
-  pdf: PDFDocument,
-  page: ReturnType<PDFDocument["addPage"]>,
-  product: Produto,
-  data: AppData,
-  permissions: Record<string, boolean>,
-  box: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    font: Awaited<ReturnType<PDFDocument["embedFont"]>>;
-    bold: Awaited<ReturnType<PDFDocument["embedFont"]>>;
-    navy: ReturnType<typeof rgb>;
-    yellow: ReturnType<typeof rgb>;
-    muted: ReturnType<typeof rgb>;
-    line: ReturnType<typeof rgb>;
-  }
-) {
-  page.drawRectangle({ x: box.x, y: box.y, width: box.width, height: box.height, color: rgb(1, 1, 1), borderColor: box.line, borderWidth: 1 });
-  if (product.imagemPrincipal) {
-    const image = await loadPdfImage(pdf, product.imagemPrincipal, 330, 210).catch(() => null);
-    if (image) page.drawImage(image.image, { x: box.x + 9, y: box.y + 92, width: 82, height: 66 });
-  }
-  page.drawText(product.codigoInterno || "Sem código", { x: box.x + 100, y: box.y + 142, size: 10, font: box.bold, color: box.navy });
-  drawWrappedText(page, product.nome || "Produto", box.x + 100, box.y + 126, 136, 9, box.bold, box.navy, 2);
-  const details: string[] = [];
-  if (canShowField(permissions, "caixaMaster")) details.push(`Caixa master: ${product.caixaMaster || "A cadastrar"}`);
-  if (canShowField(permissions, "ncm")) details.push(`NCM: ${product.ncm || "A cadastrar"}`);
-  if (canShowField(permissions, "ean")) details.push(`EAN: ${product.ean || "A cadastrar"}`);
-  if (canShowField(permissions, "ca", false)) details.push(`CA: ${product.ca || "A cadastrar"}`);
-  if (canShowField(permissions, "fichaTecnica") && product.fichaTecnica) details.push(`Ficha técnica: ${product.fichaTecnica}`);
-  if (canShowField(permissions, "aplicacoesVeiculo")) {
-    const applications = data.produtoModelosVeiculo.filter((item) => item.produtoId === product.id);
-    if (applications.length) {
-      details.push(`Montadora/modelo: ${applications.map((item) => {
-        const brand = data.montadoras.find((brandItem) => brandItem.id === item.montadoraId)?.nome || "Montadora";
-        const model = data.modelosVeiculo.find((modelItem) => modelItem.id === item.modeloId)?.nome || "Modelo";
-        return `${brand} ${model}`;
-      }).join(", ")}`);
-    }
-  }
-  if (canShowField(permissions, "observacaoComercial") && product.observacaoComercial) details.push(`Obs.: ${product.observacaoComercial}`);
-  let cursor = box.y + 82;
-  for (const detail of details.slice(0, 8)) {
-    cursor = drawWrappedText(page, detail, box.x + 10, cursor, box.width - 20, 7.5, box.font, box.muted, 2) - 5;
-    if (cursor < box.y + 10) break;
-  }
-  page.drawRectangle({ x: box.x, y: box.y + box.height - 4, width: box.width, height: 4, color: box.yellow });
-}
-
-function drawWrappedText(page: ReturnType<PDFDocument["addPage"]>, text: string, x: number, y: number, maxWidth: number, size: number, font: Awaited<ReturnType<PDFDocument["embedFont"]>>, color: ReturnType<typeof rgb>, maxLines = 3) {
-  const words = String(text).replace(/\s+/g, " ").trim().split(" ");
-  const lines: string[] = [];
-  let line = "";
-  for (const word of words) {
-    const next = line ? `${line} ${word}` : word;
-    if (font.widthOfTextAtSize(next, size) <= maxWidth) line = next;
-    else {
-      if (line) lines.push(line);
-      line = word;
-    }
-    if (lines.length >= maxLines) break;
-  }
-  if (line && lines.length < maxLines) lines.push(line);
-  lines.forEach((lineText, index) => page.drawText(lineText, { x, y: y - index * (size + 3), size, font, color }));
-  return y - lines.length * (size + 3);
-}
-
-async function loadPdfImage(pdf: PDFDocument, url: string, maxWidth: number, maxHeight: number) {
-  const response = await fetch(url);
-  const contentType = response.headers.get("content-type") || "";
-  if (!response.ok || !contentType.toLowerCase().startsWith("image/")) {
-    throw new Error("Arquivo ignorado porque nao e imagem.");
-  }
-  const blob = await response.blob();
-  if (!blob.type.toLowerCase().startsWith("image/")) {
-    throw new Error("Arquivo ignorado porque nao e imagem.");
-  }
-  const bitmap = await createImageBitmap(blob);
-  const ratio = Math.min(maxWidth / bitmap.width, maxHeight / bitmap.height, 1);
-  const width = Math.max(1, Math.round(bitmap.width * ratio));
-  const height = Math.max(1, Math.round(bitmap.height * ratio));
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("Não foi possível preparar imagem do PDF.");
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, width, height);
-  context.drawImage(bitmap, 0, 0, width, height);
-  const jpegBlob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.72));
-  if (!jpegBlob) throw new Error("Não foi possível converter imagem do PDF.");
-  const image = await pdf.embedJpg(await jpegBlob.arrayBuffer());
-  return { image, width, height };
 }
 
 function pdfBytesToArrayBuffer(bytes: Uint8Array) {
