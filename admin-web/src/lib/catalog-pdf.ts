@@ -65,7 +65,7 @@ type ProductPresentation = {
   commercial: string[];
   complexity: number;
 };
-type Grid = { columns: 3 | 4; rows: 3 | 4 | 5; capacity: 9 | 16 | 20; label: "3x3" | "4x4" | "4x5" };
+type Grid = { columns: 2; rows: 2 | 3; capacity: 4 | 6; label: "2x2" | "2x3" };
 
 const roleLabel: Record<CatalogPdfRole, string> = {
   VISITANTE: "Visitante",
@@ -124,11 +124,8 @@ function buildPresentation(product: Produto, category: Categoria, data: AppData,
 
 function chooseGrid(items: ProductPresentation[]): Grid {
   const max = Math.max(1, ...items.slice(0, 20).map((item) => item.complexity));
-  if (max >= 3) return { columns: 3, rows: 3, capacity: 9, label: "3x3" };
-  if (max === 2) return { columns: 4, rows: 4, capacity: 16, label: "4x4" };
-  if (items.length <= 9) return { columns: 3, rows: 3, capacity: 9, label: "3x3" };
-  if (items.length <= 24) return { columns: 4, rows: 4, capacity: 16, label: "4x4" };
-  return { columns: 4, rows: 5, capacity: 20, label: "4x5" };
+  if (max >= 2 || items.length <= 4) return { columns: 2, rows: 2, capacity: 4, label: "2x2" };
+  return { columns: 2, rows: 3, capacity: 6, label: "2x3" };
 }
 
 async function fetchBytes(url: string) {
@@ -479,11 +476,11 @@ async function drawProductCard(
   accent: ReturnType<typeof rgb>,
   warnings: CatalogImageWarning[]
 ) {
-  page.drawRectangle({ x, y, width, height, color: COLORS.white, borderColor: COLORS.line, borderWidth: 0.75 });
-  page.drawRectangle({ x, y: y + height - 3.5, width, height: 3.5, color: accent });
-  const padding = grid.columns === 3 ? 10 : 7;
-  const imageHeight = grid.label === "3x3" ? height * 0.48 : grid.label === "4x4" ? height * 0.43 : height * 0.4;
-  const imageY = y + height - imageHeight - 7;
+  page.drawRectangle({ x, y, width, height, color: COLORS.white, borderColor: rgb(0.72, 0.76, 0.82), borderWidth: 0.9 });
+  page.drawRectangle({ x, y: y + height - 4.5, width, height: 4.5, color: accent });
+  const padding = 12;
+  const imageHeight = grid.label === "2x2" ? height * 0.48 : height * 0.43;
+  const imageY = y + height - imageHeight - 9;
   if (item.product.imagemPrincipal) {
     const image = await prepareImage(pdf, item.product.imagemPrincipal, {
       productId: item.product.id,
@@ -500,41 +497,42 @@ async function drawProductCard(
       detail: "Produto sem imagem principal."
     });
     page.drawRectangle({ x: x + padding, y: imageY + 5, width: width - padding * 2, height: imageHeight - 10, color: COLORS.soft });
-    page.drawText("IMAGEM EM ATUALIZACAO", { x: x + padding + 8, y: imageY + imageHeight / 2, size: 6, font: fonts.bold, color: COLORS.muted });
+    page.drawText("IMAGEM EM ATUALIZACAO", { x: x + padding + 8, y: imageY + imageHeight / 2, size: 8.5, font: fonts.bold, color: COLORS.ink });
   }
-  const codeSize = grid.label === "3x3" ? 9 : 7.3;
-  const nameSize = grid.label === "3x3" ? 9.3 : grid.label === "4x4" ? 7.7 : 6.8;
-  let cursor = imageY - 4;
+  const codeSize = grid.label === "2x2" ? 12.5 : 11.5;
+  const nameSize = grid.label === "2x2" ? 12.5 : 11.2;
+  let cursor = imageY - 6;
   page.drawText(safeText(item.product.codigoInterno) || "SEM CODIGO", { x: x + padding, y: cursor, size: codeSize, font: fonts.bold, color: accent });
   if (item.brand) {
     const brand = safeText(item.brand).toUpperCase();
-    const brandWidth = fonts.regular.widthOfTextAtSize(brand, 5.5);
-    page.drawText(brand, { x: x + width - padding - brandWidth, y: cursor + 1, size: 5.5, font: fonts.regular, color: COLORS.muted });
+    const brandWidth = fonts.bold.widthOfTextAtSize(brand, 7.5);
+    page.drawText(brand, { x: x + width - padding - brandWidth, y: cursor + 1, size: 7.5, font: fonts.bold, color: COLORS.navySoft });
   }
   cursor -= nameSize + 4;
-  const nameLines = wrapLines(item.product.nome.toUpperCase(), fonts.bold, nameSize, width - padding * 2, grid.label === "3x3" ? 3 : 2);
+  const nameLines = wrapLines(item.product.nome.toUpperCase(), fonts.bold, nameSize, width - padding * 2, 3);
   cursor = drawLines(page, nameLines, x + padding, cursor, fonts.bold, nameSize, COLORS.ink, nameSize + 2);
-  const applicationMax = grid.label === "3x3" ? 3 : grid.label === "4x4" ? 2 : 1;
-  if (item.applications.length && cursor > y + 32) {
-    cursor -= 1;
-    page.drawText("APLICACAO", { x: x + padding, y: cursor, size: 5.5, font: fonts.bold, color: COLORS.muted });
-    cursor -= 9;
+  const applicationMax = grid.label === "2x2" ? 3 : 2;
+  if (item.applications.length && cursor > y + 58) {
+    cursor -= 3;
+    page.drawText("APLICACAO", { x: x + padding, y: cursor, size: 7.5, font: fonts.bold, color: COLORS.navy });
+    cursor -= 11;
     const application = item.applications.slice(0, applicationMax).join(" | ");
-    cursor = drawLines(page, wrapLines(application, fonts.regular, grid.label === "3x3" ? 7 : 6, width - padding * 2, applicationMax + 1), x + padding, cursor, fonts.regular, grid.label === "3x3" ? 7 : 6, COLORS.muted, grid.label === "3x3" ? 9 : 8);
+    const applicationSize = grid.label === "2x2" ? 9 : 8.5;
+    cursor = drawLines(page, wrapLines(application, fonts.regular, applicationSize, width - padding * 2, applicationMax + 1), x + padding, cursor, fonts.regular, applicationSize, COLORS.ink, applicationSize + 2);
     if (item.applications.length > applicationMax) {
-      page.drawText(`+ ${item.applications.length - applicationMax} aplicacoes no indice tecnico`, { x: x + padding, y: Math.max(y + 25, cursor), size: 5.5, font: fonts.bold, color: accent });
+      page.drawText(`+ ${item.applications.length - applicationMax} aplicacoes no indice tecnico`, { x: x + padding, y: Math.max(y + 43, cursor), size: 7.5, font: fonts.bold, color: accent });
     }
   }
-  if (item.commercial.length && grid.label === "3x3" && cursor > y + 48) {
+  if (item.commercial.length && grid.label === "2x2" && cursor > y + 70) {
     cursor -= 8;
-    drawLines(page, wrapLines(item.commercial[0], fonts.regular, 6.5, width - padding * 2, 2), x + padding, cursor, fonts.regular, 6.5, COLORS.muted, 8);
+    drawLines(page, wrapLines(item.commercial[0], fonts.regular, 8.5, width - padding * 2, 2), x + padding, cursor, fonts.regular, 8.5, COLORS.ink, 11);
   }
   if (item.technical.length) {
     const label = item.technical.join("  |  ");
-    const stripHeight = grid.label === "4x5" ? 24 : 27;
-    const technicalSize = grid.label === "3x3" ? 6.2 : 5.3;
-    page.drawRectangle({ x, y, width, height: stripHeight, color: COLORS.soft });
-    drawLines(page, wrapLines(label, fonts.regular, technicalSize, width - padding * 2, 2), x + padding, y + stripHeight - 8, fonts.regular, technicalSize, COLORS.muted, technicalSize + 2);
+    const stripHeight = grid.label === "2x2" ? 40 : 36;
+    const technicalSize = grid.label === "2x2" ? 8.5 : 8;
+    page.drawRectangle({ x, y, width, height: stripHeight, color: rgb(1, 0.965, 0.79) });
+    drawLines(page, wrapLines(label, fonts.bold, technicalSize, width - padding * 2, 2), x + padding, y + stripHeight - 12, fonts.bold, technicalSize, COLORS.ink, technicalSize + 3);
   }
 }
 
@@ -551,7 +549,7 @@ async function drawGridPage(
 ) {
   drawHeader(page, fonts, logo, category.nome);
   const marginX = 30;
-  const gap = grid.columns === 3 ? 9 : 7;
+  const gap = 10;
   const top = 792;
   const bottom = 38;
   const usableWidth = A4.width - marginX * 2;
@@ -566,26 +564,6 @@ async function drawGridPage(
     const y = top - (row + 1) * cardHeight - row * gap;
     return drawProductCard(pdf, page, item, fonts, grid, x, y, cardWidth, cardHeight, accent, warnings);
   }));
-}
-
-function drawTechnicalLegend(page: PDFPage, fonts: Fonts, logo: PDFImage | null) {
-  drawHeader(page, fonts, logo, "Legenda tecnica");
-  page.drawText("COMO LER O CATALOGO", { x: 42, y: 738, size: 29, font: fonts.display, color: COLORS.navy });
-  const rows = [
-    ["CX", "Quantidade de unidades na caixa master."],
-    ["EAN", "Codigo de barras internacional do produto."],
-    ["NCM", "Classificacao fiscal da mercadoria."],
-    ["CA", "Certificado de Aprovacao, quando aplicavel."],
-    ["Todos os anos", "Aplicacao valida para todas as fabricacoes cadastradas do modelo."],
-    ["Indice tecnico", "Continuidade das aplicacoes extensas apresentadas nas paginas finais."]
-  ];
-  rows.forEach(([key, description], index) => {
-    const y = 650 - index * 76;
-    page.drawRectangle({ x: 42, y, width: 94, height: 50, color: index % 2 ? COLORS.navy : COLORS.yellow });
-    page.drawText(key.toUpperCase(), { x: 54, y: y + 18, size: 9, font: fonts.bold, color: index % 2 ? COLORS.white : COLORS.navy });
-    page.drawRectangle({ x: 136, y, width: 417, height: 50, color: COLORS.soft });
-    drawLines(page, wrapLines(description, fonts.regular, 9, 385, 2), 156, y + 28, fonts.regular, 9, COLORS.muted, 13);
-  });
 }
 
 function drawApplicationTables(pdf: PDFDocument, fonts: Fonts, logo: PDFImage | null, items: ProductPresentation[]) {
@@ -702,8 +680,6 @@ export async function buildCatalogPdf(
     }
   }
 
-  const legendPage = pdf.addPage([A4.width, A4.height]);
-  drawTechnicalLegend(legendPage, fonts, logo);
   drawApplicationTables(pdf, fonts, logo, allPresentations);
   const backPage = pdf.addPage([A4.width, A4.height]);
   drawBackCover(backPage, fonts, logo, backCover, contact, edition);
