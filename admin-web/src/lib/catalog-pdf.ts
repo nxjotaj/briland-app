@@ -500,11 +500,15 @@ async function drawProductCard(
   const codeSize = 8.8;
   const nameSize = 8.4;
   let cursor = imageY - 5;
-  page.drawText(safeText(item.product.codigoInterno) || "SEM CODIGO", { x: x + padding, y: cursor, size: codeSize, font: fonts.bold, color: accent });
+  const codeText = safeText(item.product.codigoInterno) || "SEM CODIGO";
+  page.drawText(codeText, { x: x + padding, y: cursor, size: codeSize, font: fonts.bold, color: accent });
   if (item.brand) {
     const brand = safeText(item.brand).toUpperCase();
     const brandWidth = fonts.bold.widthOfTextAtSize(brand, 5.8);
-    page.drawText(brand, { x: x + width - padding - brandWidth, y: cursor + 1, size: 5.8, font: fonts.bold, color: COLORS.navySoft });
+    const codeWidth = fonts.bold.widthOfTextAtSize(codeText, codeSize);
+    if (codeWidth + brandWidth + 8 < width - padding * 2) {
+      page.drawText(brand, { x: x + width - padding - brandWidth, y: cursor + 1, size: 5.8, font: fonts.bold, color: COLORS.navySoft });
+    }
   }
   cursor -= nameSize + 4;
   const nameLines = wrapLines(item.product.nome.toUpperCase(), fonts.bold, nameSize, width - padding * 2, 3);
