@@ -71,6 +71,7 @@ import type {
 
 type Tab =
   | "Dashboard"
+  | "Análises"
   | "Produtos"
   | "Categorias"
   | "Marcas"
@@ -91,6 +92,7 @@ const yearRangeLabel = (start?: number | null, end?: number | null) => !start ||
 
 const tabs: { id: Tab; icon: React.ElementType }[] = [
   { id: "Dashboard", icon: BarChart3 },
+  { id: "Análises", icon: TrendingUp },
   { id: "Produtos", icon: Boxes },
   { id: "Categorias", icon: Tags },
   { id: "Marcas", icon: ShieldCheck },
@@ -442,6 +444,19 @@ async function trackAdminTelemetry(payload: Omit<TelemetryEvent, "id" | "created
   }
 }
 
+async function loadTelemetryWindow() {
+  const rows: TelemetryEvent[] = [];
+  const pageSize = 1000;
+  const since = new Date(Date.now() - 30 * 86400000).toISOString();
+  for (let page = 0; page < 20; page += 1) {
+    const { data, error } = await supabase.from("AppTelemetryEvent").select("*").gte("createdAt", since).order("createdAt", { ascending: false }).range(page * pageSize, (page + 1) * pageSize - 1).returns<TelemetryEvent[]>();
+    if (error) return { data: null, error };
+    rows.push(...(data || []));
+    if (!data || data.length < pageSize) break;
+  }
+  return { data: rows, error: null };
+}
+
 export default function Page() {
   const [authLoading, setAuthLoading] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -515,7 +530,7 @@ export default function Page() {
         supabase.rpc("get_app_settings"),
         master ? supabase.from("User").select(userSelectFields).order("name").returns<Usuario[]>() : Promise.resolve({ data: [], error: null }),
         master ? supabase.from("ProductFieldPermission").select("*").order("fieldLabel").returns<Permission[]>() : Promise.resolve({ data: [], error: null }),
-        master ? supabase.from("AppTelemetryEvent").select("*").order("createdAt", { ascending: false }).limit(1000).returns<TelemetryEvent[]>() : Promise.resolve({ data: [], error: null }),
+        master ? loadTelemetryWindow() : Promise.resolve({ data: [], error: null }),
         master ? supabase.from("AuditLog").select("*").order("createdAt", { ascending: false }).limit(500).returns<AuditLog[]>() : Promise.resolve({ data: [], error: null }),
         master ? supabase.from("AppPresenceSession").select("*").order("lastSeenAt", { ascending: false }).limit(500).returns<PresenceSession[]>() : Promise.resolve({ data: [], error: null }),
         master ? supabase.rpc("get_presence_commercial_summary") : Promise.resolve({ data: emptyData.presenceSummary, error: null })
@@ -628,14 +643,13 @@ export default function Page() {
     if (!sessionToken || !adminUser || !isMaster(adminUser.role)) return;
     let mounted = true;
     const refreshPresence = async () => {
-      const [presence, summary, telemetry, users] = await Promise.all([
+      const [presence, summary, users] = await Promise.all([
         supabase.from("AppPresenceSession").select("*").order("lastSeenAt", { ascending: false }).limit(500).returns<PresenceSession[]>(),
         supabase.rpc("get_presence_commercial_summary"),
-        supabase.from("AppTelemetryEvent").select("*").order("createdAt", { ascending: false }).limit(1000).returns<TelemetryEvent[]>(),
         supabase.from("User").select(userSelectFields).order("name").returns<Usuario[]>()
       ]);
-      if (!mounted || presence.error || summary.error || telemetry.error || users.error) return;
-      setData((current) => ({ ...current, presence: presence.data || [], presenceSummary: (summary.data as PresenceCommercialSummary | null) || current.presenceSummary, telemetry: telemetry.data || [], usuarios: users.data || [] }));
+      if (!mounted || presence.error || summary.error || users.error) return;
+      setData((current) => ({ ...current, presence: presence.data || [], presenceSummary: (summary.data as PresenceCommercialSummary | null) || current.presenceSummary, usuarios: users.data || [] }));
     };
     const timer = setInterval(() => void refreshPresence(), 15000);
     const channel = supabase.channel("admin-presence-live").on("postgres_changes", { event: "*", schema: "public", table: "AppPresenceSession" }, () => void refreshPresence()).subscribe();
@@ -722,6 +736,7 @@ export default function Page() {
 
         <section className="mx-auto max-w-[1600px] p-4 lg:p-8">
           {activeTab === "Dashboard" && <Dashboard data={data} setActive={setActive} role={adminUser.role} />}
+          {activeTab === "Análises" && <AnalyticsSection data={data} />}
           {activeTab === "Produtos" && <Products data={data} query={query} reload={reload} notify={notify} />}
           {activeTab === "Categorias" && <CategoryBrandSection title="Categorias" table="Categoria" imageField="imagem" items={data.categorias} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Marcas" && <CategoryBrandSection title="Marcas" table="Marca" imageField="logo" items={data.marcas} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
@@ -871,6 +886,170 @@ function Dashboard({ data, setActive, role }: { data: AppData; setActive: (tab: 
       </div>
     </div>
   );
+}
+
+function AnalyticsSection({ data }: { data: AppData }) {
+  const [days, setDays] = useState(30);
+  const [audience, setAudience] = useState("all");
+  const [location, setLocation] = useState("all");
+  const since = Date.now() - days * 86400000;
+  const locations = Array.from(new Set(data.telemetry.map((event) => [event.city, event.state].filter(Boolean).join("/")).filter(Boolean))).sort();
+  const events = data.telemetry.filter((event) => {
+    if (Date.parse(event.createdAt || "") < since) return false;
+    if (audience === "visitors" && event.userId) return false;
+    if (audience === "logged" && !event.userId) return false;
+    if (location !== "all" && [event.city, event.state].filter(Boolean).join("/") !== location) return false;
+    return true;
+  });
+  const sessions = data.presence.filter((session) => Date.parse(session.startedAt) >= since);
+  const eventIs = (...types: string[]) => events.filter((event) => types.includes(event.eventType));
+  const rank = (values: Array<string | null | undefined>) => Object.entries(values.reduce<Record<string, number>>((acc, raw) => {
+    const value = String(raw || "").trim();
+    if (value) acc[value] = (acc[value] || 0) + 1;
+    return acc;
+  }, {})).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  const productById = new Map(data.produtos.map((item) => [item.id, item]));
+  const categoryById = new Map(data.categorias.map((item) => [item.id, item.nome]));
+  const brandById = new Map(data.marcas.map((item) => [item.id, item.nome]));
+  const productViews = eventIs("product_view");
+  const searches = eventIs("search_results", "search_zero_results");
+  const contacts = eventIs("whatsapp_open", "quote_sent");
+  const downloads = events.filter((event) => event.eventType.startsWith("download_"));
+  const products = rank(productViews.map((event) => {
+    const product = productById.get(String(event.metadata?.productId || ""));
+    return product ? `${product.codigoInterno || "Sem código"} — ${product.nome}` : String(event.metadata?.code || "Produto removido");
+  }));
+  const searchRank = rank(searches.map((event) => String(event.metadata?.query || "")));
+  const categoryRank = rank(productViews.map((event) => {
+    const product = productById.get(String(event.metadata?.productId || ""));
+    return categoryById.get(String(event.metadata?.categoryId || product?.categoriaId || "")) || "Não informado";
+  }));
+  const brandRank = rank(productViews.map((event) => {
+    const product = productById.get(String(event.metadata?.productId || ""));
+    return brandById.get(String(event.metadata?.brandId || product?.marcaId || "")) || "Não informado";
+  }));
+  const pageRank = rank(eventIs("screen_view").map((event) => event.screen || event.route || "Não informado"));
+  const geoRows = Object.values(events.reduce<Record<string, { country: string; state: string; city: string; events: number; visitors: Set<string>; users: Set<string> }>>((acc, event) => {
+    const country = event.country || "Não informado";
+    const state = event.state || "Não informado";
+    const city = event.city || "Não informado";
+    const key = `${country}|${state}|${city}`;
+    acc[key] ||= { country, state, city, events: 0, visitors: new Set(), users: new Set() };
+    acc[key].events += 1;
+    if (event.visitorId) acc[key].visitors.add(event.visitorId);
+    if (event.userId) acc[key].users.add(event.userId);
+    return acc;
+  }, {})).sort((a, b) => b.events - a.events);
+  const users = Object.values(events.filter((event) => event.userId).reduce<Record<string, { id: string; actions: number; lastAt: string; lastAction: string; city: string }>>((acc, event) => {
+    const id = String(event.userId);
+    const current = acc[id] || { id, actions: 0, lastAt: "", lastAction: "", city: "" };
+    current.actions += 1;
+    if (!current.lastAt || String(event.createdAt) > current.lastAt) {
+      current.lastAt = String(event.createdAt || "");
+      current.lastAction = event.eventType;
+      current.city = [event.city, event.state].filter(Boolean).join("/") || "Não informado";
+    }
+    acc[id] = current;
+    return acc;
+  }, {})).sort((a, b) => b.actions - a.actions);
+  const daysRows = Array.from({ length: days }, (_, index) => {
+    const date = new Date(); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() - (days - 1 - index));
+    const key = date.toISOString().slice(0, 10);
+    const sameDay = (value?: string | null) => value && new Date(value).toISOString().slice(0, 10) === key;
+    return {
+      label: date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }),
+      accesses: events.filter((event) => event.eventType === "session_start" && sameDay(event.createdAt)).length,
+      views: productViews.filter((event) => sameDay(event.createdAt)).length,
+      leads: data.leads.filter((lead) => sameDay(lead.createdAt)).length,
+      downloads: downloads.filter((event) => event.eventType === "download_completed" && sameDay(event.createdAt)).length
+    };
+  });
+  const maxTimeline = Math.max(1, ...daysRows.map((row) => row.accesses + row.views));
+  const registrations = data.usuarios.filter((user) => Date.parse(user.createdAt || "") >= since);
+  const leads = data.leads.filter((lead) => Date.parse(lead.createdAt || "") >= since);
+  const completedLeads = leads.filter((lead) => lead.status === "CONCLUIDO").length;
+  const uniqueVisitors = new Set(events.map((event) => event.visitorId).filter(Boolean)).size;
+  const uniqueUsers = new Set(events.map((event) => event.userId).filter(Boolean)).size;
+  const metricCards = [
+    ["Acessos/sessões", eventIs("session_start").length],
+    ["Visitantes únicos", uniqueVisitors],
+    ["Cadastros acessando", uniqueUsers],
+    ["Produtos visualizados", productViews.length],
+    ["Buscas realizadas", searches.length],
+    ["Buscas sem resultado", eventIs("search_zero_results").length],
+    ["Leads recebidos", leads.length],
+    ["Downloads concluídos", downloads.filter((event) => event.eventType === "download_completed").length]
+  ] as const;
+  const eventLabels: Record<string, string> = {
+    screen_view: "Abriu uma página", product_view: "Visualizou produto", search_results: "Fez uma busca",
+    search_zero_results: "Buscou sem encontrar", whatsapp_open: "Abriu o WhatsApp", quote_start: "Iniciou orçamento",
+    quote_sent: "Enviou orçamento", download_started: "Iniciou download", download_completed: "Concluiu download",
+    favorite_toggle: "Alterou favorito", product_share: "Compartilhou produto", gallery_interaction: "Interagiu com imagens",
+    vehicle_filter: "Usou filtro de veículo", category_filter: "Filtrou categoria"
+  };
+  return (
+    <div className="space-y-6">
+      <section className="hero-dashboard p-6 lg:p-8">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+          <div><div className="mb-2 text-xs font-black uppercase tracking-[.2em] text-blue-800">Inteligência de uso</div><h2 className="text-3xl font-black">Análise completa do catálogo</h2><p className="mt-2 max-w-3xl text-sm font-semibold text-slate-600">Entenda o que as pessoas procuram, quais conteúdos consomem, de onde acessam e quais ações geram oportunidades comerciais.</p></div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field label="Período"><select className="input" value={days} onChange={(event) => setDays(Number(event.target.value))}><option value={1}>Hoje</option><option value={7}>Últimos 7 dias</option><option value={30}>Últimos 30 dias</option></select></Field>
+            <Field label="Público"><select className="input" value={audience} onChange={(event) => setAudience(event.target.value)}><option value="all">Todos</option><option value="visitors">Visitantes</option><option value="logged">Cadastrados</option></select></Field>
+            <Field label="Local"><select className="input" value={location} onChange={(event) => setLocation(event.target.value)}><option value="all">Todos os locais</option>{locations.map((item) => <option key={item}>{item}</option>)}</select></Field>
+          </div>
+        </div>
+      </section>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{metricCards.map(([label, value]) => <Summary key={label} label={label} value={value} />)}</div>
+      <Panel title="Evolução diária de acessos e interesse">
+        <div className="flex h-64 items-end gap-1 overflow-x-auto pt-8">{daysRows.map((row) => <div key={row.label} className="group flex min-w-[24px] flex-1 flex-col items-center justify-end"><div className="mb-1 hidden text-[10px] font-black group-hover:block">{row.accesses + row.views}</div><div className="flex h-48 w-full items-end justify-center gap-0.5"><div title={`${row.accesses} acessos`} className="w-2/5 rounded-t bg-blue-700" style={{ height: `${Math.max(row.accesses ? 4 : 0, (row.accesses / maxTimeline) * 100)}%` }} /><div title={`${row.views} visualizações`} className="w-2/5 rounded-t bg-yellow" style={{ height: `${Math.max(row.views ? 4 : 0, (row.views / maxTimeline) * 100)}%` }} /></div><div className="mt-2 rotate-[-45deg] whitespace-nowrap text-[9px] font-bold text-muted">{row.label}</div></div>)}</div>
+        <div className="mt-6 flex gap-5 text-xs font-bold"><span><i className="mr-2 inline-block h-2.5 w-2.5 rounded bg-blue-700" />Acessos</span><span><i className="mr-2 inline-block h-2.5 w-2.5 rounded bg-yellow" />Visualizações de produto</span></div>
+      </Panel>
+      <div className="grid gap-6 xl:grid-cols-2">
+        <RankingPanel title="Produtos mais visualizados" rows={products} empty="Nenhum produto visualizado no período." />
+        <RankingPanel title="Buscas mais realizadas" rows={searchRank} empty="Nenhuma busca registrada no período." />
+        <RankingPanel title="Marcas mais procuradas" rows={brandRank} empty="As marcas aparecerão conforme produtos forem visualizados." />
+        <RankingPanel title="Categorias mais vistas" rows={categoryRank} empty="As categorias aparecerão conforme produtos forem visualizados." />
+      </div>
+      <div className="grid gap-6 xl:grid-cols-[1.1fr_1fr]">
+        <RankingPanel title="Páginas mais acessadas" rows={pageRank} empty="Nenhuma navegação registrada." />
+        <Panel title="Funil comercial">
+          <div className="space-y-3">
+            {[
+              ["Acessos", eventIs("session_start").length],
+              ["Buscas", searches.length],
+              ["Produtos abertos", productViews.length],
+              ["Orçamentos iniciados", eventIs("quote_start").length],
+              ["WhatsApp ou orçamento enviado", contacts.length]
+            ].map(([label, raw], index, rows) => {
+              const value = Number(raw); const base = Number(rows[0][1]) || 1;
+              return <div key={String(label)} className="rounded-2xl bg-soft p-4"><div className="flex justify-between"><span className="font-black">{label}</span><span className="font-black">{value} <small className="text-muted">({Math.round(value / base * 100)}%)</small></span></div><div className="progress-track mt-2"><div className={`progress-fill progress-${index}`} style={{ width: `${Math.min(100, value / base * 100)}%` }} /></div></div>;
+            })}
+          </div>
+        </Panel>
+      </div>
+      <Panel title="Localização dos acessos">
+        <Table><thead><tr><Th>País</Th><Th>Estado</Th><Th>Cidade</Th><Th>Bairro</Th><Th>Eventos</Th><Th>Visitantes aprox.</Th><Th>Usuários logados</Th></tr></thead><tbody>{geoRows.slice(0, 50).map((row) => <tr key={`${row.country}-${row.state}-${row.city}`}><Td>{row.country}</Td><Td>{row.state}</Td><Td className="font-black">{row.city}</Td><Td><span className="text-muted">Não disponível por IP aproximado</span></Td><Td>{row.events}</Td><Td>{row.visitors.size}</Td><Td>{row.users.size}</Td></tr>)}</tbody></Table>
+        {!geoRows.length && <div className="py-10 text-center text-sm text-muted">Nenhuma localização registrada no período.</div>}
+      </Panel>
+      <div className="grid gap-6 xl:grid-cols-2">
+        <Panel title="Leads, retorno e cadastros"><div className="grid gap-3 sm:grid-cols-2"><Info label="Novos cadastros" value={String(registrations.length)} /><Info label="Leads recebidos" value={String(leads.length)} /><Info label="Leads concluídos" value={String(completedLeads)} /><Info label="Taxa de conclusão" value={leads.length ? `${Math.round(completedLeads / leads.length * 100)}%` : "Sem leads"} /><Info label="Visitantes recorrentes (30 dias)" value={String(data.presenceSummary.returningVisitors30d)} /><Info label="Conversão produto → contato" value={productViews.length ? `${Math.round(contacts.length / productViews.length * 100)}%` : "Sem dados"} /></div></Panel>
+        <Panel title="Downloads de catálogos e arquivos"><div className="grid gap-3 sm:grid-cols-2"><Info label="Iniciados" value={String(downloads.filter((event) => event.eventType === "download_started").length)} /><Info label="Concluídos" value={String(downloads.filter((event) => event.eventType === "download_completed").length)} /><Info label="Falhas" value={String(downloads.filter((event) => event.eventType === "download_failed").length)} /><Info label="Abertos/compartilhados" value={String(downloads.filter((event) => ["download_opened", "download_shared"].includes(event.eventType)).length)} /></div><div className="mt-4 max-h-64 overflow-auto">{daysRows.slice().reverse().map((row) => <div key={row.label} className="flex justify-between border-b border-line py-2 text-sm"><span>{row.label}</span><b>{row.downloads} concluídos</b></div>)}</div></Panel>
+      </div>
+      <Panel title="Ações por usuário cadastrado">
+        <Table><thead><tr><Th>Usuário</Th><Th>Empresa / perfil</Th><Th>Ações</Th><Th>Última ação</Th><Th>Local recente</Th><Th>Data</Th></tr></thead><tbody>{users.slice(0, 100).map((row) => { const user = data.usuarios.find((item) => item.id === row.id); return <tr key={row.id}><Td><div className="font-black">{user?.name || "Usuário removido"}</div><div className="text-xs text-muted">{user?.email || row.id}</div></Td><Td>{user?.company || user?.role || "-"}</Td><Td>{row.actions}</Td><Td>{eventLabels[row.lastAction] || row.lastAction}</Td><Td>{row.city}</Td><Td>{formatLocalDateTime(row.lastAt)}</Td></tr>; })}</tbody></Table>
+        {!users.length && <div className="py-10 text-center text-sm text-muted">Nenhuma ação identificada de usuário cadastrado no período.</div>}
+      </Panel>
+      <Panel title="Pesquisas sem resultado — demanda não atendida">
+        <Table><thead><tr><Th>Busca</Th><Th>Quantidade</Th><Th>Participação nas buscas</Th></tr></thead><tbody>{rank(eventIs("search_zero_results").map((event) => String(event.metadata?.query || ""))).slice(0, 100).map((row) => <tr key={row.name}><Td className="font-black">{row.name}</Td><Td>{row.value}</Td><Td>{searches.length ? `${Math.round(row.value / searches.length * 100)}%` : "0%"}</Td></tr>)}</tbody></Table>
+      </Panel>
+      <p className="text-xs font-semibold text-muted">Cobertura: últimos {days} dia(s), limitada à retenção analítica de 30 dias. Visitantes anônimos são exibidos apenas de forma agregada. A localização é aproximada e pode ser afetada por VPN ou operadora.</p>
+    </div>
+  );
+}
+
+function RankingPanel({ title, rows, empty }: { title: string; rows: Array<{ name: string; value: number }>; empty: string }) {
+  const max = Math.max(1, ...rows.map((row) => row.value));
+  return <Panel title={title}><div className="space-y-4">{rows.slice(0, 15).map((row, index) => <div key={`${row.name}-${index}`}><div className="mb-2 flex items-start justify-between gap-4 text-sm"><span className="font-bold">{index + 1}. {row.name}</span><span className="font-black">{row.value}</span></div><div className="progress-track"><div className={`progress-fill progress-${index % 5}`} style={{ width: `${row.value / max * 100}%` }} /></div></div>)}{!rows.length && <div className="py-10 text-center text-sm text-muted">{empty}</div>}</div></Panel>;
 }
 
 function Products({ data, query, reload, notify }: { data: AppData; query: string; reload: () => Promise<void>; notify: (message: string) => void }) {

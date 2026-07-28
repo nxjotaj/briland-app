@@ -734,6 +734,8 @@ export default function App() {
       metadata: {
         productId: product.id,
         code: product.codigoInterno,
+        categoryId: product.categoriaId,
+        brandId: product.marcaId,
         query: query.trim().slice(0, 80),
         resultCount: filteredProducts.length,
         categoryFilter,
@@ -947,7 +949,12 @@ export default function App() {
               <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} appearance={appearance} quoteCount={quoteCount} notificationCount={unreadNotificationCount} onQuote={() => go("quote")} onNotifications={() => go("notifications")} />
               {error && <ErrorBanner message={error} onRetry={reload} />}
               {route === "home" && <HomeScreen go={openDirectCatalogRoute} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""} imageVersion={imageRefreshVersion} />}
-              {route === "categories" && <CategoriesScreen categories={data.categorias} imageVersion={imageRefreshVersion} onPick={(id) => { clearCatalogFilters(); setCategoryFilter(id); go("products"); }} />}
+              {route === "categories" && <CategoriesScreen categories={data.categorias} imageVersion={imageRefreshVersion} onPick={(id) => {
+                clearCatalogFilters();
+                setCategoryFilter(id);
+                void trackTelemetry({ eventType: "category_filter", screen: "categories", route: "products", userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { categoryId: id } }, authToken);
+                go("products");
+              }} />}
               {route === "vehicleBrands" && <VehicleBrandsScreen montadoras={data.montadoras} applications={data.produtoModelosVeiculo} imageVersion={imageRefreshVersion} onPick={(id) => { clearCatalogFilters(); setMontadoraFilter(id); trackVehicleFilter("montadora", id); go("products"); }} />}
               {retainedCatalogRoute && (
                 <View style={styles.catalogStage}>
