@@ -126,6 +126,8 @@ function chooseGrid(items: ProductPresentation[]): Grid {
   const max = Math.max(1, ...items.slice(0, 20).map((item) => item.complexity));
   if (max >= 3) return { columns: 3, rows: 3, capacity: 9, label: "3x3" };
   if (max === 2) return { columns: 4, rows: 4, capacity: 16, label: "4x4" };
+  if (items.length <= 9) return { columns: 3, rows: 3, capacity: 9, label: "3x3" };
+  if (items.length <= 24) return { columns: 4, rows: 4, capacity: 16, label: "4x4" };
   return { columns: 4, rows: 5, capacity: 20, label: "4x5" };
 }
 
@@ -512,8 +514,10 @@ async function drawProductCard(
   }
   if (item.technical.length) {
     const label = item.technical.join("  |  ");
-    page.drawRectangle({ x, y, width, height: 19, color: COLORS.soft });
-    drawLines(page, wrapLines(label, fonts.regular, grid.label === "3x3" ? 6.2 : 5.4, width - padding * 2, 1), x + padding, y + 7, fonts.regular, grid.label === "3x3" ? 6.2 : 5.4, COLORS.muted, 7);
+    const stripHeight = grid.label === "4x5" ? 24 : 27;
+    const technicalSize = grid.label === "3x3" ? 6.2 : 5.3;
+    page.drawRectangle({ x, y, width, height: stripHeight, color: COLORS.soft });
+    drawLines(page, wrapLines(label, fonts.regular, technicalSize, width - padding * 2, 2), x + padding, y + stripHeight - 8, fonts.regular, technicalSize, COLORS.muted, technicalSize + 2);
   }
 }
 
@@ -667,11 +671,14 @@ export async function buildCatalogPdf(
     await drawCategoryOpener(pdf, opener, fonts, logo, group, categoryIndex, warnings);
     const presentations = group.products.map((product) => buildPresentation(product, group.category, data, role));
     allPresentations.push(...presentations);
+    const grid = chooseGrid(presentations);
     let cursor = 0;
     while (cursor < presentations.length) {
-      const grid = chooseGrid(presentations.slice(cursor));
+      const remaining = presentations.length - cursor;
+      const pagesRemaining = Math.ceil(remaining / grid.capacity);
+      const balancedBatchSize = Math.ceil(remaining / pagesRemaining);
       const page = pdf.addPage([A4.width, A4.height]);
-      const batch = presentations.slice(cursor, cursor + grid.capacity);
+      const batch = presentations.slice(cursor, cursor + balancedBatchSize);
       await drawGridPage(pdf, page, fonts, logo, batch, grid, group.category, categoryIndex, warnings);
       cursor += batch.length;
     }
