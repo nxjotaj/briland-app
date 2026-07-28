@@ -65,7 +65,7 @@ type ProductPresentation = {
   commercial: string[];
   complexity: number;
 };
-type Grid = { columns: 2; rows: 2 | 3; capacity: 4 | 6; label: "2x2" | "2x3" };
+type Grid = { columns: 4; rows: 3; capacity: 12; label: "4x3" };
 
 const roleLabel: Record<CatalogPdfRole, string> = {
   VISITANTE: "Visitante",
@@ -122,10 +122,8 @@ function buildPresentation(product: Produto, category: Categoria, data: AppData,
   return { product, category, brand, applications, technical, commercial, complexity };
 }
 
-function chooseGrid(items: ProductPresentation[]): Grid {
-  const max = Math.max(1, ...items.slice(0, 20).map((item) => item.complexity));
-  if (max >= 2 || items.length <= 4) return { columns: 2, rows: 2, capacity: 4, label: "2x2" };
-  return { columns: 2, rows: 3, capacity: 6, label: "2x3" };
+function chooseGrid(): Grid {
+  return { columns: 4, rows: 3, capacity: 12, label: "4x3" };
 }
 
 async function fetchBytes(url: string) {
@@ -476,11 +474,11 @@ async function drawProductCard(
   accent: ReturnType<typeof rgb>,
   warnings: CatalogImageWarning[]
 ) {
-  page.drawRectangle({ x, y, width, height, color: COLORS.white, borderColor: rgb(0.72, 0.76, 0.82), borderWidth: 0.9 });
-  page.drawRectangle({ x, y: y + height - 4.5, width, height: 4.5, color: accent });
-  const padding = 12;
-  const imageHeight = grid.label === "2x2" ? height * 0.48 : height * 0.43;
-  const imageY = y + height - imageHeight - 9;
+  page.drawRectangle({ x, y, width, height, color: COLORS.white, borderColor: rgb(0.72, 0.76, 0.82), borderWidth: 0.85 });
+  page.drawRectangle({ x, y: y + height - 4, width, height: 4, color: accent });
+  const padding = 8;
+  const imageHeight = height * 0.43;
+  const imageY = y + height - imageHeight - 8;
   if (item.product.imagemPrincipal) {
     const image = await prepareImage(pdf, item.product.imagemPrincipal, {
       productId: item.product.id,
@@ -497,42 +495,42 @@ async function drawProductCard(
       detail: "Produto sem imagem principal."
     });
     page.drawRectangle({ x: x + padding, y: imageY + 5, width: width - padding * 2, height: imageHeight - 10, color: COLORS.soft });
-    page.drawText("IMAGEM EM ATUALIZACAO", { x: x + padding + 8, y: imageY + imageHeight / 2, size: 8.5, font: fonts.bold, color: COLORS.ink });
+    page.drawText("IMAGEM EM ATUALIZACAO", { x: x + padding + 5, y: imageY + imageHeight / 2, size: 6.5, font: fonts.bold, color: COLORS.ink });
   }
-  const codeSize = grid.label === "2x2" ? 12.5 : 11.5;
-  const nameSize = grid.label === "2x2" ? 12.5 : 11.2;
-  let cursor = imageY - 6;
+  const codeSize = 8.8;
+  const nameSize = 8.4;
+  let cursor = imageY - 5;
   page.drawText(safeText(item.product.codigoInterno) || "SEM CODIGO", { x: x + padding, y: cursor, size: codeSize, font: fonts.bold, color: accent });
   if (item.brand) {
     const brand = safeText(item.brand).toUpperCase();
-    const brandWidth = fonts.bold.widthOfTextAtSize(brand, 7.5);
-    page.drawText(brand, { x: x + width - padding - brandWidth, y: cursor + 1, size: 7.5, font: fonts.bold, color: COLORS.navySoft });
+    const brandWidth = fonts.bold.widthOfTextAtSize(brand, 5.8);
+    page.drawText(brand, { x: x + width - padding - brandWidth, y: cursor + 1, size: 5.8, font: fonts.bold, color: COLORS.navySoft });
   }
   cursor -= nameSize + 4;
   const nameLines = wrapLines(item.product.nome.toUpperCase(), fonts.bold, nameSize, width - padding * 2, 3);
   cursor = drawLines(page, nameLines, x + padding, cursor, fonts.bold, nameSize, COLORS.ink, nameSize + 2);
-  const applicationMax = grid.label === "2x2" ? 3 : 2;
-  if (item.applications.length && cursor > y + 58) {
-    cursor -= 3;
-    page.drawText("APLICACAO", { x: x + padding, y: cursor, size: 7.5, font: fonts.bold, color: COLORS.navy });
-    cursor -= 11;
+  const applicationMax = 2;
+  if (item.applications.length && cursor > y + 50) {
+    cursor -= 2;
+    page.drawText("APLICACAO", { x: x + padding, y: cursor, size: 6.2, font: fonts.bold, color: COLORS.navy });
+    cursor -= 9;
     const application = item.applications.slice(0, applicationMax).join(" | ");
-    const applicationSize = grid.label === "2x2" ? 9 : 8.5;
+    const applicationSize = 6.8;
     cursor = drawLines(page, wrapLines(application, fonts.regular, applicationSize, width - padding * 2, applicationMax + 1), x + padding, cursor, fonts.regular, applicationSize, COLORS.ink, applicationSize + 2);
     if (item.applications.length > applicationMax) {
-      page.drawText(`+ ${item.applications.length - applicationMax} aplicacoes no indice tecnico`, { x: x + padding, y: Math.max(y + 43, cursor), size: 7.5, font: fonts.bold, color: accent });
+      page.drawText(`+ ${item.applications.length - applicationMax} no indice tecnico`, { x: x + padding, y: Math.max(y + 37, cursor), size: 6.1, font: fonts.bold, color: accent });
     }
   }
-  if (item.commercial.length && grid.label === "2x2" && cursor > y + 70) {
-    cursor -= 8;
-    drawLines(page, wrapLines(item.commercial[0], fonts.regular, 8.5, width - padding * 2, 2), x + padding, cursor, fonts.regular, 8.5, COLORS.ink, 11);
+  if (item.commercial.length && cursor > y + 62) {
+    cursor -= 6;
+    drawLines(page, wrapLines(item.commercial[0], fonts.regular, 6.5, width - padding * 2, 2), x + padding, cursor, fonts.regular, 6.5, COLORS.ink, 8.5);
   }
   if (item.technical.length) {
     const label = item.technical.join("  |  ");
-    const stripHeight = grid.label === "2x2" ? 40 : 36;
-    const technicalSize = grid.label === "2x2" ? 8.5 : 8;
+    const stripHeight = 32;
+    const technicalSize = 6.2;
     page.drawRectangle({ x, y, width, height: stripHeight, color: rgb(1, 0.965, 0.79) });
-    drawLines(page, wrapLines(label, fonts.bold, technicalSize, width - padding * 2, 2), x + padding, y + stripHeight - 12, fonts.bold, technicalSize, COLORS.ink, technicalSize + 3);
+    drawLines(page, wrapLines(label, fonts.bold, technicalSize, width - padding * 2, 2), x + padding, y + stripHeight - 10, fonts.bold, technicalSize, COLORS.ink, technicalSize + 2.5);
   }
 }
 
@@ -549,7 +547,7 @@ async function drawGridPage(
 ) {
   drawHeader(page, fonts, logo, category.nome);
   const marginX = 30;
-  const gap = 10;
+  const gap = 7;
   const top = 792;
   const bottom = 38;
   const usableWidth = A4.width - marginX * 2;
@@ -667,7 +665,7 @@ export async function buildCatalogPdf(
     await drawCategoryOpener(pdf, opener, fonts, logo, group, categoryIndex, warnings, editorial.categoryArt?.[group.category.id]);
     const presentations = group.products.map((product) => buildPresentation(product, group.category, data, role));
     allPresentations.push(...presentations);
-    const grid = chooseGrid(presentations);
+    const grid = chooseGrid();
     let cursor = 0;
     while (cursor < presentations.length) {
       const remaining = presentations.length - cursor;
