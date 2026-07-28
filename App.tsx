@@ -2,9 +2,12 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BlurView } from "expo-blur";
 import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
 import { Image as ExpoImage, type ImageProps } from "expo-image";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
+import * as Network from "expo-network";
+import * as Sharing from "expo-sharing";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -30,7 +33,7 @@ import {
   View
 } from "react-native";
 
-import { CONFIG_STORAGE_KEY, getPersistedSession, signInWithPassword, signOutSession, signUpRegistration, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRealtime, supabaseRpc, trackTelemetry, uploadStorageObject } from "./src/api/supabase";
+import { CONFIG_STORAGE_KEY, getPersistedSession, setTelemetryContext, signInWithPassword, signOutSession, signUpRegistration, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRealtime, supabaseRpc, trackTelemetry, uploadStorageObject } from "./src/api/supabase";
 import { colors, defaultAbout, defaultSocialLinks } from "./src/config/brand";
 import type { AboutSettings, Aplicacao, AppData, CatalogAppearance, CatalogPdfRole, CatalogPdfSettings, Categoria, Lead, Marca, MediaSettings, ModeloVeiculo, Montadora, Permission, Produto, ProdutoModeloVeiculo, ProdutoModeloVeiculoView, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
 import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage, money, optimizedImageUrl, parseCsv, slugify } from "./src/utils/helpers";
@@ -48,6 +51,8 @@ const FAVORITES_STORAGE_KEY = "briland-favorite-products";
 const VISIT_STORAGE_KEY = "briland-last-visit";
 const NOTIFICATION_STORAGE_KEY = "briland-catalog-notifications";
 const PRODUCT_SNAPSHOT_STORAGE_KEY = "briland-product-snapshot";
+const ANALYTICS_VISITOR_STORAGE_KEY = "briland-analytics-visitor";
+const ANALYTICS_LOCATION_STORAGE_KEY = "briland-analytics-location";
 const CATALOG_PUBLIC_URL = "https://briland-catalogo.vercel.app";
 const PRIVACY_POLICY_URL = "https://briland-catalogo.vercel.app/privacidade.html";
 const ACCOUNT_DELETION_URL = "https://briland-catalogo.vercel.app/excluir-conta.html";
@@ -79,6 +84,62 @@ function productPublicUrl(product: Produto) {
 
 function whatsappWithText(baseUrl: string, text: string) {
   return `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}text=${encodeURIComponent(text)}`;
+}
+
+type ApproxLocation = { city: string | null; state: string | null; country: string | null; cachedAt: number };
+async function approximateLocation(): Promise<ApproxLocation> {
+  const cached = await AsyncStorage.getItem(ANALYTICS_LOCATION_STORAGE_KEY);
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached) as ApproxLocation;
+      if (Date.now() - parsed.cachedAt < 6 * 60 * 60 * 1000) return parsed;
+    } catch { /* consulta novamente */ }
+  }
+  try {
+    const response = await fetch("https://ipwho.is/");
+    const payload = await response.json() as { success?: boolean; city?: string; region?: string; country?: string };
+    const location = {
+      city: payload.success === false ? null : payload.city?.slice(0, 120) || null,
+      state: payload.success === false ? null : payload.region?.slice(0, 80) || null,
+      country: payload.success === false ? null : payload.country?.slice(0, 80) || null,
+      cachedAt: Date.now()
+    };
+    await AsyncStorage.setItem(ANALYTICS_LOCATION_STORAGE_KEY, JSON.stringify(location));
+    return location;
+  } catch {
+    return { city: null, state: null, country: null, cachedAt: Date.now() };
+  }
+}
+
+async function trackedDownload(url: string, metadata: Record<string, unknown> = {}, token?: string) {
+  if (!url) return;
+  void trackTelemetry({ eventType: "download_started", screen: "download", route: "download", success: true, metadata }, token);
+  try {
+    if (Platform.OS === "web" && typeof document !== "undefined") {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("O arquivo não está disponível.");
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = String(metadata.fileName || url.split("/").pop() || "arquivo");
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+    } else {
+      const fileName = String(metadata.fileName || url.split("/").pop() || `arquivo-${Date.now()}.pdf`).replace(/[^a-z0-9._-]/gi, "-");
+      const result = await FileSystem.downloadAsync(url, `${FileSystem.cacheDirectory}${fileName}`);
+      if (result.status < 200 || result.status >= 300) throw new Error("A transferência não foi concluída.");
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(result.uri);
+      else await Linking.openURL(result.uri);
+    }
+    void trackTelemetry({ eventType: "download_completed", screen: "download", route: "download", success: true, metadata }, token);
+    void trackTelemetry({ eventType: "download_opened", screen: "download", route: "download", success: true, metadata }, token);
+  } catch (error) {
+    void trackTelemetry({ eventType: "download_failed", screen: "download", route: "download", success: false, message: error instanceof Error ? error.message : "Falha no download.", metadata }, token);
+    notify("Download não concluído", "Não foi possível transferir o arquivo. Verifique sua internet e tente novamente.");
+  }
 }
 const defaultAppearance: CatalogAppearance = { version: 1, primaryColor: "#021126", accentColor: "#FCB900", backgroundColor: "#F4F6FA", surfaceColor: "#FFFFFF", textColor: "#021126", fontFamily: "system", cardRadius: 12, dockOpacity: 72, dockHeight: 62, dockPosition: "bottom", showProductCategory: true, showProductBrand: true, logoUrl: "" };
 function safeAppearance(value?: Partial<CatalogAppearance> | null): CatalogAppearance {
@@ -186,6 +247,10 @@ export default function App() {
   const realtimeReloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const catalogScrollOffsets = useRef<Record<"products" | "promotions" | "launches", number>>({ products: 0, promotions: 0, launches: 0 });
   const appState = useRef(AppState.currentState);
+  const presenceSessionId = useRef(`presence_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`);
+  const [analyticsVisitorId, setAnalyticsVisitorId] = useState("");
+  const [analyticsLocation, setAnalyticsLocation] = useState<ApproxLocation>({ city: null, state: null, country: null, cachedAt: 0 });
+  const [presenceWake, setPresenceWake] = useState(0);
   const [data, setData] = useState<AppData>({
     produtos: [],
     categorias: [],
@@ -280,6 +345,58 @@ export default function App() {
   };
 
   useEffect(() => {
+    void (async () => {
+      let visitorId = "";
+      const stored = await AsyncStorage.getItem(ANALYTICS_VISITOR_STORAGE_KEY);
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored) as { id: string; createdAt: number };
+          if (parsed.id && Date.now() - parsed.createdAt < 30 * 86400000) visitorId = parsed.id;
+        } catch { /* gera um identificador novo */ }
+      }
+      if (!visitorId) {
+        visitorId = `visitor_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+        await AsyncStorage.setItem(ANALYTICS_VISITOR_STORAGE_KEY, JSON.stringify({ id: visitorId, createdAt: Date.now() }));
+      }
+      const location = await approximateLocation();
+      setAnalyticsVisitorId(visitorId);
+      setAnalyticsLocation(location);
+      setTelemetryContext({ sessionId: presenceSessionId.current, visitorId, city: location.city, state: location.state, country: location.country });
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!analyticsVisitorId) return;
+    setTelemetryContext({ userId: currentUser?.id ?? null, userRole: role });
+    let active = true;
+    const heartbeat = async () => {
+      if (!active || appState.current !== "active") return;
+      let networkType = "Não informado";
+      try {
+        const network = await Network.getNetworkStateAsync();
+        const raw = String(network.type || "").toUpperCase();
+        networkType = raw.includes("WIFI") ? "Wi-Fi" : raw.includes("CELLULAR") ? "Dados móveis" : raw.includes("ETHERNET") ? "Cabo" : "Não informado";
+      } catch { /* mantém indisponível */ }
+      await supabaseRpc<void>("heartbeat_app_presence", {
+        p_session_id: presenceSessionId.current,
+        p_visitor_id: analyticsVisitorId,
+        p_route: route,
+        p_screen: route,
+        p_source: Platform.OS === "web" ? "PWA_WEB" : Platform.OS === "ios" ? "APP_IOS" : "APP_ANDROID",
+        p_device_type: Platform.OS === "web" ? "Navegador" : "Celular",
+        p_operating_system: Platform.OS,
+        p_network_type: networkType,
+        p_city: analyticsLocation.city,
+        p_state: analyticsLocation.state,
+        p_country: analyticsLocation.country
+      }, authToken).catch(() => undefined);
+    };
+    void heartbeat();
+    const timer = setInterval(() => void heartbeat(), 30000);
+    return () => { active = false; clearInterval(timer); };
+  }, [analyticsLocation.city, analyticsLocation.country, analyticsLocation.state, analyticsVisitorId, authToken, currentUser?.id, presenceWake, route]);
+
+  useEffect(() => {
     let active = true;
     const restoreLogin = async () => {
       try {
@@ -351,6 +468,8 @@ export default function App() {
         if (nextState === "active") supabaseRealtime.auth.startAutoRefresh();
         else supabaseRealtime.auth.stopAutoRefresh();
       }
+      if (nextState === "active") setPresenceWake((value) => value + 1);
+      else void supabaseRpc<void>("end_app_presence", { p_session_id: presenceSessionId.current }, authToken).catch(() => undefined);
       if (wasInBackground && nextState === "active") {
         void reload(role, authToken, { silent: true });
       }
@@ -1557,7 +1676,7 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
             </View>
           ))}
         </View>}
-        {showManual && <Pressable style={styles.downloadButton} onPress={() => Linking.openURL(product.manualPdf || "")}><Ionicons name="download-outline" size={18} color={colors.navy} /><Text style={styles.downloadText}>download</Text></Pressable>}
+        {showManual && <Pressable style={styles.downloadButton} onPress={() => void trackedDownload(product.manualPdf || "", { fileType: "product_manual", productId: product.id, productCode: product.codigoInterno, fileName: `${product.codigoInterno || product.id}-manual.pdf` })}><Ionicons name="download-outline" size={18} color={colors.navy} /><Text style={styles.downloadText}>download</Text></Pressable>}
       </Accordion>
       <Accordion title="Observação comercial" open={Boolean(product.observacaoComercial)}>
         <Text style={styles.detailText}>{product.observacaoComercial}</Text>
@@ -2484,7 +2603,7 @@ function Chip({ text, onPress }: { text: string; onPress: () => void }) {
 
 function CatalogPdfButton({ url }: { url: string }) {
   return (
-    <Pressable style={styles.catalogPdfButton} onPress={() => Linking.openURL(url)}>
+    <Pressable style={styles.catalogPdfButton} onPress={() => void trackedDownload(url, { fileType: "catalog_pdf", fileName: "catalogo-briland.pdf" })}>
       <View style={styles.catalogPdfIcon}><Ionicons name="document-text-outline" size={22} color={colors.navy} /></View>
       <View style={styles.flex}>
         <Text style={styles.catalogPdfTitle}>Download PDF do catálogo</Text>

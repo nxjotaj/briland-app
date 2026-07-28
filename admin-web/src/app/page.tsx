@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import ExcelJS from "exceljs";
 import brilandLogo from "../../../assets/briland-logo.png";
@@ -55,6 +55,8 @@ import type {
   ModeloVeiculo,
   Montadora,
   Permission,
+  PresenceCommercialSummary,
+  PresenceSession,
   Produto,
   ProdutoAplicacao,
   ProdutoModeloVeiculo,
@@ -118,7 +120,9 @@ const emptyData: AppData = {
   produtoAplicacoes: [],
   settings: {},
   telemetry: [],
-  auditLogs: []
+  auditLogs: [],
+  presence: [],
+  presenceSummary: { onlineTotal: 0, onlineLoggedIn: 0, onlineVisitors: 0, sessions30d: 0, visitors30d: 0, returningVisitors30d: 0, cities: [], daily: [], networks: [] }
 };
 
 const userSelectFields = "id,name,company,email,role,status,notes,phone,cnpj,address,city,state,registrationNotes,approvedAt,approvedBy,lastLoginAt,createdAt,updatedAt,authUserId";
@@ -464,6 +468,9 @@ export default function Page() {
   const [query, setQuery] = useState("");
   const [toast, setToast] = useState("");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const adminPresenceSession = useRef(`admin_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`);
+  const adminVisitorId = useRef(`admin_visitor_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`);
+  const adminLocation = useRef<{ city: string | null; state: string | null; country: string | null; fetchedAt: number }>({ city: null, state: null, country: null, fetchedAt: 0 });
 
   const notify = (message: string) => {
     setToast(message);
@@ -507,7 +514,9 @@ export default function Page() {
         usuarios,
         permissoes,
         telemetry,
-        auditLogs
+        auditLogs,
+        presence,
+        presenceSummary
       ] = await Promise.all([
         supabase.from("Produto").select("*").order("ordem", { ascending: true }).order("nome").returns<Produto[]>(),
         supabase.from("Categoria").select("*").order("ordem", { ascending: true }).returns<Categoria[]>(),
@@ -522,10 +531,12 @@ export default function Page() {
         master ? supabase.from("User").select(userSelectFields).order("name").returns<Usuario[]>() : Promise.resolve({ data: [], error: null }),
         master ? supabase.from("ProductFieldPermission").select("*").order("fieldLabel").returns<Permission[]>() : Promise.resolve({ data: [], error: null }),
         master ? supabase.from("AppTelemetryEvent").select("*").order("createdAt", { ascending: false }).limit(1000).returns<TelemetryEvent[]>() : Promise.resolve({ data: [], error: null }),
-        master ? supabase.from("AuditLog").select("*").order("createdAt", { ascending: false }).limit(500).returns<AuditLog[]>() : Promise.resolve({ data: [], error: null })
+        master ? supabase.from("AuditLog").select("*").order("createdAt", { ascending: false }).limit(500).returns<AuditLog[]>() : Promise.resolve({ data: [], error: null }),
+        master ? supabase.from("AppPresenceSession").select("*").order("lastSeenAt", { ascending: false }).limit(500).returns<PresenceSession[]>() : Promise.resolve({ data: [], error: null }),
+        master ? supabase.rpc("get_presence_commercial_summary") : Promise.resolve({ data: emptyData.presenceSummary, error: null })
       ]);
 
-      const firstError = [produtos, categorias, marcas, montadoras, modelosVeiculo, produtoModelosVeiculo, aplicacoes, usuarios, leads, permissoes, produtoAplicacoes, settings, telemetry, auditLogs].find((item) => item.error);
+      const firstError = [produtos, categorias, marcas, montadoras, modelosVeiculo, produtoModelosVeiculo, aplicacoes, usuarios, leads, permissoes, produtoAplicacoes, settings, telemetry, auditLogs, presence, presenceSummary].find((item) => item.error);
       if (firstError?.error) throw firstError.error;
 
       setData({
@@ -542,7 +553,9 @@ export default function Page() {
         produtoAplicacoes: produtoAplicacoes.data || [],
         settings: (settings.data as AppSettings | null) || {},
         telemetry: telemetry.data || [],
-        auditLogs: auditLogs.data || []
+        auditLogs: auditLogs.data || [],
+        presence: presence.data || [],
+        presenceSummary: (presenceSummary.data as PresenceCommercialSummary | null) || emptyData.presenceSummary
       });
       void trackAdminTelemetry({
         eventType: "load_time",
@@ -626,6 +639,56 @@ export default function Page() {
     });
   }, [active, adminUser, sessionToken]);
 
+  useEffect(() => {
+    if (!sessionToken || !adminUser || !isMaster(adminUser.role)) return;
+    let mounted = true;
+    const refreshPresence = async () => {
+      const [presence, summary, telemetry, users] = await Promise.all([
+        supabase.from("AppPresenceSession").select("*").order("lastSeenAt", { ascending: false }).limit(500).returns<PresenceSession[]>(),
+        supabase.rpc("get_presence_commercial_summary"),
+        supabase.from("AppTelemetryEvent").select("*").order("createdAt", { ascending: false }).limit(1000).returns<TelemetryEvent[]>(),
+        supabase.from("User").select(userSelectFields).order("name").returns<Usuario[]>()
+      ]);
+      if (!mounted || presence.error || summary.error || telemetry.error || users.error) return;
+      setData((current) => ({ ...current, presence: presence.data || [], presenceSummary: (summary.data as PresenceCommercialSummary | null) || current.presenceSummary, telemetry: telemetry.data || [], usuarios: users.data || [] }));
+    };
+    const timer = setInterval(() => void refreshPresence(), 15000);
+    const channel = supabase.channel("admin-presence-live").on("postgres_changes", { event: "*", schema: "public", table: "AppPresenceSession" }, () => void refreshPresence()).subscribe();
+    return () => { mounted = false; clearInterval(timer); void supabase.removeChannel(channel); };
+  }, [adminUser, sessionToken]);
+
+  useEffect(() => {
+    if (!sessionToken || !adminUser) return;
+    let mounted = true;
+    const heartbeat = async () => {
+      if (!mounted || document.visibilityState === "hidden") return;
+      if (Date.now() - adminLocation.current.fetchedAt > 6 * 60 * 60 * 1000) {
+        try {
+          const response = await fetch("https://ipwho.is/");
+          const location = await response.json() as { success?: boolean; city?: string; region?: string; country?: string };
+          adminLocation.current = location.success === false ? { city: null, state: null, country: null, fetchedAt: Date.now() } : { city: location.city || null, state: location.region || null, country: location.country || null, fetchedAt: Date.now() };
+        } catch { adminLocation.current.fetchedAt = Date.now(); }
+      }
+      const connection = (navigator as Navigator & { connection?: { type?: string; effectiveType?: string } }).connection;
+      const rawNetwork = `${connection?.type || ""} ${connection?.effectiveType || ""}`.toLowerCase();
+      const network = rawNetwork.includes("wifi") ? "Wi-Fi" : /(^|\\s)(2g|3g|4g|5g)/.test(rawNetwork) ? "Dados móveis" : "Não informado";
+      await supabase.rpc("heartbeat_app_presence", {
+        p_session_id: adminPresenceSession.current, p_visitor_id: adminVisitorId.current,
+        p_route: "admin-web", p_screen: active, p_source: "ADMIN_WEB",
+        p_device_type: "Navegador", p_operating_system: navigator.platform || "web",
+        p_network_type: network, p_city: adminLocation.current.city, p_state: adminLocation.current.state, p_country: adminLocation.current.country
+      });
+    };
+    void heartbeat();
+    const timer = setInterval(() => void heartbeat(), 30000);
+    const visibility = () => {
+      if (document.visibilityState === "visible") void heartbeat();
+      else void supabase.rpc("end_app_presence", { p_session_id: adminPresenceSession.current });
+    };
+    document.addEventListener("visibilitychange", visibility);
+    return () => { mounted = false; clearInterval(timer); document.removeEventListener("visibilitychange", visibility); };
+  }, [active, adminUser, sessionToken]);
+
   if (authLoading && !sessionToken) return <FullLoader label="Validando acesso administrativo..." />;
   if (!sessionToken || !adminUser) return <LoginScreen onLogin={login} error={loginError} loading={authLoading} />;
   const visibleTabs = visibleTabsFor(adminUser.role);
@@ -680,7 +743,7 @@ export default function Page() {
           {activeTab === "Montadoras" && <VehicleSection data={data} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Aplicações" && <Applications items={data.aplicacoes} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Leads" && <Leads leads={data.leads} products={data.produtos} query={query} reload={reload} notify={notify} canCompleteDeletion={isMaster(adminUser.role)} />}
-          {activeTab === "Usuários" && <UsersSection users={data.usuarios} query={query} reload={reload} notify={notify} adminUser={adminUser} />}
+          {activeTab === "Usuários" && <UsersSection users={data.usuarios} presence={data.presence} query={query} reload={reload} notify={notify} adminUser={adminUser} />}
           {activeTab === "Permissões" && <PermissionsSectionV2 permissions={data.permissoes} query={query} reload={reload} notify={notify} />}
           {activeTab === "Diagnóstico" && <Diagnostics data={data} />}
           {activeTab === "Catálogo PDF" && <CatalogPdfSection data={data} reload={reload} notify={notify} />}
@@ -758,6 +821,25 @@ function Dashboard({ data, setActive, role }: { data: AppData; setActive: (tab: 
   const maxLeads = Math.max(1, ...lastSevenDays.map((item) => item.value));
   const topCategories = data.categorias.map((category) => ({ name: category.nome, value: data.produtos.filter((product) => product.categoriaId === category.id).length })).sort((a, b) => b.value - a.value).slice(0, 5);
   const maxCategory = Math.max(1, ...topCategories.map((item) => item.value));
+  const commercialCities = data.presenceSummary.cities.map((city) => {
+    const normalizedCity = city.city.toLocaleLowerCase("pt-BR");
+    const events = data.telemetry.filter((event) => (event.city || "").toLocaleLowerCase("pt-BR") === normalizedCity);
+    const productViews = events.filter((event) => event.eventType === "product_view").length;
+    const searches = events.filter((event) => event.eventType === "search_results" || event.eventType === "search_zero_results").length;
+    const zeroResults = events.filter((event) => event.eventType === "search_zero_results").length;
+    const contacts = events.filter((event) => ["whatsapp_open", "quote_sent"].includes(event.eventType)).length;
+    const topValue = (values: string[]) => Object.entries(values.reduce<Record<string, number>>((acc, value) => { if (value) acc[value] = (acc[value] || 0) + 1; return acc; }, {})).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
+    const topProduct = topValue(events.filter((event) => event.eventType === "product_view").map((event) => String(event.metadata?.code || event.metadata?.productId || "")));
+    const topSearch = topValue(events.filter((event) => event.eventType === "search_results" || event.eventType === "search_zero_results").map((event) => String(event.metadata?.query || "")));
+    const conversion = productViews ? Math.round((contacts / productViews) * 100) : 0;
+    const covered = data.usuarios.some((user) => user.status === "ACTIVE" && ["CLIENTE", "REPRESENTANTE"].includes(user.role) && (user.city || "").toLocaleLowerCase("pt-BR") === normalizedCity);
+    const recent = data.presenceSummary.daily.filter((row) => row.city.toLocaleLowerCase("pt-BR") === normalizedCity);
+    const recentSessions = recent.slice(-3).reduce((total, row) => total + row.sessions, 0);
+    const priorSessions = recent.slice(0, -3).reduce((total, row) => total + row.sessions, 0);
+    const growth = priorSessions ? Math.round(((recentSessions - priorSessions) / priorSessions) * 100) : recentSessions ? 100 : 0;
+    const opportunityScore = city.sessions + searches * 2 + zeroResults * 3 + Math.max(0, 20 - conversion) + (covered ? 0 : 25);
+    return { ...city, productViews, searches, zeroResults, contacts, conversion, covered, growth, opportunityScore, topProduct, topSearch };
+  }).filter((row) => row.city !== "Não informado").sort((a, b) => b.opportunityScore - a.opportunityScore);
   const cards = [
     { label: "Produtos cadastrados", value: String(data.produtos.length), helper: `${activeProducts} ativos`, tab: "Produtos", icon: Boxes, tone: "blue" },
     { label: "Novos leads", value: String(newLeads), helper: `${data.leads.length} no total`, tab: "Leads", icon: MessageCircle, tone: "yellow" },
@@ -776,6 +858,24 @@ function Dashboard({ data, setActive, role }: { data: AppData; setActive: (tab: 
           </button>
         ))}
       </div>
+      {isMaster(role) && <section className="space-y-6">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          <Summary label="Online agora" value={data.presenceSummary.onlineTotal} />
+          <Summary label="Visitantes online" value={data.presenceSummary.onlineVisitors} />
+          <Summary label="Usuários online" value={data.presenceSummary.onlineLoggedIn} />
+          <Summary label="Visitantes em 30 dias" value={data.presenceSummary.visitors30d} />
+          <Summary label="Retornos em 30 dias" value={data.presenceSummary.returningVisitors30d} />
+        </div>
+        <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
+          <Panel title="Oportunidades comerciais por cidade">
+            <Table><thead><tr><Th>Cidade</Th><Th>Acessos</Th><Th>Visitantes</Th><Th>Produto em alta</Th><Th>Busca em alta</Th><Th>Sem resultado</Th><Th>Conversão</Th><Th>Cobertura</Th></tr></thead><tbody>{commercialCities.slice(0, 12).map((row) => <tr key={`${row.city}-${row.state}`}><Td><span className="font-black">{row.city}/{row.state}</span><div className={`text-xs font-bold ${row.growth >= 0 ? "text-emerald-700" : "text-red-700"}`}>{row.growth >= 0 ? "+" : ""}{row.growth}% na semana</div></Td><Td>{row.sessions}</Td><Td>{row.visitors}</Td><Td>{row.topProduct}</Td><Td>{row.topSearch}</Td><Td>{row.zeroResults}</Td><Td>{row.conversion}%</Td><Td>{row.covered ? <span className="status-pill bg-emerald-100 text-emerald-800">Atendida</span> : <span className="status-pill bg-amber-100 text-amber-800">Oportunidade</span>}</Td></tr>)}</tbody></Table>
+            {!commercialCities.length && <div className="py-10 text-center text-sm text-muted">As cidades aparecerão conforme novos acessos forem registrados.</div>}
+          </Panel>
+          <Panel title="Conexões online">
+            <div className="space-y-4">{data.presenceSummary.networks.map((item) => <div key={item.network}><div className="mb-2 flex items-center justify-between text-sm"><span className="font-bold">{item.network}</span><span className="font-black">{item.sessions}</span></div><div className="progress-track"><div className="progress-fill progress-0" style={{ width: `${data.presenceSummary.onlineTotal ? (item.sessions / data.presenceSummary.onlineTotal) * 100 : 0}%` }} /></div></div>)}{!data.presenceSummary.networks.length && <div className="py-10 text-center text-sm text-muted">Nenhum acesso online neste momento.</div>}</div>
+          </Panel>
+        </div>
+      </section>}
       <div className="grid gap-6 xl:grid-cols-[1.45fr_1fr]">
         <Panel title="Entrada de leads — últimos 7 dias"><div className="chart-bars">{lastSevenDays.map((item) => <div key={item.label} className="chart-column"><div className="chart-value">{item.value}</div><div className="chart-track"><div className="chart-fill" style={{ height: `${Math.max(8, (item.value / maxLeads) * 100)}%` }} /></div><div className="chart-label">{item.label}</div></div>)}</div></Panel>
         <Panel title="Distribuição do catálogo"><div className="space-y-4">{topCategories.length ? topCategories.map((item, index) => <div key={item.name}><div className="mb-2 flex items-center justify-between text-sm"><span className="font-bold">{item.name}</span><span className="font-black">{item.value}</span></div><div className="progress-track"><div className={`progress-fill progress-${index}`} style={{ width: `${(item.value / maxCategory) * 100}%` }} /></div></div>) : <div className="py-10 text-center text-sm text-muted">Sem categorias para exibir.</div>}</div></Panel>
@@ -898,11 +998,13 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
       sheet.columns = headers.map((header) => ({ header, key: header, width: 20 }));
       sheet.addRows(rows);
       downloadBlob("briland-produtos.xlsx", await workbook.xlsx.writeBuffer(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      void trackAdminTelemetry({ eventType: "admin_export", screen: "Produtos", route: "admin-web", success: true, metadata: { format: "xlsx", rows: products.length } });
       return;
     }
     const headers = Object.keys(rows[0] || { codigoInterno: "", nome: "" });
     const csv = [headers.join(","), ...rows.map((row) => headers.map((key) => csvEscape((row as Record<string, unknown>)[key])).join(","))].join("\n");
     downloadBlob("briland-produtos.csv", csv, "text/csv;charset=utf-8");
+    void trackAdminTelemetry({ eventType: "admin_export", screen: "Produtos", route: "admin-web", success: true, metadata: { format: "csv", rows: products.length } });
   };
 
   const importProducts = async (file: File) => {
@@ -1493,13 +1595,16 @@ function Leads({ leads, products, query, reload, notify, canCompleteDeletion }: 
   );
 }
 
-function UsersSection({ users, query, reload, notify, adminUser }: { users: Usuario[]; query: string; reload: () => Promise<void>; notify: (message: string) => void; adminUser: Usuario }) {
+function UsersSection({ users, presence, query, reload, notify, adminUser }: { users: Usuario[]; presence: PresenceSession[]; query: string; reload: () => Promise<void>; notify: (message: string) => void; adminUser: Usuario }) {
   const [editing, setEditing] = useState<Usuario | null>(null);
   const [creating, setCreating] = useState(false);
   const filtered = users.filter((user) => [user.name, user.email, user.company, user.phone, user.cnpj, user.role, user.status].join(" ").toLowerCase().includes(query.toLowerCase()));
   const pending = users.filter((user) => user.status === "PENDING").length;
   const activeAdmins = users.filter((user) => user.status === "ACTIVE" && (isMaster(user.role) || isCollaborator(user.role))).length;
-  return <><div className="mb-5 flex justify-end"><button className="btn-yellow" onClick={() => setCreating(true)}><Plus size={17} /> Cadastrar usuário</button></div><div className="mb-5 grid gap-4 md:grid-cols-3"><Summary label="Pendentes" value={pending} /><Summary label="Usuários ativos" value={users.filter((user) => user.status === "ACTIVE").length} /><Summary label="Admins ativos" value={activeAdmins} /></div><Panel title={`${filtered.length} usuários`}><Table><thead><tr><Th>Nome</Th><Th>E-mail</Th><Th>Empresa</Th><Th>Telefone</Th><Th>CNPJ</Th><Th>Role</Th><Th>Status</Th><Th /></tr></thead><tbody>{filtered.map((user) => <tr key={user.id}><Td>{user.name}</Td><Td>{user.email}</Td><Td>{user.company}</Td><Td>{user.phone || "-"}</Td><Td>{user.cnpj || "-"}</Td><Td>{user.role}</Td><Td>{user.status}</Td><Td><button className="icon-btn" onClick={() => setEditing(user)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table></Panel>{creating && <UserModal reload={reload} notify={notify} adminUser={adminUser} onClose={() => setCreating(false)} />}{editing && <UserModal user={editing} reload={reload} notify={notify} adminUser={adminUser} onClose={() => setEditing(null)} />}</>;
+  const latestByUser = new Map<string, PresenceSession>();
+  presence.forEach((session) => { if (session.userId && !latestByUser.has(session.userId)) latestByUser.set(session.userId, session); });
+  const isOnline = (session?: PresenceSession) => Boolean(session && !session.endedAt && Date.now() - Date.parse(session.lastSeenAt) <= 120000);
+  return <><div className="mb-5 flex justify-end"><button className="btn-yellow" onClick={() => setCreating(true)}><Plus size={17} /> Cadastrar usuário</button></div><div className="mb-5 grid gap-4 md:grid-cols-4"><Summary label="Online agora" value={Array.from(latestByUser.values()).filter(isOnline).length} /><Summary label="Pendentes" value={pending} /><Summary label="Usuários ativos" value={users.filter((user) => user.status === "ACTIVE").length} /><Summary label="Admins ativos" value={activeAdmins} /></div><Panel title={`${filtered.length} usuários`}><Table><thead><tr><Th>Nome</Th><Th>E-mail</Th><Th>Empresa</Th><Th>Presença</Th><Th>Último login</Th><Th>Última origem</Th><Th>Role</Th><Th>Status</Th><Th /></tr></thead><tbody>{filtered.map((user) => { const session = latestByUser.get(user.id); return <tr key={user.id}><Td>{user.name}</Td><Td>{user.email}</Td><Td>{user.company}</Td><Td>{isOnline(session) ? <span className="status-pill bg-emerald-100 text-emerald-800">Online agora</span> : "Offline"}</Td><Td>{formatLocalDateTime(user.lastLoginAt)}</Td><Td>{session ? `${session.city || "Não informado"}/${session.state || "-"} • ${session.deviceType || "-"} • ${session.networkType || "-"}` : "-"}</Td><Td>{user.role}</Td><Td>{user.status}</Td><Td><button className="icon-btn" onClick={() => setEditing(user)}><Pencil size={16} /></button></Td></tr>; })}</tbody></Table></Panel>{creating && <UserModal reload={reload} notify={notify} adminUser={adminUser} onClose={() => setCreating(false)} />}{editing && <UserModal user={editing} reload={reload} notify={notify} adminUser={adminUser} onClose={() => setEditing(null)} />}</>;
 }
 
 function UserModal({ user, reload, notify, adminUser, onClose }: { user?: Usuario; reload: () => Promise<void>; notify: (message: string) => void; adminUser: Usuario; onClose: () => void }) {
@@ -1885,6 +1990,9 @@ function Diagnostics({ data }: { data: AppData }) {
   const discoveryDurations = journeyEvents.filter((event) => event.eventType === "product_view" && event.durationMs != null).map((event) => Number(event.durationMs));
   const averageDiscoveryTime = discoveryDurations.length ? Math.round(discoveryDurations.reduce((total, value) => total + value, 0) / discoveryDurations.length) : 0;
   const returningSessions = journeyEvents.filter((event) => event.eventType === "session_start" && event.metadata?.returning === true).length;
+  const downloadsStarted = telemetry24h.filter((event) => event.eventType === "download_started").length;
+  const downloadsCompleted = telemetry24h.filter((event) => event.eventType === "download_completed").length;
+  const downloadsFailed = telemetry24h.filter((event) => event.eventType === "download_failed").length;
   const orphanVehicleLinks = data.produtoModelosVeiculo.filter((link) => !data.produtos.some((product) => product.id === link.produtoId) || !data.modelosVeiculo.some((model) => model.id === link.modeloId));
   const slowScreens = loadRows.filter((row) => row.avg > performanceLimitMs || row.max > criticalLoadLimitMs);
   const detectedProblems = [
@@ -1932,6 +2040,9 @@ function Diagnostics({ data }: { data: AppData }) {
           <Info label="Orçamentos enviados" value={String(eventCount("quote_sent"))} />
           <Info label="Sessões de retorno" value={String(returningSessions)} />
           <Info label="Completude média" value={`${catalogCompleteness}%`} />
+          <Info label="Downloads iniciados (24h)" value={String(downloadsStarted)} />
+          <Info label="Downloads concluídos (24h)" value={String(downloadsCompleted)} />
+          <Info label="Downloads com falha (24h)" value={String(downloadsFailed)} />
         </div>
       </Panel>
       <Panel title="Produtos com cadastro incompleto">

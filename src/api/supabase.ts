@@ -10,6 +10,20 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 }
 
 export const CONFIG_STORAGE_KEY = "briland-admin-config";
+type TelemetryContext = {
+  sessionId?: string | null;
+  visitorId?: string | null;
+  userId?: string | null;
+  userRole?: string | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+};
+let telemetryContext: TelemetryContext = {};
+
+export function setTelemetryContext(next: TelemetryContext) {
+  telemetryContext = { ...telemetryContext, ...next };
+}
 
 export const supabaseRealtime = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
@@ -79,6 +93,7 @@ export async function trackTelemetry(payload: Record<string, unknown>, token?: s
   try {
     await supabasePostMinimal("AppTelemetryEvent", {
       id: `tel_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      ...telemetryContext,
       ...payload
     }, token);
   } catch {

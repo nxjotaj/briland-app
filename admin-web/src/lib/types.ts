@@ -48,7 +48,20 @@ export type ProdutoModeloVeiculoView = ProdutoModeloVeiculo & { montadoraNome?: 
 export type Usuario = { id: string; name: string; company?: string | null; email: string; role: Role; status: "PENDING" | "ACTIVE" | "INACTIVE"; notes?: string | null; phone?: string | null; cnpj?: string | null; address?: string | null; city?: string | null; state?: string | null; registrationNotes?: string | null; approvedAt?: string | null; approvedBy?: string | null; lastLoginAt?: string | null; createdAt?: string | null; updatedAt?: string | null; authUserId?: string | null };
 export type Lead = { id: string; nome: string; empresa?: string | null; telefone?: string | null; email?: string | null; cidade?: string | null; estado?: string | null; produtoId?: string | null; mensagem?: string | null; origem?: string | null; status?: string | null; createdAt?: string | null };
 export type Permission = { id: string; fieldKey: string; fieldLabel: string; visibleToVisitor: boolean; visibleToNonClient: boolean; visibleToClient: boolean; visibleToRepresentative: boolean; visibleToAdmin: boolean };
-export type TelemetryEvent = { id: string; eventType: string; screen?: string | null; route?: string | null; userId?: string | null; userRole?: string | null; durationMs?: number | null; success?: boolean | null; message?: string | null; metadata?: Record<string, unknown> | null; createdAt?: string | null };
+export type TelemetryEvent = { id: string; eventType: string; screen?: string | null; route?: string | null; userId?: string | null; userRole?: string | null; sessionId?: string | null; visitorId?: string | null; city?: string | null; state?: string | null; country?: string | null; durationMs?: number | null; success?: boolean | null; message?: string | null; metadata?: Record<string, unknown> | null; createdAt?: string | null };
+export type PresenceSession = { sessionId: string; visitorId: string; userId?: string | null; userName?: string | null; userRole: string; route?: string | null; screen?: string | null; source: string; deviceType?: string | null; operatingSystem?: string | null; networkType?: string | null; city?: string | null; state?: string | null; country?: string | null; startedAt: string; lastSeenAt: string; endedAt?: string | null };
+export type PresenceCommercialSummary = {
+  onlineTotal: number;
+  onlineLoggedIn: number;
+  onlineVisitors: number;
+  sessions30d: number;
+  visitors30d: number;
+  returningVisitors30d: number;
+  cities: Array<{ city: string; state: string; sessions: number; visitors: number; authenticated: number; lastAccess?: string | null }>;
+  daily: Array<{ day: string; city: string; state: string; sessions: number }>;
+  networks: Array<{ network: string; sessions: number }>;
+  generatedAt?: string | null;
+};
 export type AuditLog = { id: string; actorUserId?: string | null; actorEmail?: string | null; action: string; entityType: string; entityId?: string | null; ipAddress?: string | null; userAgent?: string | null; metadata?: Record<string, unknown> | null; createdAt?: string | null };
 export type SocialLinks = { instagram: string; linkedin: string; whatsapp: string; site: string };
 export type MediaSettings = { initialImage: string; homeImage: string };
@@ -100,4 +113,6 @@ export type AppData = {
   settings: AppSettings;
   telemetry: TelemetryEvent[];
   auditLogs: AuditLog[];
+  presence: PresenceSession[];
+  presenceSummary: PresenceCommercialSummary;
 };
