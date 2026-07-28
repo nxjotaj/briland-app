@@ -181,7 +181,8 @@ async function prepareImage(
   pdf: PDFDocument,
   url: string,
   warning: Omit<CatalogImageWarning, "reason" | "detail">,
-  warnings: CatalogImageWarning[]
+  warnings: CatalogImageWarning[],
+  options: { trimWhitespace?: boolean } = {}
 ): Promise<LoadedImage | null> {
   try {
     const response = await fetch(url);
@@ -226,7 +227,8 @@ async function prepareImage(
         }
       }
     }
-    const hasSafeBounds = found && maxX - minX > sourceWidth * 0.08 && maxY - minY > sourceHeight * 0.08;
+    const trimWhitespace = options.trimWhitespace !== false;
+    const hasSafeBounds = trimWhitespace && found && maxX - minX > sourceWidth * 0.08 && maxY - minY > sourceHeight * 0.08;
     const padX = Math.round(sourceWidth * 0.035);
     const padY = Math.round(sourceHeight * 0.035);
     const sx = hasSafeBounds ? Math.max(0, minX - padX) : 0;
@@ -361,6 +363,11 @@ function drawCover(
   cover: LoadedImage | null,
   settings: Required<Pick<CatalogPdfEditorialSettings, "title" | "edition">>
 ) {
+  if (cover) {
+    page.drawRectangle({ x: 0, y: 0, width: A4.width, height: A4.height, color: COLORS.navy });
+    fitImage(page, cover, 0, 0, A4.width, A4.height, 1);
+    return;
+  }
   page.drawRectangle({ x: 0, y: 0, width: A4.width, height: A4.height, color: COLORS.navy });
   page.drawRectangle({ x: 0, y: 0, width: 18, height: A4.height, color: COLORS.yellow });
   page.drawCircle({ x: 510, y: 760, size: 185, color: COLORS.navySoft });
@@ -369,14 +376,9 @@ function drawCover(
   page.drawText("SOLUCOES AUTOMOTIVAS", { x: 54, y: 690, size: 10, font: fonts.bold, color: COLORS.yellow });
   drawLines(page, wrapLines(settings.title.toUpperCase(), fonts.display, 40, 465, 3), 52, 613, fonts.display, 40, COLORS.white, 45);
   page.drawText(settings.edition.toUpperCase(), { x: 54, y: 472, size: 14, font: fonts.bold, color: COLORS.yellow });
-  if (cover) {
-    page.drawRectangle({ x: 52, y: 85, width: 491, height: 330, color: COLORS.white });
-    fitImage(page, cover, 52, 85, 491, 330, 0.91);
-  } else {
-    page.drawRectangle({ x: 52, y: 115, width: 491, height: 245, color: COLORS.navySoft, borderColor: rgb(0.12, 0.2, 0.31), borderWidth: 1 });
-    page.drawText("TECNOLOGIA, DESEMPENHO E CONFIANCA", { x: 82, y: 227, size: 18, font: fonts.display, color: COLORS.white });
-    page.drawRectangle({ x: 82, y: 203, width: 120, height: 5, color: COLORS.yellow });
-  }
+  page.drawRectangle({ x: 52, y: 115, width: 491, height: 245, color: COLORS.navySoft, borderColor: rgb(0.12, 0.2, 0.31), borderWidth: 1 });
+  page.drawText("TECNOLOGIA, DESEMPENHO E CONFIANCA", { x: 82, y: 227, size: 18, font: fonts.display, color: COLORS.white });
+  page.drawRectangle({ x: 82, y: 203, width: 120, height: 5, color: COLORS.yellow });
 }
 
 function drawInstitutional(
@@ -428,8 +430,23 @@ async function drawCategoryOpener(
   logo: PDFImage | null,
   group: { category: Categoria; products: Produto[] },
   index: number,
-  warnings: CatalogImageWarning[]
+  warnings: CatalogImageWarning[],
+  categoryArtUrl?: string
 ) {
+  if (categoryArtUrl) {
+    const artwork = await prepareImage(
+      pdf,
+      categoryArtUrl,
+      { productName: `Arte editorial da categoria ${group.category.nome}` },
+      warnings,
+      { trimWhitespace: false }
+    );
+    if (artwork) {
+      page.drawRectangle({ x: 0, y: 0, width: A4.width, height: A4.height, color: categoryColor(index) });
+      fitImage(page, artwork, 0, 0, A4.width, A4.height, 1);
+      return;
+    }
+  }
   const color = categoryColor(index);
   page.drawRectangle({ x: 0, y: 0, width: A4.width, height: A4.height, color });
   page.drawRectangle({ x: 0, y: 0, width: 18, height: A4.height, color: COLORS.yellow });
@@ -598,12 +615,13 @@ function drawApplicationTables(pdf: PDFDocument, fonts: Fonts, logo: PDFImage | 
 }
 
 function drawBackCover(page: PDFPage, fonts: Fonts, logo: PDFImage | null, backCover: LoadedImage | null, contact: string, edition: string) {
+  if (backCover) {
+    page.drawRectangle({ x: 0, y: 0, width: A4.width, height: A4.height, color: COLORS.navy });
+    fitImage(page, backCover, 0, 0, A4.width, A4.height, 1);
+    return;
+  }
   page.drawRectangle({ x: 0, y: 0, width: A4.width, height: A4.height, color: COLORS.navy });
   page.drawRectangle({ x: 0, y: 0, width: A4.width, height: 14, color: COLORS.yellow });
-  if (backCover) {
-    page.drawRectangle({ x: 0, y: 345, width: A4.width, height: 497, color: COLORS.white });
-    fitImage(page, backCover, 0, 345, A4.width, 497, 1);
-  }
   drawLogo(page, logo, fonts, 54, 235, 190, 55, true);
   page.drawText("CONHECA A LINHA COMPLETA.", { x: 54, y: 190, size: 21, font: fonts.display, color: COLORS.white });
   drawLines(page, wrapLines(contact, fonts.regular, 9.5, 455, 5), 54, 155, fonts.regular, 9.5, rgb(0.8, 0.85, 0.9), 15);
@@ -649,10 +667,10 @@ export async function buildCatalogPdf(
     || "Fale com a equipe Briland para informacoes comerciais, disponibilidade e suporte.";
 
   const cover = editorial.coverImage
-    ? await prepareImage(pdf, editorial.coverImage, { productName: "Capa do catalogo" }, warnings)
+    ? await prepareImage(pdf, editorial.coverImage, { productName: "Capa do catalogo" }, warnings, { trimWhitespace: false })
     : null;
   const backCover = editorial.backCoverImage
-    ? await prepareImage(pdf, editorial.backCoverImage, { productName: "Contracapa do catalogo" }, warnings)
+    ? await prepareImage(pdf, editorial.backCoverImage, { productName: "Contracapa do catalogo" }, warnings, { trimWhitespace: false })
     : null;
 
   const coverPage = pdf.addPage([A4.width, A4.height]);
@@ -668,7 +686,7 @@ export async function buildCatalogPdf(
     const group = groups[categoryIndex];
     const opener = pdf.addPage([A4.width, A4.height]);
     categoryTargets.set(group.category.id, opener);
-    await drawCategoryOpener(pdf, opener, fonts, logo, group, categoryIndex, warnings);
+    await drawCategoryOpener(pdf, opener, fonts, logo, group, categoryIndex, warnings, editorial.categoryArt?.[group.category.id]);
     const presentations = group.products.map((product) => buildPresentation(product, group.category, data, role));
     allPresentations.push(...presentations);
     const grid = chooseGrid(presentations);

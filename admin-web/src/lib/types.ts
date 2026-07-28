@@ -100,6 +100,7 @@ export type CatalogPdfEditorialSettings = {
   contactText?: string;
   coverImage?: string;
   backCoverImage?: string;
+  categoryArt?: Record<string, string>;
 };
 export type CatalogPdfSettings = Partial<Record<CatalogPdfRole, CatalogPdfEntry>> & {
   editorial?: CatalogPdfEditorialSettings;

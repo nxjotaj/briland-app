@@ -1683,20 +1683,23 @@ function CatalogPdfSection({ data, reload, notify }: { data: AppData; reload: ()
   const saveEditorial = async () => {
     await saveSetting("catalogPdf", { ...settings, editorial }, reload, notify);
   };
+  const versionedCatalogPath = (role: CatalogPdfRole, version: string) =>
+    `catalogo/gerados/${role.toLowerCase().replace("_", "-")}/catalogo-${version}.pdf`;
   const generate = async (role: CatalogPdfRole) => {
     setGenerating(role);
     try {
       const result = await buildCatalogPdf(data, role, editorial);
       setWarnings(result.warnings);
       const blob = new Blob([pdfBytesToArrayBuffer(result.bytes)], { type: "application/pdf" });
-      const path = `catalogo/catalogo-${role.toLowerCase().replace("_", "-")}.pdf`;
+      const generatedAt = new Date().toISOString();
+      const path = versionedCatalogPath(role, generatedAt.replace(/\D/g, ""));
       const url = await uploadCatalogBlob(path, blob, "application/pdf");
       await saveSetting("catalogPdf", {
         ...settings,
         editorial,
         [role]: {
           url,
-          generatedAt: new Date().toISOString(),
+          generatedAt,
           role,
           productCount: data.produtos.filter((product) => product.ativo !== false).length,
           pageCount: result.pageCount,
@@ -1715,17 +1718,18 @@ function CatalogPdfSection({ data, reload, notify }: { data: AppData; reload: ()
     try {
       let nextSettings = { ...settings, editorial };
       let latestWarnings: CatalogImageWarning[] = [];
+      const generationVersion = new Date().toISOString();
       for (const role of catalogPdfRoles) {
         const result = await buildCatalogPdf(data, role, editorial);
         latestWarnings = result.warnings;
         const blob = new Blob([pdfBytesToArrayBuffer(result.bytes)], { type: "application/pdf" });
-        const path = `catalogo/catalogo-${role.toLowerCase().replace("_", "-")}.pdf`;
+        const path = versionedCatalogPath(role, generationVersion.replace(/\D/g, ""));
         const url = await uploadCatalogBlob(path, blob, "application/pdf");
         nextSettings = {
           ...nextSettings,
           [role]: {
             url,
-            generatedAt: new Date().toISOString(),
+            generatedAt: generationVersion,
             role,
             productCount: data.produtos.filter((product) => product.ativo !== false).length,
             pageCount: result.pageCount,
@@ -1751,8 +1755,27 @@ function CatalogPdfSection({ data, reload, notify }: { data: AppData; reload: ()
           <Field label="Título institucional"><input className="input" placeholder="Bem-vindo à Briland" value={editorial.institutionalTitle || ""} onChange={(event) => setEditorial({ ...editorial, institutionalTitle: event.target.value })} /></Field>
           <Field label="Contato comercial"><textarea className="textarea" value={editorial.contactText || ""} onChange={(event) => setEditorial({ ...editorial, contactText: event.target.value })} /></Field>
           <div className="lg:col-span-2"><Field label="Apresentação institucional"><textarea className="textarea min-h-32" value={editorial.institutionalBody || ""} onChange={(event) => setEditorial({ ...editorial, institutionalBody: event.target.value })} /></Field></div>
-          <UploadBox label="Imagem de capa - recomendado 1600 x 1100 px" folder="catalogo/editorial/capa" value={editorial.coverImage} onUploaded={(url) => setEditorial({ ...editorial, coverImage: url })} />
-          <UploadBox label="Imagem de contracapa - recomendado 1600 x 1400 px" folder="catalogo/editorial/contracapa" value={editorial.backCoverImage} onUploaded={(url) => setEditorial({ ...editorial, backCoverImage: url })} />
+          <UploadBox label="Arte completa da capa - recomendado 1240 x 1754 px (A4 vertical)" folder="catalogo/editorial/capa" value={editorial.coverImage} onUploaded={(url) => setEditorial({ ...editorial, coverImage: url })} />
+          <UploadBox label="Arte completa da contracapa - recomendado 1240 x 1754 px (A4 vertical)" folder="catalogo/editorial/contracapa" value={editorial.backCoverImage} onUploaded={(url) => setEditorial({ ...editorial, backCoverImage: url })} />
+        </div>
+      </SettingsPanel>
+      <SettingsPanel title="Artes de abertura das categorias" onSave={saveEditorial}>
+        <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-950">
+          Cada arte substitui completamente a abertura automática daquela categoria. Ao trocar uma arte e gerar novamente, o PDF usa a versão atual.
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          {data.categorias.filter((category) => category.ativo !== false).map((category) => (
+            <UploadBox
+              key={category.id}
+              label={`${category.nome} - recomendado 1240 x 1754 px (A4 vertical)`}
+              folder={`catalogo/editorial/categorias/${category.slug || category.id}`}
+              value={editorial.categoryArt?.[category.id]}
+              onUploaded={(url) => setEditorial({
+                ...editorial,
+                categoryArt: { ...(editorial.categoryArt || {}), [category.id]: url }
+              })}
+            />
+          ))}
         </div>
       </SettingsPanel>
       <Panel title="Download PDF do catálogo">
