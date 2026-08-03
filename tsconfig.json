@@ -4,5 +4,5 @@
     "strict": true,
     "noEmit": true
   },
-  "exclude": ["admin-web"]
+  "exclude": ["admin-web", "catalog-web"]
 }

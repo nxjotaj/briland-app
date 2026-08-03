@@ -17,7 +17,7 @@ export async function loadCatalog(role:Role, token?:string):Promise<CatalogData>
     supabase.from("ModeloVeiculo").select("*").eq("ativo",true).order("nome"),
     supabase.rpc("get_visible_vehicle_applications"),
     supabase.rpc("get_app_settings"),
-    supabase.rpc("product_role_permissions", { requested_role:role })
+    supabase.rpc("get_current_product_permissions")
   ]);
   const error = [products,categories,brands,automakers,models,applications,settings].find(item=>item.error)?.error;
   if (error) throw error;

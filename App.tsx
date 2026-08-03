@@ -270,7 +270,7 @@ export default function App() {
     setError(null);
     try {
       const isPanelRole = isAdminRole(nextRole);
-      const [produtos, categorias, marcas, aplicacoes, montadoras, modelosVeiculo, produtoModelosVeiculo, appSettings] = await Promise.all([
+      const [visibleProducts, categorias, marcas, aplicacoes, montadoras, modelosVeiculo, produtoModelosVeiculo, appSettings, rolePermissions] = await Promise.all([
         supabaseRpc<Produto[]>("get_visible_products", { requested_role: nextRole }, token),
         supabaseGet<Categoria>("Categoria", "select=*&order=ordem.asc", token),
         supabaseGet<Marca>("Marca", "select=*", token),
@@ -278,8 +278,10 @@ export default function App() {
         supabaseGet<Montadora>("Montadora", "select=*&order=nome.asc", token),
         supabaseGet<ModeloVeiculo>("ModeloVeiculo", "select=*&order=nome.asc", token),
         supabaseRpc<ProdutoModeloVeiculoView[]>("get_visible_vehicle_applications", {}, token),
-        supabaseRpc<Record<string, unknown>>("get_app_settings", {}, token)
+        supabaseRpc<Record<string, unknown>>("get_app_settings", {}, token),
+        supabaseRpc<Record<string, boolean>>("get_current_product_permissions", {}, token)
       ]);
+      const produtos = visibleProducts.map((product) => ({ ...product, permissoesProduto: rolePermissions }));
       const [usuarios, leads, permissoes] = isPanelRole
         ? await Promise.all([
             supabaseGet<Usuario>("User", `select=${userSelect}`, token),
@@ -605,9 +607,14 @@ export default function App() {
   };
 
   const activeProducts = useMemo(() => data.produtos.filter((item) => item.ativo !== false), [data.produtos]);
+  const rolePermissions = activeProducts[0]?.permissoesProduto ?? {};
+  const rolePermission = (key: string) => rolePermissions[key] === true;
   const catalogPdfRole = catalogPdfRoleFor(role);
   const catalogPdfUrl = catalogPdfSettings[catalogPdfRole]?.url || "";
-  const catalogPdfAllowed = Boolean(catalogPdfUrl) && (activeProducts[0]?.permissoesProduto?.catalogPdfDownload ?? role !== "VISITANTE");
+  const catalogPdfAllowed = Boolean(catalogPdfUrl) && rolePermission("downloadCatalogButton") && rolePermission("catalogPdfDownload");
+  const quoteListAllowed = rolePermission("quoteButton");
+  const requestQuoteAllowed = rolePermission("botaoOrcamento");
+  const generalWhatsAppAllowed = rolePermission("whatsappButton");
   const categoryById = useMemo(() => new Map(data.categorias.map((item) => [item.id, item])), [data.categorias]);
   const brandById = useMemo(() => new Map(data.marcas.map((item) => [item.id, item])), [data.marcas]);
   const montadoraById = useMemo(() => new Map(data.montadoras.map((item) => [item.id, item])), [data.montadoras]);
@@ -946,7 +953,7 @@ export default function App() {
             <AdminScreen role={role} data={data} active={adminTab} setActive={setAdminTab} onBack={() => go("home")} onLogout={logout} reload={() => reload(role, authToken)} authToken={authToken} socialLinks={socialLinks} setSocialLinks={(links) => void saveAdminConfig(links, mediaSettings, aboutSettings)} mediaSettings={mediaSettings} setMediaSettings={(settings) => void saveAdminConfig(socialLinks, settings, aboutSettings)} aboutSettings={aboutSettings} setAboutSettings={(settings) => void saveAdminConfig(socialLinks, mediaSettings, settings)} onAction={(text) => notify("Painel admin", text)} />
           ) : (
             <>
-              <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} appearance={appearance} quoteCount={quoteCount} notificationCount={unreadNotificationCount} onQuote={() => go("quote")} onNotifications={() => go("notifications")} />
+              <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} appearance={appearance} quoteCount={quoteCount} notificationCount={unreadNotificationCount} showQuote={quoteListAllowed} onQuote={() => go("quote")} onNotifications={() => go("notifications")} />
               {error && <ErrorBanner message={error} onRetry={reload} />}
               {route === "home" && <HomeScreen go={openDirectCatalogRoute} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""} imageVersion={imageRefreshVersion} />}
               {route === "categories" && <CategoriesScreen categories={data.categorias} imageVersion={imageRefreshVersion} onPick={(id) => {
@@ -994,6 +1001,7 @@ export default function App() {
                   appearance={appearance}
                    savedScrollOffset={catalogScrollOffsets.current.products}
                    onScrollOffset={(offset) => { catalogScrollOffsets.current.products = offset; }}
+                   allowWhatsApp={generalWhatsAppAllowed}
                    onMissingProduct={openMissingProductHelp}
                    onVehicleFilterUsed={trackVehicleFilter}
                 />
@@ -1034,6 +1042,7 @@ export default function App() {
                   appearance={appearance}
                    savedScrollOffset={catalogScrollOffsets.current.promotions}
                    onScrollOffset={(offset) => { catalogScrollOffsets.current.promotions = offset; }}
+                   allowWhatsApp={generalWhatsAppAllowed}
                    onMissingProduct={openMissingProductHelp}
                    onVehicleFilterUsed={trackVehicleFilter}
                   promo
@@ -1075,6 +1084,7 @@ export default function App() {
                   appearance={appearance}
                    savedScrollOffset={catalogScrollOffsets.current.launches}
                    onScrollOffset={(offset) => { catalogScrollOffsets.current.launches = offset; }}
+                   allowWhatsApp={generalWhatsAppAllowed}
                    onMissingProduct={openMissingProductHelp}
                    onVehicleFilterUsed={trackVehicleFilter}
                   launch
@@ -1085,7 +1095,7 @@ export default function App() {
               )}
               {route === "detail" && !retainedCatalogRoute && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} imageVersion={imageRefreshVersion} selectedVehicle={selectedVehicleText} favorite={favoriteProductIds.includes(selectedProduct.id)} onFavorite={() => toggleFavorite(selectedProduct)} onQuote={() => addToQuote(selectedProduct)} onTrack={trackProductEvent} />}
               {route === "contact" && <ContactScreen onSubmit={createLead} />}
-              {route === "quote" && <QuoteScreen products={data.produtos} items={quoteItems} onChange={(productId, quantity) => { const next = { ...quoteItems }; if (quantity <= 0) delete next[productId]; else next[productId] = quantity; saveQuoteItems(next); }} onSendLead={() => void sendQuoteLead()} onSendWhatsapp={sendQuoteWhatsapp} />}
+              {route === "quote" && (quoteListAllowed || requestQuoteAllowed) && <QuoteScreen products={data.produtos} items={quoteItems} allowWhatsApp={generalWhatsAppAllowed} onChange={(productId, quantity) => { const next = { ...quoteItems }; if (quantity <= 0) delete next[productId]; else next[productId] = quantity; saveQuoteItems(next); }} onSendLead={() => void sendQuoteLead()} onSendWhatsapp={sendQuoteWhatsapp} />}
               {route === "notifications" && <NotificationsScreen notifications={catalogNotifications} products={data.produtos} onOpen={openNotification} />}
               {route === "about" && <AboutScreen settings={aboutSettings} />}
               {route === "privacy" && <PrivacyScreen />}
@@ -1096,7 +1106,7 @@ export default function App() {
         </SafeAreaView>
         )}
       </PageTransition>
-      <SideMenu visible={menuOpen} role={role} user={currentUser} links={socialLinks} onClose={() => setMenuOpen(false)} go={openDirectCatalogRoute} onLogout={() => void logout()} />
+      <SideMenu visible={menuOpen} role={role} user={currentUser} links={socialLinks} allowWhatsApp={generalWhatsAppAllowed} onClose={() => setMenuOpen(false)} go={openDirectCatalogRoute} onLogout={() => void logout()} />
     </View>
   );
 }
@@ -1177,7 +1187,7 @@ function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => voi
   );
 }
 
-function Header({ back, onBack, onMenu, appearance, quoteCount, notificationCount, onQuote, onNotifications }: { back?: boolean; onBack: () => void; onMenu: () => void; appearance: CatalogAppearance; quoteCount: number; notificationCount: number; onQuote: () => void; onNotifications: () => void }) {
+function Header({ back, onBack, onMenu, appearance, quoteCount, notificationCount, showQuote, onQuote, onNotifications }: { back?: boolean; onBack: () => void; onMenu: () => void; appearance: CatalogAppearance; quoteCount: number; notificationCount: number; showQuote: boolean; onQuote: () => void; onNotifications: () => void }) {
   return (
     <View style={styles.header}>
       <Pressable style={styles.iconButton} onPress={back ? onBack : onMenu}>
@@ -1186,7 +1196,7 @@ function Header({ back, onBack, onMenu, appearance, quoteCount, notificationCoun
       <LogoPlate compact logoUrl={appearance.logoUrl} />
       <View style={styles.headerActions}>
         <Pressable accessibilityRole="button" accessibilityLabel="Abrir notificações" style={styles.headerSmallButton} onPress={onNotifications}><Ionicons name="notifications-outline" size={23} color={colors.navy} />{notificationCount > 0 && <View style={styles.headerBadge}><Text style={styles.headerBadgeText}>{Math.min(notificationCount, 9)}</Text></View>}</Pressable>
-        <Pressable accessibilityRole="button" accessibilityLabel="Abrir lista de orçamento" style={styles.headerSmallButton} onPress={onQuote}><Ionicons name="document-text-outline" size={23} color={colors.navy} />{quoteCount > 0 && <View style={styles.headerBadge}><Text style={styles.headerBadgeText}>{Math.min(quoteCount, 9)}</Text></View>}</Pressable>
+        {showQuote && <Pressable accessibilityRole="button" accessibilityLabel="Abrir lista de orçamento" style={styles.headerSmallButton} onPress={onQuote}><Ionicons name="document-text-outline" size={23} color={colors.navy} />{quoteCount > 0 && <View style={styles.headerBadge}><Text style={styles.headerBadgeText}>{Math.min(quoteCount, 9)}</Text></View>}</Pressable>}
       </View>
     </View>
   );
@@ -1389,6 +1399,7 @@ function ProductList({
   appearance,
   savedScrollOffset,
   onScrollOffset,
+  allowWhatsApp,
   onMissingProduct,
   onVehicleFilterUsed,
   promo,
@@ -1428,6 +1439,7 @@ function ProductList({
   appearance: CatalogAppearance;
   savedScrollOffset: number;
   onScrollOffset: (offset: number) => void;
+  allowWhatsApp: boolean;
   onMissingProduct: (query: string) => void;
   onVehicleFilterUsed: (kind: "montadora" | "modelo", id: string | null) => void;
   promo?: boolean;
@@ -1516,7 +1528,7 @@ function ProductList({
         columnWrapperStyle={listMode === "grid" ? styles.productColumns : undefined}
         contentContainerStyle={styles.contentWithDock}
         ListHeaderComponent={listHeader}
-        ListEmptyComponent={<View style={styles.emptySearchCard}><Ionicons name="search-outline" size={38} color={colors.yellow} /><Text style={styles.emptySearchTitle}>Não encontramos essa peça</Text><Text style={styles.muted}>Revise o código ou fale com nossa equipe. Nós ajudamos a localizar a aplicação correta.</Text><Pressable style={styles.emptySearchButton} onPress={() => onMissingProduct(query)}><Ionicons name="logo-whatsapp" size={20} color={colors.white} /><Text style={styles.emptySearchButtonText}>Pedir ajuda pelo WhatsApp</Text></Pressable></View>}
+        ListEmptyComponent={<View style={styles.emptySearchCard}><Ionicons name="search-outline" size={38} color={colors.yellow} /><Text style={styles.emptySearchTitle}>Não encontramos essa peça</Text><Text style={styles.muted}>Revise o código ou fale com nossa equipe. Nós ajudamos a localizar a aplicação correta.</Text>{allowWhatsApp && <Pressable style={styles.emptySearchButton} onPress={() => onMissingProduct(query)}><Ionicons name="logo-whatsapp" size={20} color={colors.white} /><Text style={styles.emptySearchButtonText}>Pedir ajuda pelo WhatsApp</Text></Pressable>}</View>}
         initialNumToRender={6}
         maxToRenderPerBatch={6}
         updateCellsBatchingPeriod={50}
@@ -1533,18 +1545,18 @@ function ProductList({
         renderItem={({ item: product }) => (
           <Pressable style={[listMode === "grid" ? styles.productCard : styles.productListCard, { backgroundColor: appearance.surfaceColor, borderRadius: appearance.cardRadius }, promo && styles.promoCard, launch && styles.launchCard]} onPressIn={() => { const detailUrl = productImageUrl(product, "detail", imageVersion); if (detailUrl) void ExpoImage.prefetch(detailUrl); }} onPress={() => { onScrollOffset(latestScrollOffset.current); onOpen(product); }}>
             <View style={listMode === "grid" ? undefined : styles.listImageWrap}>
-              {product.imagemPrincipal ? <Image recyclingKey={product.id} source={{ uri: productImageUrl(product, "card", imageVersion) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : listMode === "grid" ? <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Sem foto cadastrada" card /> : <View style={styles.productListPlaceholder}><Ionicons name="image-outline" size={28} color={colors.yellow} /></View>}
+              {productPermission(product, "imagemPrincipal", false) && product.imagemPrincipal ? <Image recyclingKey={product.id} source={{ uri: productImageUrl(product, "card", imageVersion) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : listMode === "grid" ? <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Imagem não disponível para este acesso" card /> : <View style={styles.productListPlaceholder}><Ionicons name="image-outline" size={28} color={colors.yellow} /></View>}
               {promo && <Ribbon text="PROMOÇÃO" color={colors.red} />}
               {launch && <Ribbon text="NOVO" color={colors.yellow} />}
             </View>
             <View style={styles.productBody}>
-              <Text style={[styles.productCode, { color: appearance.primaryColor }]}>{product.codigoInterno || "Sem código"}</Text>
-              <Text style={styles.productName} numberOfLines={3}>{product.nome}</Text>
-              {appearance.showProductCategory && <Text style={styles.mutedSmall}>{categoryById.get(product.categoriaId ?? "")?.nome || "Sem categoria"}{appearance.showProductBrand && productPermission(product, "marca", true) ? ` • ${brandById.get(product.marcaId ?? "")?.nome || "Sem marca"}` : ""}</Text>}
+              {productPermission(product, "codigoInterno", false) && <Text style={[styles.productCode, { color: appearance.primaryColor }]}>{product.codigoInterno || "Sem código"}</Text>}
+              {productPermission(product, "nome", false) && <Text style={styles.productName} numberOfLines={3}>{product.nome}</Text>}
+              {appearance.showProductCategory && productPermission(product, "categoria", false) && <Text style={styles.mutedSmall}>{categoryById.get(product.categoriaId ?? "")?.nome || "Sem categoria"}{appearance.showProductBrand && productPermission(product, "marca", false) ? ` • ${brandById.get(product.marcaId ?? "")?.nome || "Sem marca"}` : ""}</Text>}
               <View style={styles.cardLine} />
-              <Meta icon="cube-outline" label="Caixa master" value={product.caixaMaster || "A cadastrar"} />
-              {productPermission(product, "ncm", role !== "VISITANTE") && <Meta icon="document-text-outline" label="NCM" value={product.ncm || "A cadastrar"} />}
-              {role === "VISITANTE" ? <Text style={[styles.loginHint, { color: appearance.accentColor }]}>Entrar para ver mais informações</Text> : <Text style={styles.price}>{money(product.preco)}</Text>}
+              {productPermission(product, "caixaMaster", false) && <Meta icon="cube-outline" label="Caixa master" value={product.caixaMaster || "A cadastrar"} />}
+              {productPermission(product, "ncm", false) && <Meta icon="document-text-outline" label="NCM" value={product.ncm || "A cadastrar"} />}
+              {productPermission(product, "preco", false) && <Text style={styles.price}>{money(product.preco)}</Text>}
             </View>
           </Pressable>
         )}
@@ -1608,16 +1620,29 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
     await Share.share({ title: `${product.codigoInterno || ""} — ${product.nome}`, message: `${product.codigoInterno || ""} — ${product.nome}\n${url}${image}`, url });
     onTrack("product_share", { productId: product.id, code: product.codigoInterno });
   };
-  const showBrand = productPermission(product, "marca", true);
-  const showCa = productPermission(product, "ca", role !== "VISITANTE" && role !== "NAO_CLIENTE");
-  const showManual = Boolean(product.manualPdf) && productPermission(product, "manualPdf", role !== "VISITANTE" && role !== "NAO_CLIENTE");
-  const showVehicleApplications = vehicleApplications.length > 0 && productPermission(product, "aplicacoesVeiculo", true);
-  const showQuote = productPermission(product, "botaoOrcamento", role !== "VISITANTE");
-  const showWhatsApp = productPermission(product, "botaoWhatsApp", role !== "VISITANTE");
+  const showImage = productPermission(product, "imagemPrincipal", false);
+  const showCode = productPermission(product, "codigoInterno", false);
+  const showName = productPermission(product, "nome", false);
+  const showShortDescription = productPermission(product, "descricaoCurta", false);
+  const showCategory = productPermission(product, "categoria", false);
+  const showBrand = productPermission(product, "marca", false);
+  const showNcm = productPermission(product, "ncm", false);
+  const showEan = productPermission(product, "ean", false);
+  const showMasterBox = productPermission(product, "caixaMaster", false);
+  const showCa = productPermission(product, "ca", false);
+  const showPrice = productPermission(product, "preco", false);
+  const showStock = productPermission(product, "estoque", false);
+  const showCompleteDescription = productPermission(product, "descricaoCompleta", false);
+  const showTechnicalSheet = productPermission(product, "fichaTecnica", false);
+  const showCommercialNote = productPermission(product, "observacaoComercial", false);
+  const showManual = Boolean(product.manualPdf) && productPermission(product, "manualPdf", false);
+  const showVehicleApplications = vehicleApplications.length > 0 && productPermission(product, "aplicacoesVeiculo", false);
+  const showQuote = productPermission(product, "botaoOrcamento", false);
+  const showWhatsApp = productPermission(product, "whatsappButton", false) && productPermission(product, "botaoWhatsApp", false);
   return (<>
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <View style={styles.detailMedia}>
-        {gallery[0] ? <>
+        {showImage && gallery[0] ? <>
           <FlatList
             ref={galleryRef}
             data={gallery}
@@ -1650,28 +1675,28 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
           {gallery.length > 1 && <View style={styles.dotsOverlay}>{gallery.map((item, index) => <View key={`${index}-${item}`} style={activeImage === index ? styles.dotActive : styles.dotGalleryInactive} />)}</View>}
         </> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Cadastre a imagem principal no painel admin" tall />}
       </View>
-      <Text style={styles.smallYellow}>{product.codigoInterno || "Sem código"}</Text>
-      <View style={styles.detailTitleRow}><Text style={[styles.detailTitle, styles.flex]}>{product.nome}</Text><Pressable accessibilityRole="button" accessibilityLabel={favorite ? "Remover dos favoritos" : "Adicionar aos favoritos"} style={styles.shareButton} onPress={onFavorite}><Ionicons name={favorite ? "heart" : "heart-outline"} size={22} color={favorite ? colors.red : colors.navy} /></Pressable><Pressable accessibilityRole="button" accessibilityLabel="Compartilhar produto" style={styles.shareButton} onPress={() => void shareProduct()}><Ionicons name="share-social-outline" size={22} color={colors.navy} /></Pressable></View>
-      <Text style={styles.muted}>{product.descricaoCurta || "Produto cadastrado no catálogo Briland."}</Text>
-      <View style={styles.statRow}>
-        <InfoCard icon="document-text-outline" label="Preço" value={role === "VISITANTE" ? "Login requerido" : money(product.preco)} />
-        <InfoCard icon="cube-outline" label="Estoque" value={typeof product.estoque === "number" ? `${product.estoque}` : "Sob consulta"} green={Boolean(product.estoque && product.estoque > 0)} small="unidades" />
-      </View>
-      <Accordion title="Informações principais" open>
+      {showCode && <Text style={styles.smallYellow}>{product.codigoInterno || "Sem código"}</Text>}
+      <View style={styles.detailTitleRow}>{showName && <Text style={[styles.detailTitle, styles.flex]}>{product.nome}</Text>}<Pressable accessibilityRole="button" accessibilityLabel={favorite ? "Remover dos favoritos" : "Adicionar aos favoritos"} style={styles.shareButton} onPress={onFavorite}><Ionicons name={favorite ? "heart" : "heart-outline"} size={22} color={favorite ? colors.red : colors.navy} /></Pressable><Pressable accessibilityRole="button" accessibilityLabel="Compartilhar produto" style={styles.shareButton} onPress={() => void shareProduct()}><Ionicons name="share-social-outline" size={22} color={colors.navy} /></Pressable></View>
+      {showShortDescription && <Text style={styles.muted}>{product.descricaoCurta || "Produto cadastrado no catálogo Briland."}</Text>}
+      {(showPrice || showStock) && <View style={styles.statRow}>
+        {showPrice && <InfoCard icon="document-text-outline" label="Preço" value={money(product.preco)} />}
+        {showStock && <InfoCard icon="cube-outline" label="Estoque" value={typeof product.estoque === "number" ? `${product.estoque}` : "Sob consulta"} green={Boolean(product.estoque && product.estoque > 0)} small="unidades" />}
+      </View>}
+      {(showCategory || showBrand || showNcm || showEan || showMasterBox || showCa) && <Accordion title="Informações principais" open>
         <View style={styles.detailGrid}>
-          <DetailItem label="Categoria" value={category?.nome || "A cadastrar"} />
+          {showCategory && <DetailItem label="Categoria" value={category?.nome || "A cadastrar"} />}
           {showBrand && <DetailItem label="Marca" value={brand?.nome || "A cadastrar"} />}
-          <DetailItem label="NCM" value={product.ncm || "A cadastrar"} />
-          <DetailItem label="EAN" value={product.ean || "A cadastrar"} />
-          <DetailItem label="Caixa Master" value={product.caixaMaster || "A cadastrar"} />
+          {showNcm && <DetailItem label="NCM" value={product.ncm || "A cadastrar"} />}
+          {showEan && <DetailItem label="EAN" value={product.ean || "A cadastrar"} />}
+          {showMasterBox && <DetailItem label="Caixa Master" value={product.caixaMaster || "A cadastrar"} />}
           {showCa && <DetailItem label="CA" value={product.ca || "A cadastrar"} />}
         </View>
-      </Accordion>
-      <Accordion title="Descrição completa" open={Boolean(product.descricaoCompleta)}>
+      </Accordion>}
+      {showCompleteDescription && <Accordion title="Descrição completa" open={Boolean(product.descricaoCompleta)}>
         <Text style={styles.detailText}>{product.descricaoCompleta}</Text>
-      </Accordion>
-      <Accordion title="Ficha técnica" open={Boolean(product.fichaTecnica) || showVehicleApplications || showManual}>
-        {product.fichaTecnica ? <Text style={styles.detailText}>{product.fichaTecnica}</Text> : null}
+      </Accordion>}
+      {(showTechnicalSheet || showVehicleApplications || showManual) && <Accordion title="Ficha técnica" open={Boolean(product.fichaTecnica) || showVehicleApplications || showManual}>
+        {showTechnicalSheet && product.fichaTecnica ? <Text style={styles.detailText}>{product.fichaTecnica}</Text> : null}
         {showVehicleApplications && <View style={styles.vehicleApplicationBox}>
           <Text style={styles.sheetLabel}>Montadora / Modelo</Text>
           {vehicleApplications.map((app) => (
@@ -1684,10 +1709,10 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
           ))}
         </View>}
         {showManual && <Pressable style={styles.downloadButton} onPress={() => void trackedDownload(product.manualPdf || "", { fileType: "product_manual", productId: product.id, productCode: product.codigoInterno, fileName: `${product.codigoInterno || product.id}-manual.pdf` })}><Ionicons name="download-outline" size={18} color={colors.navy} /><Text style={styles.downloadText}>download</Text></Pressable>}
-      </Accordion>
-      <Accordion title="Observação comercial" open={Boolean(product.observacaoComercial)}>
+      </Accordion>}
+      {showCommercialNote && <Accordion title="Observação comercial" open={Boolean(product.observacaoComercial)}>
         <Text style={styles.detailText}>{product.observacaoComercial}</Text>
-      </Accordion>
+      </Accordion>}
       <View style={styles.actionRow}>
         {showQuote && <Pressable accessibilityRole="button" accessibilityLabel="Adicionar produto ao orçamento" style={styles.yellowButton} onPress={onQuote}><Ionicons name="document-text-outline" size={20} color={colors.navy} /><Text style={styles.yellowButtonText}>Adicionar ao orçamento</Text></Pressable>}
         {showWhatsApp && <Pressable style={styles.whatsButton} onPress={openWhatsApp}><Ionicons name="logo-whatsapp" size={24} color={colors.green} /></Pressable>}
@@ -1992,7 +2017,7 @@ function AboutScreen({ settings }: { settings: AboutSettings }) {
   );
 }
 
-function QuoteScreen({ products, items, onChange, onSendLead, onSendWhatsapp }: { products: Produto[]; items: QuoteItems; onChange: (productId: string, quantity: number) => void; onSendLead: () => void; onSendWhatsapp: () => void }) {
+function QuoteScreen({ products, items, allowWhatsApp, onChange, onSendLead, onSendWhatsapp }: { products: Produto[]; items: QuoteItems; allowWhatsApp: boolean; onChange: (productId: string, quantity: number) => void; onSendLead: () => void; onSendWhatsapp: () => void }) {
   const rows = Object.entries(items).map(([productId, quantity]) => ({ product: products.find((item) => item.id === productId), quantity })).filter((item): item is { product: Produto; quantity: number } => Boolean(item.product));
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
@@ -2007,7 +2032,7 @@ function QuoteScreen({ products, items, onChange, onSendLead, onSendWhatsapp }: 
         ))}
         <View style={styles.quoteSummary}><Text style={styles.quoteSummaryTitle}>{rows.length} produto(s) na solicitação</Text><Text style={styles.muted}>As quantidades serão enviadas junto com os códigos dos produtos.</Text></View>
         <Pressable style={styles.yellowButton} onPress={onSendLead}><Ionicons name="send-outline" size={20} color={colors.navy} /><Text style={styles.yellowButtonText}>Enviar solicitação</Text></Pressable>
-        <Pressable style={styles.quoteWhatsappButton} onPress={onSendWhatsapp}><Ionicons name="logo-whatsapp" size={22} color={colors.white} /><Text style={styles.quoteWhatsappText}>Enviar pelo WhatsApp</Text></Pressable>
+        {allowWhatsApp && <Pressable style={styles.quoteWhatsappButton} onPress={onSendWhatsapp}><Ionicons name="logo-whatsapp" size={22} color={colors.white} /><Text style={styles.quoteWhatsappText}>Enviar pelo WhatsApp</Text></Pressable>}
       </>}
     </ScrollView>
   );
@@ -2551,7 +2576,7 @@ function AdminTextInput({ label, value, onChangeText, keyboard, multiline }: { l
   );
 }
 
-function SideMenu({ visible, onClose, go, onLogout, role, user, links }: { visible: boolean; onClose: () => void; go: (route: Route) => void; onLogout: () => void; role: Role; user: Usuario | null; links: SocialLinks }) {
+function SideMenu({ visible, onClose, go, onLogout, role, user, links, allowWhatsApp }: { visible: boolean; onClose: () => void; go: (route: Route) => void; onLogout: () => void; role: Role; user: Usuario | null; links: SocialLinks; allowWhatsApp: boolean }) {
   const sections: { title: string; items: [Route, string, IconName][] }[] = [
     { title: "Catálogo", items: [["home", "Início", "home-outline"], ["categories", "Categorias", "grid-outline"], ["vehicleBrands", "Montadoras", "car-sport-outline"], ["products", "Produtos", "cube-outline"], ["launches", "Lançamentos", "star-outline"], ["promotions", "Promoções", "pricetag-outline"]] },
     { title: "Atendimento", items: [["contact", "Contatos", "headset-outline"]] },
@@ -2590,7 +2615,7 @@ function SideMenu({ visible, onClose, go, onLogout, role, user, links }: { visib
           <View style={styles.sideSocialDock}>
             <Pressable style={styles.sideSocialIcon} onPress={() => Linking.openURL(links.instagram)}><Ionicons name="logo-instagram" size={24} color={colors.navy} /></Pressable>
             <Pressable style={styles.sideSocialIcon} onPress={() => Linking.openURL(links.linkedin)}><Ionicons name="logo-linkedin" size={24} color={colors.navy} /></Pressable>
-            <Pressable style={styles.sideSocialIcon} onPress={() => Linking.openURL(links.whatsapp)}><Ionicons name="logo-whatsapp" size={24} color={colors.navy} /></Pressable>
+            {allowWhatsApp && <Pressable style={styles.sideSocialIcon} onPress={() => Linking.openURL(links.whatsapp)}><Ionicons name="logo-whatsapp" size={24} color={colors.navy} /></Pressable>}
             <Pressable style={styles.sideSocialIcon} onPress={() => Linking.openURL(links.site)}><Ionicons name="globe-outline" size={24} color={colors.navy} /></Pressable>
           </View>
           <Text style={styles.sideCopyright}>© 2026 Briland. Todos os direitos reservados.</Text>
