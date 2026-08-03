@@ -9,18 +9,20 @@ const userFields = "id,name,company,email,role,status,phone,authUserId";
 
 export async function loadCatalog(role:Role, token?:string):Promise<CatalogData> {
   void token;
-  const [products,categories,brands,automakers,models,applications,settings] = await Promise.all([
+  const [products,categories,brands,automakers,models,applications,settings,permissions] = await Promise.all([
     supabase.rpc("get_visible_products", { requested_role:role }),
     supabase.from("Categoria").select("*").eq("ativo",true).order("ordem"),
     supabase.from("Marca").select("*").eq("ativo",true).order("nome"),
     supabase.from("Montadora").select("*").eq("ativo",true).order("nome"),
     supabase.from("ModeloVeiculo").select("*").eq("ativo",true).order("nome"),
     supabase.rpc("get_visible_vehicle_applications"),
-    supabase.rpc("get_app_settings")
+    supabase.rpc("get_app_settings"),
+    supabase.rpc("product_role_permissions", { requested_role:role })
   ]);
   const error = [products,categories,brands,automakers,models,applications,settings].find(item=>item.error)?.error;
   if (error) throw error;
-  return { products:(products.data||[]) as Product[], categories:(categories.data||[]) as Category[], brands:(brands.data||[]) as Brand[], automakers:(automakers.data||[]) as Automaker[], models:(models.data||[]) as VehicleModel[], applications:(applications.data||[]) as VehicleApplication[], settings:(settings.data||{}) as Settings };
+  const appSettings=(settings.data||{}) as Settings;
+  return { products:(products.data||[]) as Product[], categories:(categories.data||[]) as Category[], brands:(brands.data||[]) as Brand[], automakers:(automakers.data||[]) as Automaker[], models:(models.data||[]) as VehicleModel[], applications:(applications.data||[]) as VehicleApplication[], settings:{...appSettings,permissions:(permissions.data||{}) as Record<string,boolean>} };
 }
 
 export async function currentProfile():Promise<UserProfile|null> {
