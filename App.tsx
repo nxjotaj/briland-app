@@ -33,10 +33,11 @@ import {
   View
 } from "react-native";
 
-import { CONFIG_STORAGE_KEY, getPersistedSession, setTelemetryContext, signInWithPassword, signOutSession, signUpRegistration, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRealtime, supabaseRpc, trackTelemetry, uploadStorageObject } from "./src/api/supabase";
+import { CONFIG_STORAGE_KEY, getPersistedSession, requestPasswordReset, resendSignupConfirmation, setTelemetryContext, signInWithPassword, signOutSession, signUpRegistration, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRealtime, supabaseRpc, trackTelemetry, updateCurrentPassword, uploadStorageObject } from "./src/api/supabase";
 import { colors, defaultAbout, defaultSocialLinks } from "./src/config/brand";
 import type { AboutSettings, Aplicacao, AppData, CatalogAppearance, CatalogPdfRole, CatalogPdfSettings, Categoria, Lead, Marca, MediaSettings, ModeloVeiculo, Montadora, Permission, Produto, ProdutoModeloVeiculo, ProdutoModeloVeiculoView, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
 import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage, money, optimizedImageUrl, parseCsv, slugify } from "./src/utils/helpers";
+import { MotionDrawer, MotionPage, MotionPressable } from "./src/components/motion";
 
 type IconName = keyof typeof Ionicons.glyphMap;
 type RegistrationRequest = { nome: string; empresa: string; telefone: string; email: string; cnpj: string; observacoes: string; senha: string; confirmarSenha: string };
@@ -67,6 +68,7 @@ function initialAppRoute(): Route {
     if (action === "excluir-conta") return "accountDeletion";
     if (action === "privacidade") return "privacy";
     if (action === "login") return "login";
+    if (action === "redefinir-senha") return "resetPassword";
   }
   return "initial";
 }
@@ -434,6 +436,10 @@ export default function App() {
   useEffect(() => {
     const { data: { subscription } } = supabaseRealtime.auth.onAuthStateChange((event, session) => {
       if (event === "TOKEN_REFRESHED" && session) setAuthToken(session.access_token);
+      if (event === "PASSWORD_RECOVERY" && session) {
+        setAuthToken(session.access_token);
+        setRoute("resetPassword");
+      }
       if (event === "SIGNED_OUT") setAuthToken(undefined);
     });
     return () => subscription.unsubscribe();
@@ -897,7 +903,7 @@ export default function App() {
   const requestRegistration = async (payload: RegistrationRequest) => {
     try {
       await signUpRegistration(payload);
-      notify("Cadastro recebido", "Confirme o e-mail enviado para você e aguarde a aprovação da equipe Briland.");
+      notify("Cadastro recebido", "Confirme o e-mail enviado para você. Depois da confirmação, seu acesso estará liberado como Não cliente.");
       return true;
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
@@ -906,6 +912,34 @@ export default function App() {
       notify("Não foi possível cadastrar", duplicate ? "Este e-mail já possui conta ou solicitação em análise." : raw);
       return false;
     }
+  };
+
+  const recoverPassword = async (email: string) => {
+    await requestPasswordReset(email);
+    notify("Confira seu e-mail", "Se o endereço estiver cadastrado, você receberá um link seguro para criar uma nova senha.");
+  };
+
+  const resendConfirmation = async (email: string) => {
+    await resendSignupConfirmation(email);
+    notify("Confirmação enviada", "Se o cadastro ainda estiver aguardando confirmação, um novo e-mail será enviado.");
+  };
+
+  const resetPassword = async (password: string) => {
+    await updateCurrentPassword(password);
+    notify("Senha alterada", "Sua nova senha já está ativa. Entre novamente para continuar.");
+    try { await signOutSession(); } catch { /* A senha já foi alterada. */ }
+    setAuthToken(undefined);
+    setCurrentUser(null);
+    setRole("VISITANTE");
+    go("login");
+  };
+
+  const changePassword = async (currentPassword: string, newPassword: string) => {
+    if (!currentUser?.email) throw new Error("Não foi possível identificar o e-mail desta conta.");
+    const session = await signInWithPassword(currentUser.email, currentPassword);
+    setAuthToken(session.access_token);
+    await updateCurrentPassword(newPassword);
+    notify("Senha alterada", "A senha da sua conta foi atualizada com segurança.");
   };
 
   const requestAccountDeletion = async (email: string, reason: string) => {
@@ -948,7 +982,7 @@ export default function App() {
         ) : (
         <SafeAreaView style={[styles.safe, { backgroundColor: appearance.backgroundColor }]}>
           {route === "login" ? (
-            <LoginScreen onLogin={login} onSignup={() => go("signup")} onCatalog={() => go("initial")} onPrivacy={() => go("privacy")} onDelete={() => go("accountDeletion")} links={socialLinks} error={loginMessage} />
+            <LoginScreen onLogin={login} onForgot={() => go("forgotPassword")} onSignup={() => go("signup")} onCatalog={() => go("initial")} onPrivacy={() => go("privacy")} onDelete={() => go("accountDeletion")} links={socialLinks} error={loginMessage} />
           ) : route === "admin" ? (
             <AdminScreen role={role} data={data} active={adminTab} setActive={setAdminTab} onBack={() => go("home")} onLogout={logout} reload={() => reload(role, authToken)} authToken={authToken} socialLinks={socialLinks} setSocialLinks={(links) => void saveAdminConfig(links, mediaSettings, aboutSettings)} mediaSettings={mediaSettings} setMediaSettings={(settings) => void saveAdminConfig(socialLinks, settings, aboutSettings)} aboutSettings={aboutSettings} setAboutSettings={(settings) => void saveAdminConfig(socialLinks, mediaSettings, settings)} onAction={(text) => notify("Painel admin", text)} />
           ) : (
@@ -1099,6 +1133,9 @@ export default function App() {
               {route === "notifications" && <NotificationsScreen notifications={catalogNotifications} products={data.produtos} onOpen={openNotification} />}
               {route === "about" && <AboutScreen settings={aboutSettings} />}
               {route === "privacy" && <PrivacyScreen />}
+              {route === "forgotPassword" && <ForgotPasswordScreen onRequest={recoverPassword} onResend={resendConfirmation} />}
+              {route === "resetPassword" && <ResetPasswordScreen onSubmit={resetPassword} />}
+              {route === "account" && currentUser && <AccountScreen user={currentUser} onChangePassword={changePassword} />}
               {route === "accountDeletion" && <AccountDeletionScreen initialEmail={currentUser?.email || ""} onSubmit={requestAccountDeletion} />}
               {route === "signup" && <SignupScreen onSubmit={requestRegistration} onLogin={() => go("login")} onPrivacy={() => go("privacy")} onDelete={() => go("accountDeletion")} />}
             </>
@@ -1164,18 +1201,7 @@ function LoadingOverlay() {
 }
 
 function PageTransition({ children }: { children: React.ReactNode }) {
-  const progress = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(progress, { toValue: 1, duration: 180, useNativeDriver: true }).start();
-  }, [progress]);
-  return (
-    <Animated.View style={[styles.pageTransition, {
-      opacity: progress.interpolate({ inputRange: [0, 1], outputRange: [0.88, 1] }),
-      transform: [{ translateY: progress.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }]
-    }]}>
-      {children}
-    </Animated.View>
-  );
+  return <MotionPage>{children}</MotionPage>;
 }
 
 function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
@@ -1190,13 +1216,13 @@ function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => voi
 function Header({ back, onBack, onMenu, appearance, quoteCount, notificationCount, showQuote, onQuote, onNotifications }: { back?: boolean; onBack: () => void; onMenu: () => void; appearance: CatalogAppearance; quoteCount: number; notificationCount: number; showQuote: boolean; onQuote: () => void; onNotifications: () => void }) {
   return (
     <View style={styles.header}>
-      <Pressable style={styles.iconButton} onPress={back ? onBack : onMenu}>
+      <MotionPressable style={styles.iconButton} onPress={back ? onBack : onMenu}>
         <Ionicons name={back ? "chevron-back" : "menu"} size={28} color={colors.navy} />
-      </Pressable>
+      </MotionPressable>
       <LogoPlate compact logoUrl={appearance.logoUrl} />
       <View style={styles.headerActions}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Abrir notificações" style={styles.headerSmallButton} onPress={onNotifications}><Ionicons name="notifications-outline" size={23} color={colors.navy} />{notificationCount > 0 && <View style={styles.headerBadge}><Text style={styles.headerBadgeText}>{Math.min(notificationCount, 9)}</Text></View>}</Pressable>
-        {showQuote && <Pressable accessibilityRole="button" accessibilityLabel="Abrir lista de orçamento" style={styles.headerSmallButton} onPress={onQuote}><Ionicons name="document-text-outline" size={23} color={colors.navy} />{quoteCount > 0 && <View style={styles.headerBadge}><Text style={styles.headerBadgeText}>{Math.min(quoteCount, 9)}</Text></View>}</Pressable>}
+        <MotionPressable accessibilityRole="button" accessibilityLabel="Abrir notificações" style={styles.headerSmallButton} onPress={onNotifications}><Ionicons name="notifications-outline" size={23} color={colors.navy} />{notificationCount > 0 && <View style={styles.headerBadge}><Text style={styles.headerBadgeText}>{Math.min(notificationCount, 9)}</Text></View>}</MotionPressable>
+        {showQuote && <MotionPressable accessibilityRole="button" accessibilityLabel="Abrir lista de orçamento" style={styles.headerSmallButton} onPress={onQuote}><Ionicons name="document-text-outline" size={23} color={colors.navy} />{quoteCount > 0 && <View style={styles.headerBadge}><Text style={styles.headerBadgeText}>{Math.min(quoteCount, 9)}</Text></View>}</MotionPressable>}
       </View>
     </View>
   );
@@ -1543,7 +1569,7 @@ function ProductList({
         scrollEventThrottle={32}
         showsVerticalScrollIndicator={false}
         renderItem={({ item: product }) => (
-          <Pressable style={[listMode === "grid" ? styles.productCard : styles.productListCard, { backgroundColor: appearance.surfaceColor, borderRadius: appearance.cardRadius }, promo && styles.promoCard, launch && styles.launchCard]} onPressIn={() => { const detailUrl = productImageUrl(product, "detail", imageVersion); if (detailUrl) void ExpoImage.prefetch(detailUrl); }} onPress={() => { onScrollOffset(latestScrollOffset.current); onOpen(product); }}>
+          <MotionPressable pressedScale={0.985} style={[listMode === "grid" ? styles.productCard : styles.productListCard, { backgroundColor: appearance.surfaceColor, borderRadius: appearance.cardRadius }, promo && styles.promoCard, launch && styles.launchCard]} onPressIn={() => { const detailUrl = productImageUrl(product, "detail", imageVersion); if (detailUrl) void ExpoImage.prefetch(detailUrl); }} onPress={() => { onScrollOffset(latestScrollOffset.current); onOpen(product); }}>
             <View style={listMode === "grid" ? undefined : styles.listImageWrap}>
               {productPermission(product, "imagemPrincipal", false) && product.imagemPrincipal ? <Image recyclingKey={product.id} source={{ uri: productImageUrl(product, "card", imageVersion) }} style={listMode === "grid" ? styles.productImage : styles.productListImage} resizeMode="contain" /> : listMode === "grid" ? <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Imagem não disponível para este acesso" card /> : <View style={styles.productListPlaceholder}><Ionicons name="image-outline" size={28} color={colors.yellow} /></View>}
               {promo && <Ribbon text="PROMOÇÃO" color={colors.red} />}
@@ -1558,7 +1584,7 @@ function ProductList({
               {productPermission(product, "ncm", false) && <Meta icon="document-text-outline" label="NCM" value={product.ncm || "A cadastrar"} />}
               {productPermission(product, "preco", false) && <Text style={styles.price}>{money(product.preco)}</Text>}
             </View>
-          </Pressable>
+          </MotionPressable>
         )}
       />
       <FilterSheet
@@ -1667,16 +1693,16 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
           />
           {gallery.length > 1 && <View style={styles.detailThumbnailBar}>
             {gallery.slice(0, 6).map((item, index) => (
-              <Pressable key={`${index}-${item}`} style={[styles.detailThumbnailButton, activeImage === index && styles.detailThumbnailButtonActive]} onPress={() => selectImage(index)}>
+              <MotionPressable key={`${index}-${item}`} style={[styles.detailThumbnailButton, activeImage === index && styles.detailThumbnailButtonActive]} onPress={() => selectImage(index)}>
                 <Image source={{ uri: liveImageUrl(index === 0 ? product.imagemPrincipal : product.imagensExtras?.[index - 1], imageSize.thumb, imageVersion) }} style={styles.detailThumbnail} resizeMode="contain" />
-              </Pressable>
+              </MotionPressable>
             ))}
           </View>}
           {gallery.length > 1 && <View style={styles.dotsOverlay}>{gallery.map((item, index) => <View key={`${index}-${item}`} style={activeImage === index ? styles.dotActive : styles.dotGalleryInactive} />)}</View>}
         </> : <BrandedMedia title={product.codigoInterno || "Produto"} subtitle="Cadastre a imagem principal no painel admin" tall />}
       </View>
       {showCode && <Text style={styles.smallYellow}>{product.codigoInterno || "Sem código"}</Text>}
-      <View style={styles.detailTitleRow}>{showName && <Text style={[styles.detailTitle, styles.flex]}>{product.nome}</Text>}<Pressable accessibilityRole="button" accessibilityLabel={favorite ? "Remover dos favoritos" : "Adicionar aos favoritos"} style={styles.shareButton} onPress={onFavorite}><Ionicons name={favorite ? "heart" : "heart-outline"} size={22} color={favorite ? colors.red : colors.navy} /></Pressable><Pressable accessibilityRole="button" accessibilityLabel="Compartilhar produto" style={styles.shareButton} onPress={() => void shareProduct()}><Ionicons name="share-social-outline" size={22} color={colors.navy} /></Pressable></View>
+      <View style={styles.detailTitleRow}>{showName && <Text style={[styles.detailTitle, styles.flex]}>{product.nome}</Text>}<MotionPressable accessibilityRole="button" accessibilityLabel={favorite ? "Remover dos favoritos" : "Adicionar aos favoritos"} style={styles.shareButton} onPress={onFavorite}><Ionicons name={favorite ? "heart" : "heart-outline"} size={22} color={favorite ? colors.red : colors.navy} /></MotionPressable><MotionPressable accessibilityRole="button" accessibilityLabel="Compartilhar produto" style={styles.shareButton} onPress={() => void shareProduct()}><Ionicons name="share-social-outline" size={22} color={colors.navy} /></MotionPressable></View>
       {showShortDescription && <Text style={styles.muted}>{product.descricaoCurta || "Produto cadastrado no catálogo Briland."}</Text>}
       {(showPrice || showStock) && <View style={styles.statRow}>
         {showPrice && <InfoCard icon="document-text-outline" label="Preço" value={money(product.preco)} />}
@@ -1714,7 +1740,7 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
         <Text style={styles.detailText}>{product.observacaoComercial}</Text>
       </Accordion>}
       <View style={styles.actionRow}>
-        {showQuote && <Pressable accessibilityRole="button" accessibilityLabel="Adicionar produto ao orçamento" style={styles.yellowButton} onPress={onQuote}><Ionicons name="document-text-outline" size={20} color={colors.navy} /><Text style={styles.yellowButtonText}>Adicionar ao orçamento</Text></Pressable>}
+        {showQuote && <MotionPressable accessibilityRole="button" accessibilityLabel="Adicionar produto ao orçamento" style={styles.yellowButton} onPress={onQuote}><Ionicons name="document-text-outline" size={20} color={colors.navy} /><Text style={styles.yellowButtonText}>Adicionar ao orçamento</Text></MotionPressable>}
         {showWhatsApp && <Pressable style={styles.whatsButton} onPress={openWhatsApp}><Ionicons name="logo-whatsapp" size={24} color={colors.green} /></Pressable>}
       </View>
     </ScrollView>
@@ -1731,35 +1757,68 @@ function ProductDetail({ product, role, category, brand, vehicleApplications, wh
 
 function TransientZoomImage({ uri, width }: { uri: string; width: number }) {
   const scale = useRef(new Animated.Value(1)).current;
+  const translateX = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(0)).current;
   const initialDistance = useRef(0);
-  const touchDistance = (touches: readonly { pageX: number; pageY: number }[]) => {
+  const initialFocal = useRef({ x: 0, y: 0 });
+  const layoutSize = useRef({ width, height: 1 });
+  type ZoomTouch = { pageX: number; pageY: number; locationX?: number; locationY?: number };
+  const touchDistance = (touches: readonly ZoomTouch[]) => {
     if (touches.length < 2) return 0;
     return Math.hypot(touches[0].pageX - touches[1].pageX, touches[0].pageY - touches[1].pageY);
   };
+  const touchFocal = (touches: readonly ZoomTouch[]) => {
+    if (touches.length < 2) return { x: 0, y: 0 };
+    return {
+      x: ((touches[0].locationX ?? touches[0].pageX) + (touches[1].locationX ?? touches[1].pageX)) / 2,
+      y: ((touches[0].locationY ?? touches[0].pageY) + (touches[1].locationY ?? touches[1].pageY)) / 2
+    };
+  };
   const resetZoom = () => {
     initialDistance.current = 0;
-    Animated.spring(scale, { toValue: 1, friction: 7, tension: 75, useNativeDriver: true }).start();
+    Animated.parallel([
+      Animated.spring(scale, { toValue: 1, friction: 7, tension: 75, useNativeDriver: true }),
+      Animated.spring(translateX, { toValue: 0, friction: 7, tension: 75, useNativeDriver: true }),
+      Animated.spring(translateY, { toValue: 0, friction: 7, tension: 75, useNativeDriver: true })
+    ]).start();
   };
   const panResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: (event) => event.nativeEvent.touches.length >= 2,
     onMoveShouldSetPanResponder: (event) => event.nativeEvent.touches.length >= 2,
-    onPanResponderGrant: (event) => { initialDistance.current = touchDistance(event.nativeEvent.touches); },
+    onPanResponderGrant: (event) => {
+      initialDistance.current = touchDistance(event.nativeEvent.touches);
+      initialFocal.current = touchFocal(event.nativeEvent.touches);
+    },
     onPanResponderMove: (event) => {
       const distance = touchDistance(event.nativeEvent.touches);
       if (!distance || !initialDistance.current) return;
-      scale.setValue(Math.max(1, Math.min(4, distance / initialDistance.current)));
+      const nextScale = Math.max(1, Math.min(4, distance / initialDistance.current));
+      const focal = touchFocal(event.nativeEvent.touches);
+      const centerX = layoutSize.current.width / 2;
+      const centerY = layoutSize.current.height / 2;
+      scale.setValue(nextScale);
+      translateX.setValue((focal.x - centerX) - nextScale * (initialFocal.current.x - centerX));
+      translateY.setValue((focal.y - centerY) - nextScale * (initialFocal.current.y - centerY));
     },
     onPanResponderRelease: resetZoom,
     onPanResponderTerminate: resetZoom,
     onPanResponderTerminationRequest: () => false,
     onShouldBlockNativeResponder: () => true
-  }), [scale]);
+  }), [scale, translateX, translateY]);
 
-  useEffect(() => { scale.setValue(1); }, [scale, uri]);
+  useEffect(() => {
+    scale.setValue(1);
+    translateX.setValue(0);
+    translateY.setValue(0);
+  }, [scale, translateX, translateY, uri]);
 
   return (
-    <View style={styles.fullscreenZoom} {...panResponder.panHandlers}>
-      <Animated.View style={[styles.fullscreenZoomContent, { transform: [{ scale }] }]}>
+    <View
+      style={styles.fullscreenZoom}
+      onLayout={(event) => { layoutSize.current = event.nativeEvent.layout; }}
+      {...panResponder.panHandlers}
+    >
+      <Animated.View style={[styles.fullscreenZoomContent, { transform: [{ translateX }, { translateY }, { scale }] }]}>
         <Image source={{ uri }} style={{ width, height: "100%" }} resizeMode="contain" />
       </Animated.View>
     </View>
@@ -1881,7 +1940,7 @@ function ContactScreen({ onSubmit }: { onSubmit: (lead: Partial<Lead>) => void }
     </ScrollView>
   );
 }
-function LoginScreen({ onLogin, onSignup, onCatalog, onPrivacy, onDelete, links, error }: { onLogin: (email: string, password: string) => void | Promise<void>; onSignup: () => void; onCatalog: () => void; onPrivacy: () => void; onDelete: () => void; links: SocialLinks; error?: string }) {
+function LoginScreen({ onLogin, onForgot, onSignup, onCatalog, onPrivacy, onDelete, links, error }: { onLogin: (email: string, password: string) => void | Promise<void>; onForgot: () => void; onSignup: () => void; onCatalog: () => void; onPrivacy: () => void; onDelete: () => void; links: SocialLinks; error?: string }) {
   const [email, setEmail] = useState("faturamento@briland.com.br");
   const [password, setPassword] = useState("");
   const supportUrl = links.whatsapp + (links.whatsapp.includes("?") ? "&" : "?") + "text=Preciso%20recuperar%20meu%20acesso%20Briland";
@@ -1897,7 +1956,7 @@ function LoginScreen({ onLogin, onSignup, onCatalog, onPrivacy, onDelete, links,
         <DarkInput icon="lock-closed-outline" value={password} onChangeText={setPassword} placeholder="Digite sua senha" secure />
         {error ? <View style={styles.loginErrorBox}><Ionicons name="alert-circle-outline" size={19} color={colors.red} /><Text style={styles.loginErrorText}>{error}</Text></View> : null}
         <Pressable style={styles.loginButton} onPress={() => onLogin(email, password)}><Text style={styles.loginButtonText}>Entrar</Text></Pressable>
-        <Pressable onPress={() => Linking.openURL(supportUrl)}><Text style={styles.forgotText}>Esqueci a senha  ›</Text></Pressable>
+        <Pressable onPress={onForgot}><Text style={styles.forgotText}>Esqueci a senha  ›</Text></Pressable>
         <Divider text="ou" dark />
         <Pressable style={styles.supportButton} onPress={() => Linking.openURL(links.whatsapp)}><Ionicons name="logo-whatsapp" size={26} color="#22C55E" /><Text style={styles.supportText}>Falar com suporte</Text></Pressable>
         <Pressable style={styles.catalogBackButton} onPress={onCatalog}><Ionicons name="home-outline" size={22} color={colors.white} /><Text style={styles.catalogBackText}>Voltar ao catálogo</Text></Pressable>
@@ -1908,6 +1967,90 @@ function LoginScreen({ onLogin, onSignup, onCatalog, onPrivacy, onDelete, links,
     </SafeAreaView>
   );
 }
+function ForgotPasswordScreen({ onRequest, onResend }: { onRequest: (email: string) => Promise<void>; onResend: (email: string) => Promise<void> }) {
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const run = async (action: "reset" | "confirm") => {
+    if (!email.includes("@") || busy) return;
+    setBusy(true);
+    try {
+      if (action === "reset") await onRequest(email);
+      else await onResend(email);
+    } catch {
+      notify("Não foi possível enviar", "Aguarde alguns minutos e tente novamente.");
+    } finally { setBusy(false); }
+  };
+  return <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock} keyboardShouldPersistTaps="handled">
+    <PageTitle title="Recuperar acesso" subtitle="Enviaremos um link seguro para o e-mail cadastrado." />
+    <View style={styles.formCard}>
+      <Input label="E-mail da conta" value={email} onChangeText={setEmail} />
+      <Text style={styles.muted}>Por segurança, a resposta será a mesma mesmo que o endereço não esteja cadastrado.</Text>
+      <Pressable disabled={busy || !email.includes("@")} style={[styles.yellowButton, (busy || !email.includes("@")) && styles.disabledButton]} onPress={() => void run("reset")}>
+        {busy ? <ActivityIndicator color={colors.navy} /> : <><Ionicons name="mail-outline" size={21} color={colors.navy} /><Text style={styles.yellowButtonText}>Enviar link para redefinir senha</Text></>}
+      </Pressable>
+      <Pressable disabled={busy || !email.includes("@")} style={styles.outlineButton} onPress={() => void run("confirm")}><Text style={styles.outlineButtonText}>Reenviar confirmação de cadastro</Text></Pressable>
+    </View>
+  </ScrollView>;
+}
+
+function ResetPasswordScreen({ onSubmit }: { onSubmit: (password: string) => Promise<void> }) {
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const valid = password.length >= 8 && password === confirmation;
+  const submit = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    try { await onSubmit(password); }
+    catch { notify("Link inválido ou expirado", "Solicite um novo e-mail de recuperação e tente novamente."); }
+    finally { setBusy(false); }
+  };
+  return <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock} keyboardShouldPersistTaps="handled">
+    <PageTitle title="Criar nova senha" subtitle="Escolha uma senha com pelo menos 8 caracteres." />
+    <View style={styles.formCard}>
+      <Input label="Nova senha" secure value={password} onChangeText={setPassword} />
+      <Input label="Confirmar nova senha" secure value={confirmation} onChangeText={setConfirmation} />
+      {confirmation.length > 0 && password !== confirmation && <Text style={styles.dangerText}>As senhas não coincidem.</Text>}
+      <Pressable disabled={!valid || busy} style={[styles.yellowButton, (!valid || busy) && styles.disabledButton]} onPress={() => void submit()}>{busy ? <ActivityIndicator color={colors.navy} /> : <Text style={styles.yellowButtonText}>Salvar nova senha</Text>}</Pressable>
+    </View>
+  </ScrollView>;
+}
+
+function AccountScreen({ user, onChangePassword }: { user: Usuario; onChangePassword: (currentPassword: string, newPassword: string) => Promise<void> }) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const valid = currentPassword.length > 0 && newPassword.length >= 8 && newPassword === confirmation;
+  const submit = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    try {
+      await onChangePassword(currentPassword, newPassword);
+      setCurrentPassword(""); setNewPassword(""); setConfirmation("");
+    } catch { notify("Não foi possível alterar", "Confira sua senha atual e tente novamente."); }
+    finally { setBusy(false); }
+  };
+  return <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock} keyboardShouldPersistTaps="handled">
+    <PageTitle title="Minha conta" subtitle="Consulte seus dados de acesso e mantenha sua senha protegida." />
+    <View style={styles.formCard}>
+      <Meta icon="person-outline" label="Nome" value={user.name} />
+      <Meta icon="business-outline" label="Empresa" value={user.company || "Não informado"} />
+      <Meta icon="mail-outline" label="E-mail" value={user.email} />
+      <Meta icon="call-outline" label="Telefone" value={user.phone || "Não informado"} />
+      <Meta icon="shield-checkmark-outline" label="Perfil" value={user.role.replaceAll("_", " ")} />
+    </View>
+    <View style={styles.formCard}>
+      <Text style={styles.sectionTitle}>Alterar senha</Text>
+      <Input label="Senha atual" secure value={currentPassword} onChangeText={setCurrentPassword} />
+      <Input label="Nova senha" secure value={newPassword} onChangeText={setNewPassword} />
+      <Input label="Confirmar nova senha" secure value={confirmation} onChangeText={setConfirmation} />
+      {confirmation.length > 0 && newPassword !== confirmation && <Text style={styles.dangerText}>As senhas não coincidem.</Text>}
+      <Pressable disabled={!valid || busy} style={[styles.yellowButton, (!valid || busy) && styles.disabledButton]} onPress={() => void submit()}>{busy ? <ActivityIndicator color={colors.navy} /> : <Text style={styles.yellowButtonText}>Alterar senha</Text>}</Pressable>
+    </View>
+  </ScrollView>;
+}
+
 function SignupScreen({ onSubmit, onLogin, onPrivacy, onDelete }: { onSubmit: (request: RegistrationRequest) => Promise<boolean>; onLogin: () => void; onPrivacy: () => void; onDelete: () => void }) {
   const [form, setForm] = useState<RegistrationRequest>({ nome: "", empresa: "", telefone: "", email: "", cnpj: "", observacoes: "", senha: "", confirmarSenha: "" });
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
@@ -1926,8 +2069,8 @@ function SignupScreen({ onSubmit, onLogin, onPrivacy, onDelete }: { onSubmit: (r
   };
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.signupContent}>
-      <PageTitle title="Cadastrar empresa" subtitle="Preencha os dados abaixo para solicitar seu cadastro empresarial." />
-      {submitted ? <View style={styles.deletionSuccess}><Ionicons name="checkmark-circle" size={58} color={colors.green} /><Text style={styles.legalHeading}>Cadastro recebido</Text><Text style={styles.legalParagraph}>Enviamos uma confirmação para o seu e-mail. Confirme o endereço e aguarde a equipe Briland aprovar o cadastro. Depois, entre usando este e-mail e a senha que acabou de criar.</Text></View> : <>
+      <PageTitle title="Cadastrar empresa" subtitle="Preencha os dados abaixo para criar seu acesso empresarial." />
+      {submitted ? <View style={styles.deletionSuccess}><Ionicons name="checkmark-circle" size={58} color={colors.green} /><Text style={styles.legalHeading}>Cadastro recebido</Text><Text style={styles.legalParagraph}>Enviamos uma confirmação para o seu e-mail. Confirme o endereço e depois entre usando este e-mail e a senha que acabou de criar. Seu primeiro acesso será liberado como Não cliente.</Text></View> : <>
         <Input label="Razão social" value={form.empresa} onChangeText={(empresa) => setForm({ ...form, empresa })} />
         <Input label="Nome do responsável" value={form.nome} onChangeText={(nome) => setForm({ ...form, nome })} />
         <Input label="Contato (Telefone / WhatsApp)" value={form.telefone} onChangeText={(telefone) => setForm({ ...form, telefone })} />
@@ -2581,7 +2724,7 @@ function SideMenu({ visible, onClose, go, onLogout, role, user, links, allowWhat
     { title: "Catálogo", items: [["home", "Início", "home-outline"], ["categories", "Categorias", "grid-outline"], ["vehicleBrands", "Montadoras", "car-sport-outline"], ["products", "Produtos", "cube-outline"], ["launches", "Lançamentos", "star-outline"], ["promotions", "Promoções", "pricetag-outline"]] },
     { title: "Atendimento", items: [["contact", "Contatos", "headset-outline"]] },
     { title: "Briland", items: [["about", "Sobre a Briland", "information-circle-outline"]] },
-    { title: "Privacidade e conta", items: [["privacy", "Política de Privacidade", "shield-checkmark-outline"], ["accountDeletion", "Excluir cadastro", "trash-outline"]] }
+    { title: "Privacidade e conta", items: [...(role === "VISITANTE" ? [] : [["account", "Minha conta", "person-circle-outline"] as [Route, string, IconName]]), ["privacy", "Política de Privacidade", "shield-checkmark-outline"], ["accountDeletion", "Excluir cadastro", "trash-outline"]] }
   ];
   const accountAction = () => {
     if (role === "VISITANTE") go("login");
@@ -2590,7 +2733,7 @@ function SideMenu({ visible, onClose, go, onLogout, role, user, links, allowWhat
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.menuOverlay} onPress={onClose}><BlurView intensity={30} tint="dark" style={StyleSheet.absoluteFill} /></Pressable>
-      <View style={styles.sideMenu}>
+      <MotionDrawer><View style={styles.sideMenu}>
         <View style={styles.sideHeader}>
           <View style={styles.sideBrandPlate}><Image source={logo} style={styles.sideLogo} resizeMode="contain" /></View>
           <Pressable style={styles.sideClose} onPress={onClose}><Ionicons name="close" size={24} color={colors.navy} /></Pressable>
@@ -2607,7 +2750,7 @@ function SideMenu({ visible, onClose, go, onLogout, role, user, links, allowWhat
               <Text style={styles.sideSectionTitle}>{section.title}</Text>
               {section.items.map(([target, label, icon]) => {
                 const danger = target === "accountDeletion";
-                return <Pressable key={label} style={styles.sideItem} onPress={() => go(target)}><Ionicons name={icon} size={23} color={danger ? colors.red : colors.navy} /><Text style={[styles.sideLabel, danger && styles.sideLabelDanger]}>{label}</Text><Ionicons name="chevron-forward" size={20} color={danger ? colors.red : colors.navy} /></Pressable>;
+                return <MotionPressable key={label} style={styles.sideItem} onPress={() => go(target)}><Ionicons name={icon} size={23} color={danger ? colors.red : colors.navy} /><Text style={[styles.sideLabel, danger && styles.sideLabelDanger]}>{label}</Text><Ionicons name="chevron-forward" size={20} color={danger ? colors.red : colors.navy} /></MotionPressable>;
               })}
             </View>
           ))}
@@ -2620,7 +2763,7 @@ function SideMenu({ visible, onClose, go, onLogout, role, user, links, allowWhat
           </View>
           <Text style={styles.sideCopyright}>© 2026 Briland. Todos os direitos reservados.</Text>
         </ScrollView>
-      </View>
+      </View></MotionDrawer>
     </Modal>
   );
 }
@@ -2882,6 +3025,9 @@ const styles = StyleSheet.create({
   actionRow: { flexDirection: "row", gap: 10, marginTop: 8 },
   yellowButton: { minHeight: 58, borderRadius: 13, backgroundColor: colors.yellow, flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
   yellowButtonText: { color: colors.navy, fontWeight: "900", fontSize: 17 },
+  outlineButton: { minHeight: 54, borderRadius: 13, borderWidth: 1, borderColor: colors.navy, alignItems: "center", justifyContent: "center", paddingHorizontal: 14 },
+  outlineButtonText: { color: colors.navy, fontWeight: "900", textAlign: "center" },
+  sectionTitle: { color: colors.navy, fontSize: 20, fontWeight: "900", marginBottom: 8 },
   whatsButton: { width: 58, height: 58, borderRadius: 14, backgroundColor: colors.white, alignItems: "center", justifyContent: "center", ...shadow },
   quoteItem: { minHeight: 110, marginBottom: 12, padding: 12, borderRadius: 16, backgroundColor: colors.white, flexDirection: "row", alignItems: "center", gap: 12, ...shadow },
   quoteImage: { width: 76, height: 76 },

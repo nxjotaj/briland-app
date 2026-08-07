@@ -47,7 +47,7 @@
         });
         window.addEventListener("load", function () {
           navigator.serviceWorker
-            .register("/sw.js", { updateViaCache: "none" })
+            .register("/sw.js?v=2026080606", { updateViaCache: "none" })
             .then(function (registration) {
               return registration.update();
             })

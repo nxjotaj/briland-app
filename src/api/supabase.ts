@@ -1,6 +1,8 @@
 import type { AuthSession } from "../types/domain";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createClient } from "@supabase/supabase-js";
+import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 
 export const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim() || "";
 export const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim() || "";
@@ -25,12 +27,34 @@ export function setTelemetryContext(next: TelemetryContext) {
   telemetryContext = { ...telemetryContext, ...next };
 }
 
+const secureSessionStorage = {
+  async getItem(key: string) {
+    if (Platform.OS === "web") return AsyncStorage.getItem(key);
+    const secured = await SecureStore.getItemAsync(key);
+    if (secured != null) return secured;
+    const legacy = await AsyncStorage.getItem(key);
+    if (legacy != null) {
+      await SecureStore.setItemAsync(key, legacy);
+      await AsyncStorage.removeItem(key);
+    }
+    return legacy;
+  },
+  async setItem(key: string, value: string) {
+    if (Platform.OS === "web") return AsyncStorage.setItem(key, value);
+    await SecureStore.setItemAsync(key, value);
+  },
+  async removeItem(key: string) {
+    if (Platform.OS === "web") return AsyncStorage.removeItem(key);
+    await Promise.all([SecureStore.deleteItemAsync(key), AsyncStorage.removeItem(key)]);
+  }
+};
+
 export const supabaseRealtime = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
-    storage: AsyncStorage,
+    storage: secureSessionStorage,
     persistSession: true,
     autoRefreshToken: true,
-    detectSessionInUrl: false
+    detectSessionInUrl: Platform.OS === "web"
   }
 });
 
@@ -191,5 +215,26 @@ export async function getPersistedSession() {
 
 export async function signOutSession() {
   const { error } = await supabaseRealtime.auth.signOut({ scope: "local" });
+  if (error) throw error;
+}
+
+export async function requestPasswordReset(email: string) {
+  const { error } = await supabaseRealtime.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+    redirectTo: "https://briland-catalogo.vercel.app/?acao=redefinir-senha"
+  });
+  if (error) throw error;
+}
+
+export async function resendSignupConfirmation(email: string) {
+  const { error } = await supabaseRealtime.auth.resend({
+    type: "signup",
+    email: email.trim().toLowerCase(),
+    options: { emailRedirectTo: "https://briland-catalogo.vercel.app/?acao=login&confirmado=1" }
+  });
+  if (error) throw error;
+}
+
+export async function updateCurrentPassword(password: string) {
+  const { error } = await supabaseRealtime.auth.updateUser({ password });
   if (error) throw error;
 }

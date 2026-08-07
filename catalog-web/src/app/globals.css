@@ -20,4 +20,20 @@
 .drawer-logo{width:180px;height:58px;margin:5px 0 24px;padding:9px 12px;border-radius:12px;background:var(--navy)}
 .footer-logo{width:190px;height:62px}
 .loading img{width:220px;height:72px}
+.signup-trap{position:absolute!important;left:-10000px!important;width:1px!important;height:1px!important;opacity:0!important;pointer-events:none!important}
+.account-data{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:24px 0 38px}.account-data>div{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px}.account-data small{display:block;color:var(--muted);font-weight:800;margin-bottom:5px}.account-data b{display:block;word-break:break-word}.account-page .link-button{display:flex;align-items:center;justify-content:center;gap:8px}.account-page .link-button svg{width:18px}
+@media(max-width:600px){.account-data{grid-template-columns:1fr}}
+.inline-product-details{display:grid;gap:12px;margin-top:22px}.inline-product-details>section{border-top:1px solid var(--line);padding-top:18px}.inline-product-details h2{font-size:18px;margin:0 0 12px}.inline-product-details p{color:var(--muted);font-size:14px;line-height:1.6;margin:0 0 12px;white-space:pre-line}.inline-product-details dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0}.inline-product-details dl div{background:var(--soft);padding:10px 12px;border-radius:10px}.inline-product-details dt{font-size:10px;color:var(--muted);font-weight:900}.inline-product-details dd{margin:3px 0 0;font-size:13px;font-weight:900}.inline-product-details .applications{grid-template-columns:repeat(2,minmax(0,1fr))}.recommendations{margin-top:70px;padding-top:35px;border-top:1px solid var(--line)}.recommendations .section-head{margin-bottom:22px}.recommendations .section-head h2{font-size:34px}
 @media(max-width:800px){.main-image img{inset:5%;width:90%;height:90%}.image-button img{inset:7%;width:86%;height:86%}}
+@media(max-width:800px){.inline-product-details dl,.inline-product-details .applications{grid-template-columns:1fr}.recommendations{margin-top:45px;padding-top:25px}.recommendations .section-head h2{font-size:29px}}
+
+/* Briland motion system: quick physical feedback without delaying navigation. */
+:root{--motion-fast:100ms;--motion-ui:190ms;--motion-route:260ms;--motion-ease:cubic-bezier(.22,1,.36,1)}
+button,a{transition:transform var(--motion-fast) var(--motion-ease),background-color var(--motion-ui) var(--motion-ease),color var(--motion-ui) var(--motion-ease),box-shadow var(--motion-ui) var(--motion-ease),border-color var(--motion-ui) var(--motion-ease)}
+button:active,a:active{transform:scale(.975)}
+.image-button img,.main-image img{animation:briland-media-in var(--motion-ui) var(--motion-ease) both}
+.drawer-overlay{display:none}
+@keyframes briland-media-in{from{opacity:.72;transform:scale(.985)}to{opacity:1;transform:scale(1)}}
+@media(max-width:1150px){.drawer-overlay{display:block;position:fixed;inset:0;z-index:75;background:#02112699;backdrop-filter:blur(3px)}}
+@media(max-width:1150px){.mobile-drawer{overflow-y:auto}.mobile-drawer .drawer-account{display:flex;align-items:center;gap:10px;margin-top:auto;border:0!important;border-radius:12px;background:var(--yellow);color:var(--navy)}.mobile-drawer .drawer-account svg{width:19px;height:19px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}

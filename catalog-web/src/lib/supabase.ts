@@ -5,7 +5,7 @@ const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || "";
 const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() || "";
 if (!url || !key) throw new Error("Supabase não configurado para o catálogo web.");
 export const supabase = createClient(url, key, { auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:true } });
-const userFields = "id,name,company,email,role,status,phone,authUserId";
+const userFields = "id,name,company,email,role,status,phone,cnpj,address,city,state,lastLoginAt,authUserId";
 
 export async function loadCatalog(role:Role, token?:string):Promise<CatalogData> {
   void token;
@@ -39,4 +39,12 @@ export async function telemetry(eventType:string, route:string, profile:UserProf
     localStorage.setItem("briland-web-visitor",visitorId);
     await supabase.from("AppTelemetryEvent").insert({ id:crypto.randomUUID(), eventType, screen:route, route, userId:profile?.id||null, userRole:profile?.role||"VISITANTE", visitorId, success:true, metadata:{ source:"WEB_CATALOG", ...metadata } });
   } catch { /* nunca bloqueia o catálogo */ }
+}
+
+export async function loadPopularProductIds():Promise<string[]> {
+  try {
+    const {data,error}=await supabase.rpc("get_catalog_popular_product_ids",{result_limit:24});
+    if(error) return [];
+    return (data||[]).map((item:{productId?:string;product_id?:string})=>item.productId||item.product_id).filter(Boolean) as string[];
+  } catch { return []; }
 }

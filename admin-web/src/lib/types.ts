@@ -117,6 +117,19 @@ export type AppSettings = {
   contact?: Record<string, unknown>;
 };
 
+export type CapacityHealth = {
+  databaseBytes: number;
+  storageBytes: number;
+  currentConnections: number;
+  activeConnections: number;
+  idleConnections: number;
+  internalConnections: number;
+  availableConnections: number;
+  maxConnections: number;
+  latencyMs: number;
+  generatedAt: string;
+};
+
 export type AppData = {
   produtos: Produto[];
   categorias: Categoria[];
@@ -134,4 +147,5 @@ export type AppData = {
   auditLogs: AuditLog[];
   presence: PresenceSession[];
   presenceSummary: PresenceCommercialSummary;
+  capacityHealth: CapacityHealth | null;
 };

@@ -65,6 +65,7 @@ import type {
   AuditLog,
   CatalogPdfEditorialSettings,
   CatalogPdfRole,
+  CapacityHealth,
   TelemetryEvent,
   Usuario
 } from "@/lib/types";
@@ -125,8 +126,29 @@ const emptyData: AppData = {
   telemetry: [],
   auditLogs: [],
   presence: [],
-  presenceSummary: { onlineTotal: 0, onlineLoggedIn: 0, onlineVisitors: 0, sessions30d: 0, visitors30d: 0, returningVisitors30d: 0, cities: [], daily: [], networks: [] }
+  presenceSummary: { onlineTotal: 0, onlineLoggedIn: 0, onlineVisitors: 0, sessions30d: 0, visitors30d: 0, returningVisitors30d: 0, cities: [], daily: [], networks: [] },
+  capacityHealth: null
 };
+
+const CAPACITY_LIMITS = {
+  databaseBytes: 500 * 1024 ** 2,
+  storageBytes: 1 * 1024 ** 3,
+  realtimeUsers: 200,
+  latencyMs: 1000
+};
+
+const formatBytes = (value: number) => value >= 1024 ** 3
+  ? `${(value / 1024 ** 3).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} GB`
+  : `${(value / 1024 ** 2).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} MB`;
+
+async function loadCapacityHealth() {
+  const startedAt = performance.now();
+  const result = await supabase.rpc("get_admin_capacity_health");
+  return {
+    ...result,
+    data: result.data ? { ...(result.data as Omit<CapacityHealth, "latencyMs">), latencyMs: Math.round(performance.now() - startedAt) } : null
+  };
+}
 
 const userSelectFields = "id,name,company,email,role,status,notes,phone,cnpj,address,city,state,registrationNotes,approvedAt,approvedBy,lastLoginAt,createdAt,updatedAt,authUserId";
 
@@ -148,6 +170,43 @@ function leadDepartment(lead: Lead) {
 
 function leadMessageBody(message?: string | null) {
   return (message || "").replace(/^\[(Comercial|Suporte)\]\s*/i, "").trim();
+}
+
+function readablePage(route?: string | null, products: Produto[] = []) {
+  const value = String(route || "").split("?")[0] || "/";
+  const productMatch = value.match(/^\/produto\/([^/]+)/);
+  if (productMatch) {
+    const product = products.find((item) => item.id === productMatch[1] || item.slug === productMatch[1]);
+    return product ? `Produto: ${product.codigoInterno || "Sem código"} — ${product.nome}` : "Detalhe de produto";
+  }
+  const labels: Record<string, string> = {
+    "/": "Página inicial", "/produtos": "Todos os produtos", "/categorias": "Categorias",
+    "/marcas": "Marcas", "/montadoras": "Veículos", "/lancamentos": "Lançamentos",
+    "/promocoes": "Promoções", "/favoritos": "Favoritos", "/orcamento": "Orçamento",
+    "/login": "Login", "/cadastro": "Cadastro", "/minha-conta": "Minha conta",
+    "/privacidade": "Política de privacidade"
+  };
+  if (labels[value]) return labels[value];
+  const [section, slug] = value.replace(/^\//, "").split("/");
+  const sectionLabels: Record<string, string> = { categoria: "Categoria", marca: "Marca", montadora: "Montadora" };
+  return sectionLabels[section] ? `${sectionLabels[section]}: ${(slug || "").replace(/-/g, " ")}` : value;
+}
+
+function readableAction(event: TelemetryEvent, products: Produto[] = []) {
+  if (event.eventType === "screen_view") return `Abriu ${readablePage(event.route || event.screen, products)}`;
+  if (event.eventType === "product_view") {
+    const product = products.find((item) => item.id === String(event.metadata?.productId || ""));
+    return `Visualizou ${product ? `${product.codigoInterno || "Sem código"} — ${product.nome}` : String(event.metadata?.code || "um produto")}`;
+  }
+  const labels: Record<string, string> = {
+    login: "Entrou no catálogo", session_start: "Iniciou uma sessão", search_results: "Pesquisou no catálogo",
+    search_zero_results: "Pesquisou sem encontrar resultado", whatsapp_open: "Abriu o WhatsApp", quote_start: "Iniciou um orçamento",
+    quote_sent: "Enviou um orçamento", download_started: "Iniciou um download", download_completed: "Concluiu um download",
+    download_failed: "Teve falha em um download", favorite_toggle: "Alterou um favorito", product_share: "Compartilhou um produto",
+    gallery_interaction: "Interagiu com as imagens", vehicle_filter: "Usou o filtro de veículo", category_filter: "Filtrou uma categoria"
+  };
+  const query = String(event.metadata?.query || "").trim();
+  return `${labels[event.eventType] || event.eventType}${query ? `: “${query}”` : ""}`;
 }
 
 const catalogPdfRoles: CatalogPdfRole[] = ["VISITANTE", "NAO_CLIENTE", "CLIENTE", "REPRESENTANTE"];
@@ -477,6 +536,16 @@ export default function Page() {
     window.setTimeout(() => setToast(""), 3500);
   };
 
+  const refreshAnalyticsData = async (roleOverride = adminUser?.role) => {
+    if (!isMaster(roleOverride)) return;
+    const [telemetry, auditLogs] = await Promise.all([
+      loadTelemetryWindow(),
+      supabase.from("AuditLog").select("*").order("createdAt", { ascending: false }).limit(500).returns<AuditLog[]>()
+    ]);
+    if (telemetry.error || auditLogs.error) return;
+    setData((current) => ({ ...current, telemetry: telemetry.data || [], auditLogs: auditLogs.data || [] }));
+  };
+
   const loadAdmin = async (token: string, authUserId: string) => {
     const { data: users, error } = await supabase
       .from("User")
@@ -492,10 +561,10 @@ export default function Page() {
     }
     setSessionToken(token);
     setAdminUser(user);
-    await reload(user.role);
+    await reloadAll(user.role);
   };
 
-  const reload = async (roleOverride = adminUser?.role) => {
+  const reloadAll = async (roleOverride = adminUser?.role) => {
     setLoading(true);
     const startedAt = performance.now();
     try {
@@ -516,7 +585,8 @@ export default function Page() {
         telemetry,
         auditLogs,
         presence,
-        presenceSummary
+        presenceSummary,
+        capacityHealth
       ] = await Promise.all([
         supabase.from("Produto").select("*").order("ordem", { ascending: true }).order("nome").returns<Produto[]>(),
         supabase.from("Categoria").select("*").order("ordem", { ascending: true }).returns<Categoria[]>(),
@@ -529,17 +599,18 @@ export default function Page() {
         supabase.from("ProdutoAplicacao").select("*").returns<ProdutoAplicacao[]>(),
         supabase.rpc("get_app_settings"),
         master ? supabase.from("User").select(userSelectFields).order("name").returns<Usuario[]>() : Promise.resolve({ data: [], error: null }),
-        master ? supabase.from("ProductFieldPermission").select("*").order("fieldLabel").returns<Permission[]>() : Promise.resolve({ data: [], error: null }),
-        master ? loadTelemetryWindow() : Promise.resolve({ data: [], error: null }),
-        master ? supabase.from("AuditLog").select("*").order("createdAt", { ascending: false }).limit(500).returns<AuditLog[]>() : Promise.resolve({ data: [], error: null }),
+        master ? supabase.rpc("get_admin_product_permissions").returns<Permission[]>() : Promise.resolve({ data: [], error: null }),
+        Promise.resolve({ data: [], error: null }),
+        Promise.resolve({ data: [], error: null }),
         master ? supabase.from("AppPresenceSession").select("*").order("lastSeenAt", { ascending: false }).limit(500).returns<PresenceSession[]>() : Promise.resolve({ data: [], error: null }),
-        master ? supabase.rpc("get_presence_commercial_summary") : Promise.resolve({ data: emptyData.presenceSummary, error: null })
+        master ? supabase.rpc("get_presence_commercial_summary") : Promise.resolve({ data: emptyData.presenceSummary, error: null }),
+        master ? loadCapacityHealth() : Promise.resolve({ data: null, error: null })
       ]);
 
-      const firstError = [produtos, categorias, marcas, montadoras, modelosVeiculo, produtoModelosVeiculo, aplicacoes, usuarios, leads, permissoes, produtoAplicacoes, settings, telemetry, auditLogs, presence, presenceSummary].find((item) => item.error);
+      const firstError = [produtos, categorias, marcas, montadoras, modelosVeiculo, produtoModelosVeiculo, aplicacoes, usuarios, leads, permissoes, produtoAplicacoes, settings, telemetry, auditLogs, presence, presenceSummary, capacityHealth].find((item) => item.error);
       if (firstError?.error) throw firstError.error;
 
-      setData({
+      setData((current) => ({
         produtos: produtos.data || [],
         categorias: categorias.data || [],
         marcas: marcas.data || [],
@@ -549,14 +620,16 @@ export default function Page() {
         aplicacoes: aplicacoes.data || [],
         usuarios: usuarios.data || [],
         leads: leads.data || [],
-        permissoes: permissoes.data || [],
+        permissoes: (permissoes.data as unknown as Permission[] | null) || [],
         produtoAplicacoes: produtoAplicacoes.data || [],
         settings: (settings.data as AppSettings | null) || {},
-        telemetry: telemetry.data || [],
-        auditLogs: auditLogs.data || [],
+        telemetry: master ? current.telemetry : [],
+        auditLogs: master ? current.auditLogs : [],
         presence: presence.data || [],
-        presenceSummary: (presenceSummary.data as PresenceCommercialSummary | null) || emptyData.presenceSummary
-      });
+        presenceSummary: (presenceSummary.data as PresenceCommercialSummary | null) || emptyData.presenceSummary,
+        capacityHealth: (capacityHealth.data as CapacityHealth | null) || null
+      }));
+      if (master) void refreshAnalyticsData(roleOverride);
       void trackAdminTelemetry({
         eventType: "load_time",
         screen: "admin-web",
@@ -582,6 +655,78 @@ export default function Page() {
       notify(friendlyAdminError(error, "carregar os dados"));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const reloadSection = async () => {
+    const master = isMaster(adminUser?.role);
+    try {
+      if (active === "Produtos") {
+        const [produtos, produtoAplicacoes, produtoModelosVeiculo] = await Promise.all([
+          supabase.from("Produto").select("*").order("ordem", { ascending: true }).order("nome").returns<Produto[]>(),
+          supabase.from("ProdutoAplicacao").select("*").returns<ProdutoAplicacao[]>(),
+          supabase.from("ProdutoModeloVeiculo").select("*").returns<ProdutoModeloVeiculo[]>()
+        ]);
+        const error = [produtos, produtoAplicacoes, produtoModelosVeiculo].find((item) => item.error)?.error;
+        if (error) throw error;
+        setData((current) => ({ ...current, produtos: produtos.data || [], produtoAplicacoes: produtoAplicacoes.data || [], produtoModelosVeiculo: produtoModelosVeiculo.data || [] }));
+        return;
+      }
+      if (active === "Categorias" || active === "Marcas") {
+        const categoryMode = active === "Categorias";
+        const result = categoryMode
+          ? await supabase.from("Categoria").select("*").order("ordem", { ascending: true }).returns<Categoria[]>()
+          : await supabase.from("Marca").select("*").order("nome").returns<Marca[]>();
+        if (result.error) throw result.error;
+        setData((current) => categoryMode ? { ...current, categorias: (result.data || []) as Categoria[] } : { ...current, marcas: (result.data || []) as Marca[] });
+        return;
+      }
+      if (active === "Montadoras") {
+        const [montadoras, modelosVeiculo] = await Promise.all([
+          supabase.from("Montadora").select("*").order("nome").returns<Montadora[]>(),
+          supabase.from("ModeloVeiculo").select("*").order("nome").returns<ModeloVeiculo[]>()
+        ]);
+        if (montadoras.error || modelosVeiculo.error) throw montadoras.error || modelosVeiculo.error;
+        setData((current) => ({ ...current, montadoras: montadoras.data || [], modelosVeiculo: modelosVeiculo.data || [] }));
+        return;
+      }
+      if (active === "Aplicações") {
+        const [aplicacoes, produtoAplicacoes] = await Promise.all([
+          supabase.from("Aplicacao").select("*").order("nome").returns<Aplicacao[]>(),
+          supabase.from("ProdutoAplicacao").select("*").returns<ProdutoAplicacao[]>()
+        ]);
+        if (aplicacoes.error || produtoAplicacoes.error) throw aplicacoes.error || produtoAplicacoes.error;
+        setData((current) => ({ ...current, aplicacoes: aplicacoes.data || [], produtoAplicacoes: produtoAplicacoes.data || [] }));
+        return;
+      }
+      if (active === "Leads") {
+        const result = await supabase.from("LeadOrcamento").select("*").order("createdAt", { ascending: false }).limit(300).returns<Lead[]>();
+        if (result.error) throw result.error;
+        setData((current) => ({ ...current, leads: result.data || [] }));
+        return;
+      }
+      if (active === "Usuários" && master) {
+        const result = await supabase.from("User").select(userSelectFields).order("name").returns<Usuario[]>();
+        if (result.error) throw result.error;
+        setData((current) => ({ ...current, usuarios: result.data || [] }));
+        return;
+      }
+      if (active === "Permissões" && master) {
+        const result = await supabase.rpc("get_admin_product_permissions").returns<Permission[]>();
+        if (result.error) throw result.error;
+        setData((current) => ({ ...current, permissoes: (result.data as unknown as Permission[] | null) || [] }));
+        return;
+      }
+      if (["Catálogo PDF", "Mídia", "Links", "Conteúdo", "Aparência"].includes(active)) {
+        const result = await supabase.rpc("get_app_settings");
+        if (result.error) throw result.error;
+        setData((current) => ({ ...current, settings: (result.data as AppSettings | null) || {} }));
+        return;
+      }
+      await reloadAll();
+    } catch (error) {
+      notify(friendlyAdminError(error, "atualizar esta área"));
+      throw error;
     }
   };
 
@@ -640,6 +785,11 @@ export default function Page() {
   }, [active, adminUser, sessionToken]);
 
   useEffect(() => {
+    if (!sessionToken || !adminUser || !["Análises", "Diagnóstico"].includes(active)) return;
+    void refreshAnalyticsData(adminUser.role);
+  }, [active, adminUser?.id, sessionToken]);
+
+  useEffect(() => {
     if (!sessionToken || !adminUser || !isMaster(adminUser.role)) return;
     let mounted = true;
     const refreshPresence = async () => {
@@ -654,6 +804,39 @@ export default function Page() {
     const timer = setInterval(() => void refreshPresence(), 15000);
     const channel = supabase.channel("admin-presence-live").on("postgres_changes", { event: "*", schema: "public", table: "AppPresenceSession" }, () => void refreshPresence()).subscribe();
     return () => { mounted = false; clearInterval(timer); void supabase.removeChannel(channel); };
+  }, [adminUser, sessionToken]);
+
+  useEffect(() => {
+    if (!sessionToken || !adminUser || !isMaster(adminUser.role)) return;
+    let mounted = true;
+    const refreshCapacity = async () => {
+      const result = await loadCapacityHealth();
+      if (!mounted || result.error || !result.data) return;
+      setData((current) => ({ ...current, capacityHealth: result.data as CapacityHealth }));
+    };
+    const refreshWhenVisible = () => { if (document.visibilityState === "visible") void refreshCapacity(); };
+    const timer = setInterval(() => void refreshCapacity(), 10000);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [adminUser, sessionToken]);
+
+  useEffect(() => {
+    if (!sessionToken || !adminUser || !isMaster(adminUser.role)) return;
+    const channel = supabase.channel("admin-telemetry-live").on(
+      "postgres_changes",
+      { event: "INSERT", schema: "public", table: "AppTelemetryEvent" },
+      (payload) => setData((current) => ({
+        ...current,
+        telemetry: [payload.new as TelemetryEvent, ...current.telemetry].slice(0, 20000)
+      }))
+    ).subscribe();
+    return () => { void supabase.removeChannel(channel); };
   }, [adminUser, sessionToken]);
 
   useEffect(() => {
@@ -729,7 +912,7 @@ export default function Page() {
                 <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar no painel..." className="w-full bg-transparent outline-none" />
               </label>
               <button aria-label="Notificações" className="icon-btn relative"><Bell size={17} /><span className="notification-dot" /></button>
-              <button onClick={() => void reload()} className="btn-primary h-11 px-4">{loading ? <Loader2 className="animate-spin" size={17} /> : <RefreshCw size={17} />}<span className="hidden sm:inline">Atualizar</span></button>
+              <button onClick={() => void reloadAll()} className="btn-primary h-11 px-4">{loading ? <Loader2 className="animate-spin" size={17} /> : <RefreshCw size={17} />}<span className="hidden sm:inline">Atualizar</span></button>
             </div>
           </div>
         </header>
@@ -737,20 +920,20 @@ export default function Page() {
         <section className="mx-auto max-w-[1600px] p-4 lg:p-8">
           {activeTab === "Dashboard" && <Dashboard data={data} setActive={setActive} role={adminUser.role} />}
           {activeTab === "Análises" && <AnalyticsSection data={data} />}
-          {activeTab === "Produtos" && <Products data={data} query={query} reload={reload} notify={notify} />}
-          {activeTab === "Categorias" && <CategoryBrandSection title="Categorias" table="Categoria" imageField="imagem" items={data.categorias} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
-          {activeTab === "Marcas" && <CategoryBrandSection title="Marcas" table="Marca" imageField="logo" items={data.marcas} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
-          {activeTab === "Montadoras" && <VehicleSection data={data} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
-          {activeTab === "Aplicações" && <Applications items={data.aplicacoes} query={query} reload={reload} notify={notify} canDelete={isMaster(adminUser.role)} />}
-          {activeTab === "Leads" && <Leads leads={data.leads} products={data.produtos} query={query} reload={reload} notify={notify} canCompleteDeletion={isMaster(adminUser.role)} />}
-          {activeTab === "Usuários" && <UsersSection users={data.usuarios} presence={data.presence} query={query} reload={reload} notify={notify} adminUser={adminUser} />}
-          {activeTab === "Permissões" && <PermissionsSectionV2 permissions={data.permissoes} query={query} reload={reload} notify={notify} />}
+          {activeTab === "Produtos" && <Products data={data} query={query} reload={reloadSection} notify={notify} />}
+          {activeTab === "Categorias" && <CategoryBrandSection title="Categorias" table="Categoria" imageField="imagem" items={data.categorias} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
+          {activeTab === "Marcas" && <CategoryBrandSection title="Marcas" table="Marca" imageField="logo" items={data.marcas} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
+          {activeTab === "Montadoras" && <VehicleSection data={data} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
+          {activeTab === "Aplicações" && <Applications items={data.aplicacoes} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
+          {activeTab === "Leads" && <Leads leads={data.leads} products={data.produtos} query={query} reload={reloadSection} notify={notify} canCompleteDeletion={isMaster(adminUser.role)} />}
+          {activeTab === "Usuários" && <UsersSection users={data.usuarios} presence={data.presence} telemetry={data.telemetry} products={data.produtos} query={query} reload={reloadSection} notify={notify} adminUser={adminUser} />}
+          {activeTab === "Permissões" && <PermissionsSectionV2 permissions={data.permissoes} query={query} reload={reloadSection} notify={notify} />}
           {activeTab === "Diagnóstico" && <Diagnostics data={data} />}
-          {activeTab === "Catálogo PDF" && <CatalogPdfSection data={data} reload={reload} notify={notify} />}
-          {activeTab === "Mídia" && <MediaSettingsSection settings={data.settings.media} reload={reload} notify={notify} />}
-          {activeTab === "Links" && <LinksSection settings={data.settings.socialLinks} reload={reload} notify={notify} />}
-          {activeTab === "Conteúdo" && <ContentSection settings={data.settings.about} reload={reload} notify={notify} />}
-          {activeTab === "Aparência" && <AppearanceSection draftSettings={data.settings.catalogAppearanceDraft} publishedSettings={data.settings.catalogAppearance} reload={reload} notify={notify} />}
+          {activeTab === "Catálogo PDF" && <CatalogPdfSection data={data} reload={reloadSection} notify={notify} />}
+          {activeTab === "Mídia" && <MediaSettingsSection settings={data.settings.media} reload={reloadSection} notify={notify} />}
+          {activeTab === "Links" && <LinksSection settings={data.settings.socialLinks} reload={reloadSection} notify={notify} />}
+          {activeTab === "Conteúdo" && <ContentSection settings={data.settings.about} reload={reloadSection} notify={notify} />}
+          {activeTab === "Aparência" && <AppearanceSection draftSettings={data.settings.catalogAppearanceDraft} publishedSettings={data.settings.catalogAppearance} reload={reloadSection} notify={notify} />}
         </section>
       </main>
 
@@ -866,6 +1049,7 @@ function Dashboard({ data, setActive, role }: { data: AppData; setActive: (tab: 
           <Summary label="Visitantes em 30 dias" value={data.presenceSummary.visitors30d} />
           <Summary label="Retornos em 30 dias" value={data.presenceSummary.returningVisitors30d} />
         </div>
+        <CapacityAlertsPanel data={data} />
         <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
           <Panel title="Oportunidades comerciais por cidade">
             <Table><thead><tr><Th>Cidade</Th><Th>Acessos</Th><Th>Visitantes</Th><Th>Produto em alta</Th><Th>Busca em alta</Th><Th>Sem resultado</Th><Th>Conversão</Th><Th>Cobertura</Th></tr></thead><tbody>{commercialCities.slice(0, 12).map((row) => <tr key={`${row.city}-${row.state}`}><Td><span className="font-black">{row.city}/{row.state}</span><div className={`text-xs font-bold ${row.growth >= 0 ? "text-emerald-700" : "text-red-700"}`}>{row.growth >= 0 ? "+" : ""}{row.growth}% na semana</div></Td><Td>{row.sessions}</Td><Td>{row.visitors}</Td><Td>{row.topProduct}</Td><Td>{row.topSearch}</Td><Td>{row.zeroResults}</Td><Td>{row.conversion}%</Td><Td>{row.covered ? <span className="status-pill bg-emerald-100 text-emerald-800">Atendida</span> : <span className="status-pill bg-amber-100 text-amber-800">Oportunidade</span>}</Td></tr>)}</tbody></Table>
@@ -886,6 +1070,63 @@ function Dashboard({ data, setActive, role }: { data: AppData; setActive: (tab: 
       </div>
     </div>
   );
+}
+
+type CapacityLevel = "Normal" | "Atenção" | "Crítico" | "Integração pendente";
+
+function capacityLevel(percent: number): CapacityLevel {
+  if (percent >= 80) return "Crítico";
+  if (percent >= 60) return "Atenção";
+  return "Normal";
+}
+
+function CapacityAlertsPanel({ data }: { data: AppData }) {
+  const health = data.capacityHealth;
+  if (!health) return <Panel title="Alertas de capacidade"><div className="text-sm font-bold text-amber-700">Não foi possível consultar a capacidade agora. Use Atualizar para tentar novamente.</div></Panel>;
+
+  const metrics = [
+    { label: "Banco de dados", value: formatBytes(health.databaseBytes), limit: formatBytes(CAPACITY_LIMITS.databaseBytes), percent: health.databaseBytes / CAPACITY_LIMITS.databaseBytes * 100 },
+    { label: "Arquivos e imagens", value: formatBytes(health.storageBytes), limit: formatBytes(CAPACITY_LIMITS.storageBytes), percent: health.storageBytes / CAPACITY_LIMITS.storageBytes * 100, warningAt: 70 },
+    { label: "Conexões do banco", value: `${health.currentConnections} de ${health.maxConnections}`, limit: String(health.maxConnections), percent: health.currentConnections / Math.max(health.maxConnections, 1) * 100, helper: `${health.availableConnections} disponíveis`, connectionDetails: true },
+    { label: "Usuários online acompanhados", value: String(data.presenceSummary.onlineTotal), limit: String(CAPACITY_LIMITS.realtimeUsers), percent: data.presenceSummary.onlineTotal / CAPACITY_LIMITS.realtimeUsers * 100, helper: "Presença registrada pelo catálogo" },
+    { label: "Tempo de resposta", value: `${health.latencyMs} ms`, limit: `${CAPACITY_LIMITS.latencyMs} ms`, percent: health.latencyMs / CAPACITY_LIMITS.latencyMs * 60, helper: "Leitura deste diagnóstico" }
+  ].map((metric) => {
+    const adjustedPercent = metric.warningAt === 70 && metric.percent < 80 ? metric.percent * 60 / 70 : metric.percent;
+    const level = metric.label === "Tempo de resposta"
+      ? health.latencyMs >= 2000 ? "Crítico" : health.latencyMs >= 1000 ? "Atenção" : "Normal"
+      : capacityLevel(adjustedPercent);
+    return { ...metric, level: level as CapacityLevel, displayPercent: Math.min(100, metric.percent) };
+  });
+
+  const levelStyle: Record<CapacityLevel, string> = {
+    "Normal": "bg-emerald-100 text-emerald-800",
+    "Atenção": "bg-amber-100 text-amber-800",
+    "Crítico": "bg-red-100 text-red-800",
+    "Integração pendente": "bg-slate-200 text-slate-700"
+  };
+
+  return <Panel title="Alertas de capacidade">
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      {metrics.map((metric) => <div key={metric.label} className="rounded-2xl border border-line bg-slate-50 p-4">
+        <div className="flex items-start justify-between gap-3"><div className="text-sm font-black">{metric.label}</div><span className={`status-pill ${levelStyle[metric.level]}`}>{metric.level}</span></div>
+        <div className="mt-3 text-2xl font-black">{metric.value}</div>
+        <div className="mt-1 text-xs font-semibold text-muted">Limite de referência: {metric.limit}</div>
+        <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200"><div className={`h-full rounded-full ${metric.level === "Crítico" ? "bg-red-600" : metric.level === "Atenção" ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.max(1, metric.displayPercent)}%` }} /></div>
+        <div className="mt-2 text-xs font-bold text-slate-600">{metric.percent.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}% utilizado{metric.helper ? ` · ${metric.helper}` : ""}</div>
+        {metric.connectionDetails && <div className="mt-3 grid grid-cols-2 gap-2 border-t border-line pt-3 text-xs">
+          <div><span className="block font-black text-emerald-700">{health.activeConnections}</span><span className="font-semibold text-muted">em atividade</span></div>
+          <div><span className="block font-black text-blue-700">{health.idleConnections}</span><span className="font-semibold text-muted">aguardando</span></div>
+          <div><span className="block font-black text-slate-700">{health.internalConnections}</span><span className="font-semibold text-muted">serviços internos</span></div>
+          <div><span className="block font-black text-navy">{health.availableConnections}</span><span className="font-semibold text-muted">disponíveis</span></div>
+        </div>}
+      </div>)}
+      <div className="rounded-2xl border border-line bg-slate-50 p-4">
+        <div className="flex items-start justify-between gap-3"><div className="text-sm font-black">Processamento (CPU)</div><span className={`status-pill ${levelStyle["Integração pendente"]}`}>Integração pendente</span></div>
+        <p className="mt-3 text-sm font-semibold text-slate-600">A medição precisa será ativada pela API de métricas do Supabase. Nenhum percentual estimado é exibido.</p>
+      </div>
+    </div>
+    <p className="mt-4 flex items-center gap-2 text-xs font-semibold text-muted"><span className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500" /> Monitoramento ativo · atualizado em {formatLocalDateTime(health.generatedAt)} · nova leitura automática em até 10 segundos. Atenção a partir de 60% (arquivos: 70%); crítico a partir de 80%.</p>
+  </Panel>;
 }
 
 function AnalyticsSection({ data }: { data: AppData }) {
@@ -928,7 +1169,7 @@ function AnalyticsSection({ data }: { data: AppData }) {
     const product = productById.get(String(event.metadata?.productId || ""));
     return brandById.get(String(event.metadata?.brandId || product?.marcaId || "")) || "Não informado";
   }));
-  const pageRank = rank(eventIs("screen_view").map((event) => event.screen || event.route || "Não informado"));
+  const pageRank = rank(eventIs("screen_view").map((event) => readablePage(event.route || event.screen, data.produtos)));
   const geoRows = Object.values(events.reduce<Record<string, { country: string; state: string; city: string; events: number; visitors: Set<string>; users: Set<string> }>>((acc, event) => {
     const country = event.country || "Não informado";
     const state = event.state || "Não informado";
@@ -980,13 +1221,6 @@ function AnalyticsSection({ data }: { data: AppData }) {
     ["Leads recebidos", leads.length],
     ["Downloads concluídos", downloads.filter((event) => event.eventType === "download_completed").length]
   ] as const;
-  const eventLabels: Record<string, string> = {
-    screen_view: "Abriu uma página", product_view: "Visualizou produto", search_results: "Fez uma busca",
-    search_zero_results: "Buscou sem encontrar", whatsapp_open: "Abriu o WhatsApp", quote_start: "Iniciou orçamento",
-    quote_sent: "Enviou orçamento", download_started: "Iniciou download", download_completed: "Concluiu download",
-    favorite_toggle: "Alterou favorito", product_share: "Compartilhou produto", gallery_interaction: "Interagiu com imagens",
-    vehicle_filter: "Usou filtro de veículo", category_filter: "Filtrou categoria"
-  };
   return (
     <div className="space-y-6">
       <section className="hero-dashboard p-6 lg:p-8">
@@ -1036,7 +1270,7 @@ function AnalyticsSection({ data }: { data: AppData }) {
         <Panel title="Downloads de catálogos e arquivos"><div className="grid gap-3 sm:grid-cols-2"><Info label="Iniciados" value={String(downloads.filter((event) => event.eventType === "download_started").length)} /><Info label="Concluídos" value={String(downloads.filter((event) => event.eventType === "download_completed").length)} /><Info label="Falhas" value={String(downloads.filter((event) => event.eventType === "download_failed").length)} /><Info label="Abertos/compartilhados" value={String(downloads.filter((event) => ["download_opened", "download_shared"].includes(event.eventType)).length)} /></div><div className="mt-4 max-h-64 overflow-auto">{daysRows.slice().reverse().map((row) => <div key={row.label} className="flex justify-between border-b border-line py-2 text-sm"><span>{row.label}</span><b>{row.downloads} concluídos</b></div>)}</div></Panel>
       </div>
       <Panel title="Ações por usuário cadastrado">
-        <Table><thead><tr><Th>Usuário</Th><Th>Empresa / perfil</Th><Th>Ações</Th><Th>Última ação</Th><Th>Local recente</Th><Th>Data</Th></tr></thead><tbody>{users.slice(0, 100).map((row) => { const user = data.usuarios.find((item) => item.id === row.id); return <tr key={row.id}><Td><div className="font-black">{user?.name || "Usuário removido"}</div><div className="text-xs text-muted">{user?.email || row.id}</div></Td><Td>{user?.company || user?.role || "-"}</Td><Td>{row.actions}</Td><Td>{eventLabels[row.lastAction] || row.lastAction}</Td><Td>{row.city}</Td><Td>{formatLocalDateTime(row.lastAt)}</Td></tr>; })}</tbody></Table>
+        <Table><thead><tr><Th>Usuário</Th><Th>Empresa / perfil</Th><Th>Ações</Th><Th>Última ação</Th><Th>Local recente</Th><Th>Data</Th></tr></thead><tbody>{users.slice(0, 100).map((row) => { const user = data.usuarios.find((item) => item.id === row.id); const lastEvent = events.find((event) => event.userId === row.id && event.createdAt === row.lastAt); return <tr key={row.id}><Td><div className="font-black">{user?.name || "Usuário removido"}</div><div className="text-xs text-muted">{user?.email || row.id}</div></Td><Td>{user?.company || user?.role || "-"}</Td><Td>{row.actions}</Td><Td>{lastEvent ? readableAction(lastEvent, data.produtos) : row.lastAction}</Td><Td>{row.city}</Td><Td>{formatLocalDateTime(row.lastAt)}</Td></tr>; })}</tbody></Table>
         {!users.length && <div className="py-10 text-center text-sm text-muted">Nenhuma ação identificada de usuário cadastrado no período.</div>}
       </Panel>
       <Panel title="Pesquisas sem resultado — demanda não atendida">
@@ -1343,25 +1577,27 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
       if (error) throw error;
       const existingApplicationLinks = data.produtoAplicacoes.filter((item) => item.produtoId === draft.id);
       const currentApplicationIds = new Set(applicationLinks.map((item) => item.aplicacaoId).filter(Boolean));
+      const applicationMutations = [];
       for (const item of existingApplicationLinks) {
         if (!currentApplicationIds.has(item.aplicacaoId)) {
-          const { error: deleteError } = await supabase.from("ProdutoAplicacao").delete().eq("produtoId", draft.id).eq("aplicacaoId", item.aplicacaoId);
-          if (deleteError) throw deleteError;
+          applicationMutations.push(supabase.from("ProdutoAplicacao").delete().eq("produtoId", draft.id).eq("aplicacaoId", item.aplicacaoId));
         }
       }
       const existingApplicationIds = new Set(existingApplicationLinks.map((item) => item.aplicacaoId));
       for (const aplicacaoId of currentApplicationIds) {
         if (!existingApplicationIds.has(aplicacaoId)) {
-          const { error: applicationError } = await supabase.from("ProdutoAplicacao").insert({ produtoId: draft.id, aplicacaoId });
-          if (applicationError) throw applicationError;
+          applicationMutations.push(supabase.from("ProdutoAplicacao").insert({ produtoId: draft.id, aplicacaoId }));
         }
       }
+      const applicationResults = await Promise.all(applicationMutations);
+      const applicationError = applicationResults.find((result) => result.error)?.error;
+      if (applicationError) throw applicationError;
       const existingLinks = data.produtoModelosVeiculo.filter((item) => item.produtoId === draft.id);
       const currentIds = new Set(vehicleLinks.map((item) => item.id));
+      const vehicleMutations = [];
       for (const item of existingLinks) {
         if (!currentIds.has(item.id)) {
-          const { error: deleteError } = await supabase.from("ProdutoModeloVeiculo").delete().eq("id", item.id);
-          if (deleteError) throw deleteError;
+          vehicleMutations.push(supabase.from("ProdutoModeloVeiculo").delete().eq("id", item.id));
         }
       }
       for (const item of vehicleLinks) {
@@ -1376,11 +1612,13 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
           updatedAt: new Date().toISOString()
         };
         const exists = existingLinks.some((current) => current.id === item.id);
-        const { error: linkError } = exists
-          ? await supabase.from("ProdutoModeloVeiculo").update(linkPayload).eq("id", item.id)
-          : await supabase.from("ProdutoModeloVeiculo").insert({ id: item.id, ...linkPayload });
-        if (linkError) throw linkError;
+        vehicleMutations.push(exists
+          ? supabase.from("ProdutoModeloVeiculo").update(linkPayload).eq("id", item.id)
+          : supabase.from("ProdutoModeloVeiculo").insert({ id: item.id, ...linkPayload }));
       }
+      const vehicleResults = await Promise.all(vehicleMutations);
+      const vehicleError = vehicleResults.find((result) => result.error)?.error;
+      if (vehicleError) throw vehicleError;
       notify("Produto salvo.");
       await reload();
       onClose();
@@ -1759,16 +1997,73 @@ function Leads({ leads, products, query, reload, notify, canCompleteDeletion }: 
   );
 }
 
-function UsersSection({ users, presence, query, reload, notify, adminUser }: { users: Usuario[]; presence: PresenceSession[]; query: string; reload: () => Promise<void>; notify: (message: string) => void; adminUser: Usuario }) {
+function UsersSection({ users, presence, telemetry, products, query, reload, notify, adminUser }: { users: Usuario[]; presence: PresenceSession[]; telemetry: TelemetryEvent[]; products: Produto[]; query: string; reload: () => Promise<void>; notify: (message: string) => void; adminUser: Usuario }) {
   const [editing, setEditing] = useState<Usuario | null>(null);
   const [creating, setCreating] = useState(false);
-  const filtered = users.filter((user) => [user.name, user.email, user.company, user.phone, user.cnpj, user.role, user.status].join(" ").toLowerCase().includes(query.toLowerCase()));
+  const [activityUser, setActivityUser] = useState<Usuario | null>(null);
+  const [registrationFilter, setRegistrationFilter] = useState<"all" | "48h">("all");
+  const newUserThreshold = Date.now() - 48 * 60 * 60 * 1000;
+  const newUsers48h = users.filter((user) => Date.parse(user.createdAt || "") >= newUserThreshold);
+  const filtered = users.filter((user) => [user.name, user.email, user.company, user.phone, user.cnpj, user.role, user.status].join(" ").toLowerCase().includes(query.toLowerCase()) && (registrationFilter === "all" || Date.parse(user.createdAt || "") >= newUserThreshold));
   const pending = users.filter((user) => user.status === "PENDING").length;
   const activeAdmins = users.filter((user) => user.status === "ACTIVE" && (isMaster(user.role) || isCollaborator(user.role))).length;
   const latestByUser = new Map<string, PresenceSession>();
   presence.forEach((session) => { if (session.userId && !latestByUser.has(session.userId)) latestByUser.set(session.userId, session); });
+  const eventsByUser = new Map<string, TelemetryEvent[]>();
+  telemetry.forEach((event) => { if (event.userId) eventsByUser.set(event.userId, [...(eventsByUser.get(event.userId) || []), event]); });
   const isOnline = (session?: PresenceSession) => Boolean(session && !session.endedAt && Date.now() - Date.parse(session.lastSeenAt) <= 120000);
-  return <><div className="mb-5 flex justify-end"><button className="btn-yellow" onClick={() => setCreating(true)}><Plus size={17} /> Cadastrar usuário</button></div><div className="mb-5 grid gap-4 md:grid-cols-4"><Summary label="Online agora" value={Array.from(latestByUser.values()).filter(isOnline).length} /><Summary label="Pendentes" value={pending} /><Summary label="Usuários ativos" value={users.filter((user) => user.status === "ACTIVE").length} /><Summary label="Admins ativos" value={activeAdmins} /></div><Panel title={`${filtered.length} usuários`}><Table><thead><tr><Th>Nome</Th><Th>E-mail</Th><Th>Empresa</Th><Th>Presença</Th><Th>Último login</Th><Th>Última origem</Th><Th>Role</Th><Th>Status</Th><Th /></tr></thead><tbody>{filtered.map((user) => { const session = latestByUser.get(user.id); return <tr key={user.id}><Td>{user.name}</Td><Td>{user.email}</Td><Td>{user.company}</Td><Td>{isOnline(session) ? <span className="status-pill bg-emerald-100 text-emerald-800">Online agora</span> : "Offline"}</Td><Td>{formatLocalDateTime(user.lastLoginAt)}</Td><Td>{session ? `${session.city || "Não informado"}/${session.state || "-"} • ${session.deviceType || "-"} • ${session.networkType || "-"}` : "-"}</Td><Td>{user.role}</Td><Td>{user.status}</Td><Td><button className="icon-btn" onClick={() => setEditing(user)}><Pencil size={16} /></button></Td></tr>; })}</tbody></Table></Panel>{creating && <UserModal reload={reload} notify={notify} adminUser={adminUser} onClose={() => setCreating(false)} />}{editing && <UserModal user={editing} reload={reload} notify={notify} adminUser={adminUser} onClose={() => setEditing(null)} />}</>;
+  return <><div className="mb-5 flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2"><button className={registrationFilter === "all" ? "btn-primary" : "btn-white"} onClick={() => setRegistrationFilter("all")}>Todos os usuários</button><button className={registrationFilter === "48h" ? "btn-yellow" : "btn-white"} onClick={() => setRegistrationFilter("48h")}><Clock3 size={16} /> Novos nas últimas 48h ({newUsers48h.length})</button></div><button className="btn-yellow" onClick={() => setCreating(true)}><Plus size={17} /> Cadastrar usuário</button></div><div className="mb-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5"><Summary label="Novos nas últimas 48h" value={newUsers48h.length} /><Summary label="Online agora" value={Array.from(latestByUser.values()).filter(isOnline).length} /><Summary label="Pendentes" value={pending} /><Summary label="Usuários ativos" value={users.filter((user) => user.status === "ACTIVE").length} /><Summary label="Admins ativos" value={activeAdmins} /></div><Panel title={registrationFilter === "48h" ? `${filtered.length} novos usuários nas últimas 48 horas` : `${filtered.length} usuários`}><Table><thead><tr><Th>Nome</Th><Th>E-mail</Th><Th>Empresa</Th><Th>Cadastro</Th><Th>Presença</Th><Th>Último login/acesso</Th><Th>Última origem</Th><Th>Perfil</Th><Th>Status</Th><Th /></tr></thead><tbody>{filtered.map((user) => { const session = latestByUser.get(user.id); const userEvents = eventsByUser.get(user.id) || []; const lastEvent = userEvents[0]; const lastAccess = [user.lastLoginAt, session?.lastSeenAt, lastEvent?.createdAt].filter(Boolean).sort().at(-1); const origin = session ? `${session.city || "Não informado"}/${session.state || "-"} • ${session.deviceType || "-"} • ${session.networkType || "-"}` : lastEvent ? `${lastEvent.city || "Não informado"}/${lastEvent.state || "-"} • ${String(lastEvent.metadata?.source || "Catálogo")}` : "-"; return <tr key={user.id}><Td>{user.name}</Td><Td>{user.email}</Td><Td>{user.company}</Td><Td><div>{formatLocalDateTime(user.createdAt)}</div>{Date.parse(user.createdAt || "") >= newUserThreshold && <span className="status-pill bg-amber-100 text-amber-800">Novo</span>}</Td><Td>{isOnline(session) ? <span className="status-pill bg-emerald-100 text-emerald-800">Online agora</span> : "Offline"}</Td><Td>{formatLocalDateTime(lastAccess)}</Td><Td>{origin}</Td><Td>{user.role === "NAO_CLIENTE" ? "Não cliente" : user.role}</Td><Td>{user.status === "ACTIVE" ? "Ativo" : user.status === "PENDING" ? "Pendente" : "Inativo"}</Td><Td><div className="flex gap-2"><button className="icon-btn" title="Ver histórico de atividade" onClick={() => setActivityUser(user)}><Eye size={16} /></button><button className="icon-btn" title="Editar usuário e alterar perfil" onClick={() => setEditing(user)}><Pencil size={16} /></button></div></Td></tr>; })}</tbody></Table>{!filtered.length && <div className="py-10 text-center text-sm text-muted">Nenhum usuário encontrado neste período.</div>}</Panel>{creating && <UserModal reload={reload} notify={notify} adminUser={adminUser} onClose={() => setCreating(false)} />}{editing && <UserModal user={editing} reload={reload} notify={notify} adminUser={adminUser} onClose={() => setEditing(null)} />}{activityUser && <UserActivityModal user={activityUser} events={eventsByUser.get(activityUser.id) || []} sessions={presence.filter((item) => item.userId === activityUser.id)} products={products} onClose={() => setActivityUser(null)} />}</>;
+}
+
+function UserActivityModal({ user, events, sessions, products, onClose }: { user: Usuario; events: TelemetryEvent[]; sessions: PresenceSession[]; products: Produto[]; onClose: () => void }) {
+  const isoDate = (date: Date) => date.toISOString().slice(0, 10);
+  const today = isoDate(new Date());
+  const initialStart = new Date(); initialStart.setDate(initialStart.getDate() - 29);
+  const [period, setPeriod] = useState("30");
+  const [startDate, setStartDate] = useState(isoDate(initialStart));
+  const [endDate, setEndDate] = useState(today);
+  const [actionType, setActionType] = useState("all");
+  const [page, setPage] = useState(1);
+  const pageSize = 25;
+  const setPeriodDates = (value: string) => {
+    setPeriod(value);
+    if (value === "custom") return;
+    const end = new Date(); const start = new Date(); start.setDate(start.getDate() - (Number(value) - 1));
+    setStartDate(isoDate(start)); setEndDate(isoDate(end));
+  };
+  const actionGroups: Record<string, string[]> = {
+    pages: ["screen_view"], products: ["product_view", "gallery_interaction", "product_share", "favorite_toggle"],
+    searches: ["search_results", "search_zero_results", "vehicle_filter", "category_filter"],
+    commercial: ["whatsapp_open", "quote_start", "quote_sent"],
+    downloads: ["download_started", "download_completed", "download_failed", "download_opened", "download_shared"]
+  };
+  const startAt = new Date(`${startDate}T00:00:00`).getTime();
+  const endAt = new Date(`${endDate}T23:59:59.999`).getTime();
+  const periodEvents = events.filter((event) => { const at = Date.parse(event.createdAt || ""); return at >= startAt && at <= endAt; });
+  const filteredEvents = periodEvents.filter((event) => actionType === "all" || actionGroups[actionType]?.includes(event.eventType));
+  const filteredSessions = sessions.filter((session) => { const at = Date.parse(session.startedAt); return at >= startAt && at <= endAt; });
+  const pageViews = filteredEvents.filter((event) => event.eventType === "screen_view");
+  const productViews = filteredEvents.filter((event) => event.eventType === "product_view");
+  const rank = (values: string[]) => Object.entries(values.reduce<Record<string, number>>((acc, value) => { if (value) acc[value] = (acc[value] || 0) + 1; return acc; }, {})).sort((a, b) => b[1] - a[1]);
+  const topPages = rank(pageViews.map((event) => readablePage(event.route || event.screen, products))).slice(0, 8);
+  const topProducts = rank(productViews.map((event) => readableAction(event, products).replace(/^Visualizou /, ""))).slice(0, 8);
+  const latestSession = sessions[0];
+  const totalPages = Math.max(1, Math.ceil(filteredEvents.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const visibleEvents = filteredEvents.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const changeFilter = (callback: () => void) => { callback(); setPage(1); };
+  return <Modal title={`Atividade de ${user.name}`} onClose={onClose}>
+    <div className="mb-5 rounded-2xl bg-soft p-4"><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <Field label="Período"><select className="input" value={period} onChange={(event) => changeFilter(() => setPeriodDates(event.target.value))}><option value="1">Hoje</option><option value="7">Últimos 7 dias</option><option value="15">Últimos 15 dias</option><option value="30">Últimos 30 dias</option><option value="custom">Personalizado</option></select></Field>
+      <Field label="Data inicial"><input className="input" type="date" required max={endDate} value={startDate} onChange={(event) => { if (event.target.value) changeFilter(() => { setPeriod("custom"); setStartDate(event.target.value); }); }} /></Field>
+      <Field label="Data final"><input className="input" type="date" required min={startDate} max={today} value={endDate} onChange={(event) => { if (event.target.value) changeFilter(() => { setPeriod("custom"); setEndDate(event.target.value); }); }} /></Field>
+      <Field label="Tipo de ação"><select className="input" value={actionType} onChange={(event) => changeFilter(() => setActionType(event.target.value))}><option value="all">Todas as ações</option><option value="pages">Páginas abertas</option><option value="products">Produtos e imagens</option><option value="searches">Buscas e filtros</option><option value="commercial">WhatsApp e orçamentos</option><option value="downloads">Downloads</option></select></Field>
+    </div><div className="mt-3 text-xs font-bold text-muted">Exibindo {filteredEvents.length} ação(ões) entre {new Date(`${startDate}T12:00:00`).toLocaleDateString("pt-BR")} e {new Date(`${endDate}T12:00:00`).toLocaleDateString("pt-BR")}.</div></div>
+    <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Summary label="Ações no período" value={filteredEvents.length} /><Summary label="Páginas abertas" value={pageViews.length} /><Summary label="Produtos vistos" value={productViews.length} /><Summary label="Sessões registradas" value={filteredSessions.length} /></div>
+    <div className="mb-5 grid gap-5 lg:grid-cols-2"><Panel title="Páginas mais acessadas"><div className="space-y-2">{topPages.map(([name, count]) => <div key={name} className="flex justify-between rounded-xl bg-soft px-3 py-2 text-sm"><span>{name}</span><b>{count}</b></div>)}{!topPages.length && <div className="text-sm text-muted">Nenhuma página registrada neste período.</div>}</div></Panel><Panel title="Produtos mais visualizados"><div className="space-y-2">{topProducts.map(([name, count]) => <div key={name} className="flex justify-between rounded-xl bg-soft px-3 py-2 text-sm"><span>{name}</span><b>{count}</b></div>)}{!topProducts.length && <div className="text-sm text-muted">Nenhum produto registrado neste período.</div>}</div></Panel></div>
+    <Panel title="Histórico detalhado"><Table><thead><tr><Th>Data e hora</Th><Th>Ação</Th><Th>Página</Th><Th>Local / origem</Th></tr></thead><tbody>{visibleEvents.map((event) => <tr key={event.id}><Td>{formatLocalDateTime(event.createdAt)}</Td><Td><span className="font-black">{readableAction(event, products)}</span></Td><Td>{readablePage(event.route || event.screen, products)}</Td><Td>{[event.city || latestSession?.city || "Não informado", event.state || latestSession?.state].filter(Boolean).join("/")} • {String(event.metadata?.source || latestSession?.source || "Catálogo")}</Td></tr>)}</tbody></Table>{!filteredEvents.length && <div className="py-8 text-center text-sm text-muted">Nenhuma ação encontrada para os filtros selecionados.</div>}{filteredEvents.length > pageSize && <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-4"><span className="text-sm font-bold text-muted">Página {currentPage} de {totalPages}</span><div className="flex gap-2"><button className="btn-white" disabled={currentPage === 1} onClick={() => setPage(Math.max(1, currentPage - 1))}>Anterior</button><button className="btn-white" disabled={currentPage === totalPages} onClick={() => setPage(Math.min(totalPages, currentPage + 1))}>Próxima</button></div></div>}</Panel>
+    <p className="mt-4 text-xs font-semibold text-muted">Histórico disponível conforme a retenção analítica de 30 dias. A localização é aproximada.</p>
+  </Modal>;
 }
 
 function UserModal({ user, reload, notify, adminUser, onClose }: { user?: Usuario; reload: () => Promise<void>; notify: (message: string) => void; adminUser: Usuario; onClose: () => void }) {
@@ -2063,6 +2358,7 @@ function Diagnostics({ data }: { data: AppData }) {
 
   return (
     <div className="space-y-6">
+      <CapacityAlertsPanel data={data} />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Summary label="Score de segurança" value={securityScore} />
         <Summary label="Acessos 24h" value={access24h.length} />

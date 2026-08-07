@@ -69,3 +69,10 @@ tbody tr { transition:.15s ease; } tbody tr:hover { background:#fafbfc; }
 
 @media (max-width:640px){ .hero-dashboard{border-radius:22px}.metric-card{min-height:165px}.panel-card{border-radius:20px}.chart-bars{height:220px;gap:5px}.chart-track{max-width:32px} }
 @media (prefers-reduced-motion:reduce){ *,*:before,*:after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important} }
+
+/* Fast, restrained feedback for administrative work. */
+:root{--motion-fast:100ms;--motion-ui:190ms;--motion-ease:cubic-bezier(.22,1,.36,1)}
+button,a{transition:transform var(--motion-fast) var(--motion-ease),background-color var(--motion-ui) var(--motion-ease),color var(--motion-ui) var(--motion-ease),box-shadow var(--motion-ui) var(--motion-ease),border-color var(--motion-ui) var(--motion-ease)}
+button:active,a:active{transform:scale(.975)}
+.panel-menu,.toast,[role="dialog"]{animation:admin-surface-in var(--motion-ui) var(--motion-ease) both}
+@keyframes admin-surface-in{from{opacity:.75;transform:translateY(5px) scale(.99)}to{opacity:1;transform:none}}
