@@ -70,3 +70,22 @@ export async function uploadCatalogBlob(path: string, blob: Blob, contentType: s
   if (error) throw error;
   return supabase.storage.from("catalog-media").getPublicUrl(path).data.publicUrl;
 }
+
+export function catalogMediaPathFromPublicUrl(value?: string | null) {
+  if (!value) return null;
+  try {
+    const marker = "/storage/v1/object/public/catalog-media/";
+    const path = new URL(value).pathname;
+    const index = path.indexOf(marker);
+    return index >= 0 ? decodeURIComponent(path.slice(index + marker.length)) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function removeCatalogMediaUrls(urls: string[]) {
+  const paths = Array.from(new Set(urls.map(catalogMediaPathFromPublicUrl).filter((path): path is string => Boolean(path))));
+  if (!paths.length) return;
+  const { error } = await supabase.storage.from("catalog-media").remove(paths);
+  if (error) throw error;
+}

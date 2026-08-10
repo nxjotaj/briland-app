@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ExcelJS from "exceljs";
 import brilandLogo from "../../../assets/briland-logo.png";
+import { BulkProductImages } from "@/components/bulk-product-images";
 import { buildCatalogPdf, type CatalogImageWarning } from "@/lib/catalog-pdf";
 import {
   BarChart3,
@@ -920,7 +921,7 @@ export default function Page() {
         <section className="mx-auto max-w-[1600px] p-4 lg:p-8">
           {activeTab === "Dashboard" && <Dashboard data={data} setActive={setActive} role={adminUser.role} />}
           {activeTab === "Análises" && <AnalyticsSection data={data} />}
-          {activeTab === "Produtos" && <Products data={data} query={query} reload={reloadSection} notify={notify} />}
+          {activeTab === "Produtos" && <Products data={data} query={query} reload={reloadSection} notify={notify} adminUser={adminUser} />}
           {activeTab === "Categorias" && <CategoryBrandSection title="Categorias" table="Categoria" imageField="imagem" items={data.categorias} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Marcas" && <CategoryBrandSection title="Marcas" table="Marca" imageField="logo" items={data.marcas} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Montadoras" && <VehicleSection data={data} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
@@ -1286,7 +1287,7 @@ function RankingPanel({ title, rows, empty }: { title: string; rows: Array<{ nam
   return <Panel title={title}><div className="space-y-4">{rows.slice(0, 15).map((row, index) => <div key={`${row.name}-${index}`}><div className="mb-2 flex items-start justify-between gap-4 text-sm"><span className="font-bold">{index + 1}. {row.name}</span><span className="font-black">{row.value}</span></div><div className="progress-track"><div className={`progress-fill progress-${index % 5}`} style={{ width: `${row.value / max * 100}%` }} /></div></div>)}{!rows.length && <div className="py-10 text-center text-sm text-muted">{empty}</div>}</div></Panel>;
 }
 
-function Products({ data, query, reload, notify }: { data: AppData; query: string; reload: () => Promise<void>; notify: (message: string) => void }) {
+function Products({ data, query, reload, notify, adminUser }: { data: AppData; query: string; reload: () => Promise<void>; notify: (message: string) => void; adminUser: Usuario }) {
   const [editing, setEditing] = useState<Produto | null>(null);
   const [importReport, setImportReport] = useState<{ fileName: string; imported: number; errors: string[] } | null>(null);
   const [importing, setImporting] = useState(false);
@@ -1483,6 +1484,7 @@ function Products({ data, query, reload, notify }: { data: AppData; query: strin
       <div className="mb-5 flex flex-wrap gap-3">
         <button onClick={() => setEditing(newProduct(data))} className="btn-yellow"><PackagePlus size={17} /> Criar produto</button>
         <label className={`btn-white cursor-pointer ${importing ? "pointer-events-none opacity-60" : ""}`}>{importing ? <Loader2 className="animate-spin" size={17} /> : <Upload size={17} />} {importing ? "Analisando planilha..." : "Importar CSV/XLSX"}<input type="file" accept=".csv,.xlsx" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importOfficialTemplate(file); event.target.value = ""; }} /></label>
+        <BulkProductImages products={data.produtos} adminUser={adminUser} reload={reload} notify={notify} />
         <button onClick={() => void optimizeExistingImages()} disabled={optimizingImages} className="btn-white disabled:pointer-events-none disabled:opacity-60">{optimizingImages ? <Loader2 className="animate-spin" size={17} /> : <Sparkles size={17} />} {optimizingImages ? `Otimizando ${imageProgress.completed}/${imageProgress.total}` : "Otimizar imagens existentes"}</button>
         <button onClick={() => exportProducts("csv")} className="btn-white"><Download size={17} /> Exportar CSV</button>
         <button onClick={() => void exportProducts("xlsx")} className="btn-white"><FileSpreadsheet size={17} /> Exportar XLSX</button>
