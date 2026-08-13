@@ -8,6 +8,7 @@ import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Network from "expo-network";
 import * as Sharing from "expo-sharing";
+import * as Updates from "expo-updates";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -35,7 +36,7 @@ import {
 
 import { CONFIG_STORAGE_KEY, getPersistedSession, requestPasswordReset, resendSignupConfirmation, setTelemetryContext, signInWithPassword, signOutSession, signUpRegistration, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRealtime, supabaseRpc, trackTelemetry, updateCurrentPassword, uploadStorageObject } from "./src/api/supabase";
 import { colors, defaultAbout, defaultSocialLinks } from "./src/config/brand";
-import type { AboutSettings, Aplicacao, AppData, CatalogAppearance, CatalogPdfRole, CatalogPdfSettings, Categoria, Lead, Marca, MediaSettings, ModeloVeiculo, Montadora, Permission, Produto, ProdutoModeloVeiculo, ProdutoModeloVeiculoView, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
+import type { AboutSettings, Aplicacao, AppData, CatalogAppearance, CatalogPdfRole, CatalogPdfSettings, CatalogRevision, Categoria, Lead, Marca, MediaSettings, ModeloVeiculo, Montadora, Permission, Produto, ProdutoModeloVeiculo, ProdutoModeloVeiculoView, Role, Route, SocialLinks, Usuario } from "./src/types/domain";
 import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage, money, optimizedImageUrl, parseCsv, slugify } from "./src/utils/helpers";
 import { MotionDrawer, MotionPage, MotionPressable } from "./src/components/motion";
 
@@ -54,6 +55,8 @@ const NOTIFICATION_STORAGE_KEY = "briland-catalog-notifications";
 const PRODUCT_SNAPSHOT_STORAGE_KEY = "briland-product-snapshot";
 const ANALYTICS_VISITOR_STORAGE_KEY = "briland-analytics-visitor";
 const ANALYTICS_LOCATION_STORAGE_KEY = "briland-analytics-location";
+const CATALOG_REVISION_STORAGE_KEY = "briland-catalog-revision";
+const CATALOG_UI_STATE_STORAGE_KEY = "briland-catalog-ui-state";
 const CATALOG_PUBLIC_URL = "https://briland-catalogo.vercel.app";
 const PRIVACY_POLICY_URL = "https://briland-catalogo.vercel.app/privacidade.html";
 const ACCOUNT_DELETION_URL = "https://briland-catalogo.vercel.app/excluir-conta.html";
@@ -186,18 +189,7 @@ function productImageUrl(product: Produto, variant: "card" | "detail" | "thumb",
   return liveImageUrl(product.imagemPrincipal, fallbackSize, version);
 }
 
-const realtimeCatalogTables = [
-  "Produto",
-  "Categoria",
-  "Marca",
-  "Aplicacao",
-  "Montadora",
-  "ModeloVeiculo",
-  "ProdutoModeloVeiculo",
-  "ProdutoAplicacao",
-  "ProductFieldPermission",
-  "AppSetting"
-] as const;
+type UpdateControllerState = "atual" | "disponivel" | "baixando" | "aplicando" | "falhou";
 
 const userSelect = "id,name,company,email,role,status,notes,phone,cnpj,address,city,state,registrationNotes,approvedAt,approvedBy,lastLoginAt,createdAt,updatedAt,authUserId";
 function notify(title: string, message: string) {
@@ -242,17 +234,26 @@ export default function App() {
   const [pendingProductReference, setPendingProductReference] = useState(initialProductReference);
   const [loading, setLoading] = useState(true);
   const [imageRefreshVersion, setImageRefreshVersion] = useState(0);
+  const [updateControllerState, setUpdateControllerState] = useState<UpdateControllerState>("atual");
   const [error, setError] = useState<string | null>(null);
   const initialLoadCompleted = useRef(false);
   const discoveryStartedAt = useRef(Date.now());
   const lastSearchTelemetry = useRef("");
   const realtimeReloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const appliedCatalogRevision = useRef(0);
+  const ignoredCatalogRevision = useRef(0);
+  const revisionReady = useRef(false);
+  const otaPromptShown = useRef(false);
+  const uiStateRestored = useRef(false);
+  const roleRef = useRef(role);
+  const authTokenRef = useRef(authToken);
   const catalogScrollOffsets = useRef<Record<"products" | "promotions" | "launches", number>>({ products: 0, promotions: 0, launches: 0 });
   const appState = useRef(AppState.currentState);
   const presenceSessionId = useRef(`presence_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`);
   const [analyticsVisitorId, setAnalyticsVisitorId] = useState("");
   const [analyticsLocation, setAnalyticsLocation] = useState<ApproxLocation>({ city: null, state: null, country: null, cachedAt: 0 });
   const [presenceWake, setPresenceWake] = useState(0);
+  const [codeUpdateWake, setCodeUpdateWake] = useState(0);
   const [data, setData] = useState<AppData>({
     produtos: [],
     categorias: [],
@@ -265,6 +266,8 @@ export default function App() {
     leads: [],
     permissoes: []
   });
+  roleRef.current = role;
+  authTokenRef.current = authToken;
 
   const reload = async (nextRole = role, token = authToken, options?: { silent?: boolean; refreshImages?: boolean }) => {
     const startedAt = Date.now();
@@ -311,7 +314,15 @@ export default function App() {
         leads,
         permissoes
       });
-      setSelectedProduct((current) => current ? produtos.find((product) => product.id === current.id) ?? null : produtos[0] ?? null);
+      setSelectedProduct((current) => {
+        if (!current) return produtos[0] ?? null;
+        const replacement = produtos.find((product) => product.id === current.id) ?? null;
+        if (!replacement && route === "detail") {
+          setRoute("products");
+          notify("Produto indisponível", "Este produto foi removido ou não está mais disponível para o seu acesso.");
+        }
+        return replacement;
+      });
       void trackTelemetry({
         eventType: "load_time",
         screen: route,
@@ -323,6 +334,7 @@ export default function App() {
         metadata: { products: produtos.length, categories: categorias.length }
       }, token);
       if (options?.refreshImages) setImageRefreshVersion(Date.now());
+      return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Falha ao carregar dados do catálogo.";
       setError(message);
@@ -336,6 +348,7 @@ export default function App() {
         success: false,
         message
       }, token);
+      return false;
     } finally {
       if (!options?.silent) {
         if (!initialLoadCompleted.current) {
@@ -346,6 +359,125 @@ export default function App() {
         setLoading(false);
       }
     }
+  };
+
+  const applyCatalogRevision = async (revision: number) => {
+    setUpdateControllerState("aplicando");
+    const updated = await reload(roleRef.current, authTokenRef.current, { silent: true, refreshImages: true });
+    if (!updated) {
+      setUpdateControllerState("falhou");
+      Alert.alert("Não foi possível atualizar", "Confira sua internet e tente novamente.", [
+        { text: "Depois", style: "cancel" },
+        { text: "Tentar novamente", onPress: () => void applyCatalogRevision(revision) }
+      ]);
+      return;
+    }
+    appliedCatalogRevision.current = revision;
+    await AsyncStorage.setItem(CATALOG_REVISION_STORAGE_KEY, String(revision));
+    setUpdateControllerState("atual");
+  };
+
+  useEffect(() => {
+    void AsyncStorage.getItem(CATALOG_UI_STATE_STORAGE_KEY).then((stored) => {
+      if (!stored) return;
+      try {
+        const saved = JSON.parse(stored) as {
+          route?: Route; query?: string; categoryFilter?: string | null; brandFilter?: string | null;
+          montadoraFilter?: string | null; modeloFilter?: string | null; anoFilter?: number | null;
+          sortMode?: "order" | "name" | "newest"; listMode?: "grid" | "list";
+          productReference?: string | null; scrollOffsets?: Record<"products" | "promotions" | "launches", number>;
+        };
+        if (!initialProductReference && saved.route) setRoute(saved.route);
+        setQuery(saved.query || "");
+        setCategoryFilter(saved.categoryFilter || null);
+        setBrandFilter(saved.brandFilter || null);
+        setMontadoraFilter(saved.montadoraFilter || null);
+        setModeloFilter(saved.modeloFilter || null);
+        setAnoFilter(saved.anoFilter || null);
+        if (saved.sortMode) setSortMode(saved.sortMode);
+        if (saved.listMode) setListMode(saved.listMode);
+        if (!initialProductReference && saved.productReference) setPendingProductReference(saved.productReference);
+        if (saved.scrollOffsets) catalogScrollOffsets.current = saved.scrollOffsets;
+      } catch {
+        // Estado antigo ou inválido é ignorado com segurança.
+      }
+    }).finally(() => { uiStateRestored.current = true; });
+  }, []);
+
+  useEffect(() => {
+    if (!uiStateRestored.current) return;
+    const timer = setTimeout(() => {
+      void AsyncStorage.setItem(CATALOG_UI_STATE_STORAGE_KEY, JSON.stringify({
+        route, query, categoryFilter, brandFilter, montadoraFilter, modeloFilter, anoFilter,
+        sortMode, listMode,
+        productReference: selectedProduct?.slug || selectedProduct?.id || null,
+        scrollOffsets: catalogScrollOffsets.current
+      }));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [route, query, categoryFilter, brandFilter, montadoraFilter, modeloFilter, anoFilter, sortMode, listMode, selectedProduct?.id]);
+
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+    const preserveBeforeCodeUpdate = () => {
+      void AsyncStorage.setItem(CATALOG_UI_STATE_STORAGE_KEY, JSON.stringify({
+        route, query, categoryFilter, brandFilter, montadoraFilter, modeloFilter, anoFilter,
+        sortMode, listMode,
+        productReference: selectedProduct?.slug || selectedProduct?.id || null,
+        scrollOffsets: catalogScrollOffsets.current
+      }));
+    };
+    window.addEventListener("briland-before-code-update", preserveBeforeCodeUpdate);
+    return () => window.removeEventListener("briland-before-code-update", preserveBeforeCodeUpdate);
+  }, [route, query, categoryFilter, brandFilter, montadoraFilter, modeloFilter, anoFilter, sortMode, listMode, selectedProduct?.id]);
+
+  useEffect(() => {
+    if (Platform.OS === "web" || !Updates.isEnabled) return;
+    let active = true;
+    const checkForCodeUpdate = async () => {
+      if (!active || otaPromptShown.current || appState.current !== "active") return;
+      try {
+        const result = await Updates.checkForUpdateAsync();
+        if (!result.isAvailable || !active) return;
+        otaPromptShown.current = true;
+        Alert.alert("Nova versão disponível", "Há uma melhoria do aplicativo pronta para instalar.", [
+          { text: "Depois", style: "cancel" },
+          { text: "Atualizar agora", onPress: () => void (async () => {
+            try {
+              setUpdateControllerState("baixando");
+              await Updates.fetchUpdateAsync();
+              setUpdateControllerState("aplicando");
+              await Updates.reloadAsync();
+            } catch {
+              otaPromptShown.current = false;
+              setUpdateControllerState("falhou");
+              notify("Não foi possível atualizar", "Confira sua internet e tente novamente mais tarde.");
+            }
+          })() }
+        ]);
+      } catch {
+        // Uma falha de atualização de código não bloqueia o catálogo.
+      }
+    };
+    const initialTimer = setTimeout(() => void checkForCodeUpdate(), 3000);
+    const interval = setInterval(() => void checkForCodeUpdate(), 10 * 60 * 1000);
+    return () => { active = false; clearTimeout(initialTimer); clearInterval(interval); };
+  }, [codeUpdateWake]);
+
+  const offerCatalogRevision = (revision: number) => {
+    if (revision <= appliedCatalogRevision.current || revision <= ignoredCatalogRevision.current) return;
+    if (realtimeReloadTimer.current) clearTimeout(realtimeReloadTimer.current);
+    realtimeReloadTimer.current = setTimeout(() => {
+      setUpdateControllerState("disponivel");
+      Alert.alert(
+        "O catálogo tem novas informações",
+        "Produtos, imagens ou informações comerciais foram atualizados.",
+        [
+          { text: "Depois", style: "cancel", onPress: () => { ignoredCatalogRevision.current = revision; setUpdateControllerState("atual"); } },
+          { text: "Atualizar agora", onPress: () => void applyCatalogRevision(revision) }
+        ]
+      );
+    }, 1200);
   };
 
   useEffect(() => {
@@ -448,16 +580,17 @@ export default function App() {
   useEffect(() => {
     if (authToken) supabaseRealtime.realtime.setAuth(authToken);
 
-    const scheduleRealtimeReload = () => {
-      if (realtimeReloadTimer.current) clearTimeout(realtimeReloadTimer.current);
-      realtimeReloadTimer.current = setTimeout(() => {
-        void reload(role, authToken, { silent: true });
-      }, 800);
-    };
-
-    const channel = supabaseRealtime.channel(`catalog-live-${role}`);
-    realtimeCatalogTables.forEach((table) => {
-      channel.on("postgres_changes", { event: "*", schema: "public", table }, scheduleRealtimeReload);
+    const channel = supabaseRealtime.channel(`catalog-revision-${role}`);
+    channel.on("postgres_changes", { event: "UPDATE", schema: "public", table: "CatalogRevision" }, (payload) => {
+      const revision = payload.new as CatalogRevision;
+      if (!revisionReady.current || !revision?.revision) return;
+      if (revision.changeKind === "SEGURANCA") {
+        appliedCatalogRevision.current = Math.max(appliedCatalogRevision.current, Number(revision.revision));
+        void AsyncStorage.setItem(CATALOG_REVISION_STORAGE_KEY, String(appliedCatalogRevision.current));
+        void reload(role, authToken, { silent: true, refreshImages: false });
+        return;
+      }
+      offerCatalogRevision(Number(revision.revision));
     });
     void channel.subscribe();
 
@@ -468,6 +601,34 @@ export default function App() {
   }, [authToken, role]);
 
   useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const [revision] = await supabaseGet<CatalogRevision>("CatalogRevision", "select=*&id=eq.1");
+        if (!active || !revision) return;
+        const storedRaw = await AsyncStorage.getItem(CATALOG_REVISION_STORAGE_KEY);
+        if (!storedRaw) {
+          appliedCatalogRevision.current = Number(revision.revision);
+          await AsyncStorage.setItem(CATALOG_REVISION_STORAGE_KEY, String(revision.revision));
+        } else {
+          appliedCatalogRevision.current = Number(storedRaw) || 0;
+          if (revision.changeKind === "SEGURANCA") {
+            appliedCatalogRevision.current = Number(revision.revision);
+            await AsyncStorage.setItem(CATALOG_REVISION_STORAGE_KEY, String(revision.revision));
+          } else if (Number(revision.revision) > appliedCatalogRevision.current) {
+            offerCatalogRevision(Number(revision.revision));
+          }
+        }
+      } catch {
+        // A indisponibilidade do monitor nunca bloqueia o catálogo.
+      } finally {
+        revisionReady.current = true;
+      }
+    })();
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
     if (Platform.OS !== "web" && appState.current === "active") supabaseRealtime.auth.startAutoRefresh();
     const subscription = AppState.addEventListener("change", (nextState) => {
       const wasInBackground = appState.current === "inactive" || appState.current === "background";
@@ -476,7 +637,10 @@ export default function App() {
         if (nextState === "active") supabaseRealtime.auth.startAutoRefresh();
         else supabaseRealtime.auth.stopAutoRefresh();
       }
-      if (nextState === "active") setPresenceWake((value) => value + 1);
+      if (nextState === "active") {
+        setPresenceWake((value) => value + 1);
+        if (wasInBackground) setCodeUpdateWake((value) => value + 1);
+      }
       else void supabaseRpc<void>("end_app_presence", { p_session_id: presenceSessionId.current }, authToken).catch(() => undefined);
       if (wasInBackground && nextState === "active") {
         void reload(role, authToken, { silent: true });

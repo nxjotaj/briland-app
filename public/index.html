@@ -44,6 +44,15 @@
     <script>
       if ("serviceWorker" in navigator && window.location.protocol === "https:") {
         var reloadingForServiceWorker = false;
+        var updatePromptShown = false;
+        function offerServiceWorkerUpdate(worker) {
+          if (!worker || updatePromptShown) return;
+          updatePromptShown = true;
+          var accepted = window.confirm("Nova versão disponível\n\nHá uma melhoria do catálogo pronta para instalar. Deseja atualizar agora?");
+          if (!accepted) return;
+          window.dispatchEvent(new Event("briland-before-code-update"));
+          worker.postMessage({ type: "SKIP_WAITING" });
+        }
         navigator.serviceWorker.addEventListener("controllerchange", function () {
           if (reloadingForServiceWorker) return;
           reloadingForServiceWorker = true;
@@ -51,8 +60,16 @@
         });
         window.addEventListener("load", function () {
           navigator.serviceWorker
-            .register("/sw.js?v=2026080606", { updateViaCache: "none" })
+            .register("/sw.js?v=2026081301", { updateViaCache: "none" })
             .then(function (registration) {
+              if (registration.waiting) offerServiceWorkerUpdate(registration.waiting);
+              registration.addEventListener("updatefound", function () {
+                var worker = registration.installing;
+                if (!worker) return;
+                worker.addEventListener("statechange", function () {
+                  if (worker.state === "installed" && navigator.serviceWorker.controller) offerServiceWorkerUpdate(worker);
+                });
+              });
               return registration.update();
             })
             .catch(function () {});

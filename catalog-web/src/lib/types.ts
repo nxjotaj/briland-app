@@ -9,3 +9,4 @@ export type UserProfile = { id:string; authUserId?:string|null; name:string; com
 export type SocialLinks = { instagram:string; linkedin:string; whatsapp:string; site:string };
 export type Settings = { media?:{initialImage?:string;homeImage?:string}; socialLinks?:Partial<SocialLinks>; about?:{title?:string;subtitle?:string;body?:string}; catalogPdf?:Record<string,{url?:string}>; catalogAppearance?:{primaryColor?:string;accentColor?:string;logoUrl?:string;showProductCategory?:boolean;showProductBrand?:boolean}; permissions?:Record<string,boolean> };
 export type CatalogData = { products:Product[]; categories:Category[]; brands:Brand[]; automakers:Automaker[]; models:VehicleModel[]; applications:VehicleApplication[]; settings:Settings };
+export type CatalogRevision = { id:number; revision:number; changeKind:"CATALOGO"|"SEGURANCA"; updatedAt:string };
