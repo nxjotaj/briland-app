@@ -177,6 +177,7 @@ const imageSize = {
   home: { width: 960, height: 610, resize: "cover", quality: 78 } as const,
   category: { width: 480, height: 360, resize: "cover", quality: 72 } as const,
   categoryIcon: { width: 256, height: 256, resize: "contain", quality: 70 } as const,
+  navigationCard: { width: 900, height: 600, resize: "cover", quality: 90 } as const,
   productCard: { width: 640, height: 480, resize: "contain", quality: 82 } as const,
   productDetail: { width: 1600, height: 1200, resize: "contain", quality: 92 } as const,
   thumb: { width: 360, height: 280, resize: "contain", quality: 84 } as const
@@ -666,7 +667,7 @@ export default function App() {
     const urls = [
       versionedRawUrl(mediaSettings.initialImage, imageRefreshVersion),
       optimizedImageUrl(mediaSettings.homeImage, { ...imageSize.home, version: imageRefreshVersion }),
-      ...data.categorias.slice(0, 4).map((item) => optimizedImageUrl(item.imagem, { ...imageSize.categoryIcon, version: imageRefreshVersion })),
+      ...data.categorias.slice(0, 4).map((item) => optimizedImageUrl(item.imagem, { ...imageSize.navigationCard, version: imageRefreshVersion })),
       ...data.produtos.slice(0, 4).map((item) => productImageUrl(item, "card", imageRefreshVersion))
     ].filter(Boolean);
     if (urls.length) void ExpoImage.prefetch(urls);
@@ -1539,9 +1540,8 @@ function HomeScreen({ go, products, categories, montadoras, media, catalogPdfUrl
 function ProgressiveNavigationCard({ title, description, count, image, imageVersion, icon, onPress }: { title: string; description?: string | null; count: number; image?: string | null; imageVersion: number; icon: keyof typeof Ionicons.glyphMap; onPress: () => void }) {
   return (
     <Pressable style={({ pressed }) => [styles.progressiveCard, pressed && styles.progressiveCardPressed]} onPress={onPress}>
-      {image ? <Image source={{ uri: liveImageUrl(image, imageSize.categoryIcon, imageVersion) }} style={styles.progressiveCardImage} resizeMode="cover" /> : <LinearGradient colors={[colors.navy, "#0A3262"]} style={styles.progressiveCardImageFallback}><Ionicons name={icon} size={54} color={colors.yellow} /></LinearGradient>}
-      <LinearGradient colors={["transparent", "rgba(2,17,38,.36)", "rgba(2,17,38,.96)"]} locations={[0, .36, 1]} style={styles.progressiveCardGradient} />
-      <BlurView intensity={24} tint="dark" style={styles.progressiveCardBlur} />
+      {image ? <Image source={{ uri: liveImageUrl(image, imageSize.navigationCard, imageVersion) }} style={styles.progressiveCardImage} resizeMode="cover" /> : <LinearGradient colors={[colors.navy, "#0A3262"]} style={styles.progressiveCardImageFallback}><Ionicons name={icon} size={54} color={colors.yellow} /></LinearGradient>}
+      <LinearGradient colors={["transparent", "rgba(2,17,38,.08)", "rgba(2,17,38,.58)", "rgba(2,17,38,.98)"]} locations={[0, .34, .68, 1]} style={styles.progressiveCardGradient} />
       <View style={styles.progressiveCardContent}><Text style={styles.progressiveCardTitle} numberOfLines={2}>{title}</Text>{description ? <Text style={styles.progressiveCardDescription} numberOfLines={2}>{description}</Text> : null}<Text style={styles.progressiveCardCount}>{count} {count === 1 ? "produto" : "produtos"}</Text></View>
       <View style={styles.progressiveCardArrow}><Ionicons name="arrow-forward" size={18} color={colors.navy} /></View>
     </Pressable>
@@ -3211,8 +3211,7 @@ const styles = StyleSheet.create({
   progressiveCardPressed: { transform: [{ scale: 0.975 }], opacity: 0.94 },
   progressiveCardImage: { width: "100%", height: "100%" },
   progressiveCardImageFallback: { width: "100%", height: "100%", alignItems: "center", justifyContent: "center", paddingBottom: 54 },
-  progressiveCardGradient: { position: "absolute", left: 0, right: 0, top: 42, bottom: 0 },
-  progressiveCardBlur: { position: "absolute", left: 0, right: 0, bottom: 0, height: 94, opacity: 0.72 },
+  progressiveCardGradient: { position: "absolute", left: 0, right: 0, top: 18, bottom: 0 },
   progressiveCardContent: { position: "absolute", left: 14, right: 42, bottom: 13 },
   progressiveCardTitle: { color: colors.white, fontSize: 18, lineHeight: 21, fontWeight: "900", textShadowColor: "rgba(0,0,0,.4)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
   progressiveCardDescription: { color: "#E3EAF2", fontSize: 11, lineHeight: 14, marginTop: 3 },

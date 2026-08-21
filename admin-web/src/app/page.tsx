@@ -1989,7 +1989,7 @@ function VehicleBrandModal({ item, items, reload, notify, canDelete, onClose }: 
     if (!file) return;
     setUploading(true);
     try {
-      const optimizedFile = await compressImage(file, 1200, 800, 0.86);
+      const optimizedFile = await compressImage(file, 1200, 800, 0.92);
       const url = await uploadCatalogMedia(optimizedFile, "montadoras");
       setDraft({ ...draft, imagem: url });
       notify("Imagem enviada.");
@@ -2771,7 +2771,7 @@ function UploadBox({ label, folder, value, iconMode = false, navigationCardMode 
         onProductUploaded?.(variants);
         onUploaded(variants.detail);
       } else {
-        const uploadFile = navigationCardMode ? await compressImage(file, 1200, 800, 0.86) : iconMode ? await compressIconImage(file) : folder === "produtos/extras" ? await compressImage(file, 1600, 1200, 0.88) : file;
+        const uploadFile = navigationCardMode ? await compressImage(file, 1200, 800, 0.92) : iconMode ? await compressIconImage(file) : folder === "produtos/extras" ? await compressImage(file, 1600, 1200, 0.88) : file;
         onUploaded(await uploadCatalogMedia(uploadFile, folder));
       }
     } finally {
