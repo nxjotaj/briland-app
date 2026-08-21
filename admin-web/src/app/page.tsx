@@ -50,6 +50,8 @@ import type {
   AppData,
   AppSettings,
   Categoria,
+  Subcategoria,
+  GrupoProduto,
   Lead,
   Marca,
   MediaSettings,
@@ -114,6 +116,8 @@ const tabs: { id: Tab; icon: React.ElementType }[] = [
 const emptyData: AppData = {
   produtos: [],
   categorias: [],
+  subcategorias: [],
+  gruposProduto: [],
   marcas: [],
   aplicacoes: [],
   montadoras: [],
@@ -265,7 +269,9 @@ function importBoolean(value: unknown, fallback = false) {
 const importColumns = {
   codigo: ["Código interno", "Código", "Codigo", "Cód.", "Cod", "SKU", "Referência", "Referencia"],
   nome: ["Nome", "Descrição", "Descricao", "Descrição do produto", "Nome do produto", "Produto"],
-  categoria: ["Categoria", "Nome da categoria", "Grupo", "Linha"],
+  categoria: ["Categoria", "Nome da categoria", "Linha"],
+  subcategoria: ["Subcategoria", "Sub categoria", "Nome da subcategoria"],
+  grupoProduto: ["Grupo de produtos", "Grupo do produto", "GrupoProduto"],
   marca: ["Marca", "Fabricante"],
   ean: ["EAN", "Código de barras", "Codigo de barras", "GTIN"],
   ncm: ["NCM", "NCM com os pontos", "Classificação fiscal", "Classificacao fiscal"],
@@ -298,6 +304,9 @@ function friendlyAdminError(error: unknown, action = "concluir esta operação")
   if (/ProdutoModeloVeiculo_modeloId_fkey|ModeloVeiculo.*foreign key|foreign key.*ModeloVeiculo/i.test(raw)) return "Este modelo não pode ser excluído porque está vinculado a um ou mais produtos. Remova o modelo das aplicações desses produtos ou deixe o modelo inativo.";
   if (/ProdutoModeloVeiculo_montadoraId_fkey|ModeloVeiculo_montadoraId_fkey|Montadora.*foreign key|foreign key.*Montadora/i.test(raw)) return "Esta montadora não pode ser excluída porque possui modelos ou produtos vinculados. Remova primeiro esses vínculos ou deixe a montadora inativa.";
   if (/categoriaId.*foreign key|foreign key.*Categoria/i.test(raw)) return "Esta categoria ainda está sendo usada por produtos. Altere a categoria desses produtos antes de excluí-la.";
+  if (/Subcategoria.*foreign key|subcategoriaId.*foreign key|Subcategoria possui produtos|Subcategoria possui grupos/i.test(raw)) return "Esta subcategoria não pode ser excluída porque possui produtos ou grupos vinculados. Realocá-los primeiro ou deixe a subcategoria inativa.";
+  if (/GrupoProduto.*foreign key|grupoProdutoId.*foreign key|Grupo de produtos possui produtos/i.test(raw)) return "Este grupo de produtos não pode ser excluído porque possui produtos vinculados. Realocá-los primeiro ou deixe o grupo inativo.";
+  if (/Subcategoria não pertence|Grupo de produtos não pertence|Grupo de produtos exige/i.test(raw)) return "A classificação escolhida não forma um caminho válido. Confira a categoria, a subcategoria e o grupo de produtos.";
   if (/marcaId.*foreign key|foreign key.*Marca/i.test(raw)) return "Esta marca ainda está sendo usada por produtos. Altere a marca desses produtos antes de excluí-la.";
   if (/foreign key|violates.*constraint/i.test(raw)) return `Não foi possível ${action} porque este item ainda está sendo usado em outro cadastro. Remova os vínculos relacionados ou deixe o item inativo.`;
   if (/duplicate|unique|already exists/i.test(raw)) return "Já existe um cadastro com essas informações. Confira o nome, código ou identificação antes de salvar.";
@@ -396,25 +405,31 @@ async function importProductsFromTemplate(file: File, data: AppData) {
       if (value && numberOrNull(value) == null) validationErrors.push(`Linha ${line}: ${label} deve ser numérico; valor recebido: “${value}”.`);
     }
   });
+  rows.forEach((row, index) => {
+    const line = index + 2; const categoryValue = importValue(row, [...importColumns.categoria]); if (!categoryValue) return;
+    const match = <T extends { id: string; nome: string; slug?: string | null }>(items: T[], value: string) => { const key = normalizeImportKey(value); return items.find((item) => [item.id, item.nome, item.slug].some((candidate) => normalizeImportKey(candidate) === key)); };
+    const category = match(data.categorias, categoryValue); const subcategoryValue = importValue(row, [...importColumns.subcategoria]); const groupValue = importValue(row, [...importColumns.grupoProduto]); const code = importValue(row, [...importColumns.codigo]); const currentProduct = data.produtos.find((item) => normalizeImportKey(item.codigoInterno) === normalizeImportKey(code));
+    if (!category) { validationErrors.push(`Linha ${line}: Categoria “${categoryValue}” não cadastrada. Cadastre-a antes de importar.`); return; }
+    const subcategory = subcategoryValue && normalizeImportKey(subcategoryValue) !== "limpar" ? match(data.subcategorias, subcategoryValue) : null;
+    if (subcategoryValue && normalizeImportKey(subcategoryValue) !== "limpar" && !subcategory) validationErrors.push(`Linha ${line}: Subcategoria “${subcategoryValue}” não cadastrada.`);
+    else if (subcategory && subcategory.categoriaId !== category.id) validationErrors.push(`Linha ${line}: Subcategoria “${subcategoryValue}” não pertence à categoria “${categoryValue}”.`);
+    const effectiveSubcategoryId = normalizeImportKey(subcategoryValue) === "limpar" ? null : subcategory?.id || currentProduct?.subcategoriaId || null;
+    const group = groupValue && normalizeImportKey(groupValue) !== "limpar" ? match(data.gruposProduto, groupValue) : null;
+    if (groupValue && normalizeImportKey(groupValue) !== "limpar" && !group) validationErrors.push(`Linha ${line}: Grupo de produtos “${groupValue}” não cadastrado.`);
+    else if (group && group.subcategoriaId !== effectiveSubcategoryId) validationErrors.push(`Linha ${line}: Grupo “${groupValue}” não pertence à subcategoria informada.`);
+  });
   if (validationErrors.length) {
     throw new SpreadsheetImportError(validationErrors);
   }
 
   const categorias = [...data.categorias];
+  const subcategorias = [...data.subcategorias];
+  const gruposProduto = [...data.gruposProduto];
   const marcas = [...data.marcas];
   const aplicacoes = [...data.aplicacoes];
   const findByNameOrId = <T extends { id: string; nome: string; slug?: string | null }>(items: T[], value: string) => {
     const normalized = normalizeImportKey(value);
     return items.find((item) => normalizeImportKey(item.id) === normalized || normalizeImportKey(item.nome) === normalized || normalizeImportKey(item.slug) === normalized);
-  };
-  const ensureCategoria = async (nome: string) => {
-    const existing = findByNameOrId(categorias, nome);
-    if (existing) return existing;
-    const created = { id: createId("cat"), nome, slug: slugify(nome), ativo: true, ordem: categorias.length + 1 };
-    const { error } = await supabase.from("Categoria").insert(created);
-    if (error) throw error;
-    categorias.push(created);
-    return created;
   };
   const ensureMarca = async (nome: string) => {
     const existing = findByNameOrId(marcas, nome);
@@ -447,12 +462,28 @@ async function importProductsFromTemplate(file: File, data: AppData) {
 
     try {
       const existing = data.produtos.find((item) => (item.codigoInterno || "").trim().toLocaleLowerCase("pt-BR") === codigoInterno.trim().toLocaleLowerCase("pt-BR"));
-      const categoria = await ensureCategoria(categoriaText); const marca = await ensureMarca(marcaText); const productId = existing?.id || createId("prod");
+      const categoria = findByNameOrId(categorias, categoriaText);
+      if (!categoria) throw new SpreadsheetImportError([`Linha ${line}: não existe categoria cadastrada para “${categoriaText}”. Cadastre a categoria antes de importar.`], count);
+      const subcategoryText = importValue(row, [...importColumns.subcategoria]);
+      const productGroupText = importValue(row, [...importColumns.grupoProduto]);
+      const clearSubcategory = normalizeImportKey(subcategoryText) === "limpar";
+      const clearProductGroup = normalizeImportKey(productGroupText) === "limpar";
+      const subcategory = subcategoryText && !clearSubcategory ? findByNameOrId(subcategorias, subcategoryText) : null;
+      if (subcategoryText && !clearSubcategory && !subcategory) throw new SpreadsheetImportError([`Linha ${line}: não existe subcategoria cadastrada para “${subcategoryText}”. Cadastre-a antes de importar.`], count);
+      if (subcategory && subcategory.categoriaId !== categoria.id) throw new SpreadsheetImportError([`Linha ${line}: a subcategoria “${subcategoryText}” não pertence à categoria “${categoriaText}”.`], count);
+      const effectiveSubcategoryId = clearSubcategory ? null : subcategory?.id || existing?.subcategoriaId || null;
+      const productGroup = productGroupText && !clearProductGroup ? findByNameOrId(gruposProduto, productGroupText) : null;
+      if (productGroupText && !clearProductGroup && !productGroup) throw new SpreadsheetImportError([`Linha ${line}: não existe grupo de produtos cadastrado para “${productGroupText}”. Cadastre-o antes de importar.`], count);
+      if (productGroup && productGroup.subcategoriaId !== effectiveSubcategoryId) throw new SpreadsheetImportError([`Linha ${line}: o grupo “${productGroupText}” não pertence à subcategoria informada.`], count);
+      const effectiveProductGroupId = clearSubcategory || clearProductGroup ? null : productGroup?.id || existing?.grupoProdutoId || null;
+      const marca = await ensureMarca(marcaText); const productId = existing?.id || createId("prod");
       const payload = {
       nome,
       slug: importValue(row, ["slug"]) || slugify(`${codigoInterno}-${nome}`),
       codigoInterno,
       categoriaId: categoria.id,
+      subcategoriaId: effectiveSubcategoryId,
+      grupoProdutoId: effectiveProductGroupId,
       marcaId: marca.id,
       descricaoCurta: importValue(row, ["Descrição curta", "descricaoCurta"]) || null,
       descricaoCompleta: importValue(row, ["Descrição completa", "descricaoCompleta"]) || null,
@@ -573,6 +604,8 @@ export default function Page() {
       const [
         produtos,
         categorias,
+        subcategorias,
+        gruposProduto,
         marcas,
         montadoras,
         modelosVeiculo,
@@ -591,6 +624,8 @@ export default function Page() {
       ] = await Promise.all([
         supabase.from("Produto").select("*").order("ordem", { ascending: true }).order("nome").returns<Produto[]>(),
         supabase.from("Categoria").select("*").order("ordem", { ascending: true }).returns<Categoria[]>(),
+        supabase.from("Subcategoria").select("*").order("ordem", { ascending: true }).returns<Subcategoria[]>(),
+        supabase.from("GrupoProduto").select("*").order("ordem", { ascending: true }).returns<GrupoProduto[]>(),
         supabase.from("Marca").select("*").order("nome").returns<Marca[]>(),
         supabase.from("Montadora").select("*").order("nome").returns<Montadora[]>(),
         supabase.from("ModeloVeiculo").select("*").order("nome").returns<ModeloVeiculo[]>(),
@@ -608,12 +643,14 @@ export default function Page() {
         master ? loadCapacityHealth() : Promise.resolve({ data: null, error: null })
       ]);
 
-      const firstError = [produtos, categorias, marcas, montadoras, modelosVeiculo, produtoModelosVeiculo, aplicacoes, usuarios, leads, permissoes, produtoAplicacoes, settings, telemetry, auditLogs, presence, presenceSummary, capacityHealth].find((item) => item.error);
+      const firstError = [produtos, categorias, subcategorias, gruposProduto, marcas, montadoras, modelosVeiculo, produtoModelosVeiculo, aplicacoes, usuarios, leads, permissoes, produtoAplicacoes, settings, telemetry, auditLogs, presence, presenceSummary, capacityHealth].find((item) => item.error);
       if (firstError?.error) throw firstError.error;
 
       setData((current) => ({
         produtos: produtos.data || [],
         categorias: categorias.data || [],
+        subcategorias: subcategorias.data || [],
+        gruposProduto: gruposProduto.data || [],
         marcas: marcas.data || [],
         montadoras: montadoras.data || [],
         modelosVeiculo: modelosVeiculo.data || [],
@@ -675,11 +712,20 @@ export default function Page() {
       }
       if (active === "Categorias" || active === "Marcas") {
         const categoryMode = active === "Categorias";
-        const result = categoryMode
-          ? await supabase.from("Categoria").select("*").order("ordem", { ascending: true }).returns<Categoria[]>()
-          : await supabase.from("Marca").select("*").order("nome").returns<Marca[]>();
-        if (result.error) throw result.error;
-        setData((current) => categoryMode ? { ...current, categorias: (result.data || []) as Categoria[] } : { ...current, marcas: (result.data || []) as Marca[] });
+        if (categoryMode) {
+          const [categories, subcategories, groups] = await Promise.all([
+            supabase.from("Categoria").select("*").order("ordem").returns<Categoria[]>(),
+            supabase.from("Subcategoria").select("*").order("ordem").returns<Subcategoria[]>(),
+            supabase.from("GrupoProduto").select("*").order("ordem").returns<GrupoProduto[]>()
+          ]);
+          const error = [categories, subcategories, groups].find((item) => item.error)?.error;
+          if (error) throw error;
+          setData((current) => ({ ...current, categorias: categories.data || [], subcategorias: subcategories.data || [], gruposProduto: groups.data || [] }));
+        } else {
+          const result = await supabase.from("Marca").select("*").order("nome").returns<Marca[]>();
+          if (result.error) throw result.error;
+          setData((current) => ({ ...current, marcas: result.data || [] }));
+        }
         return;
       }
       if (active === "Montadoras") {
@@ -922,7 +968,7 @@ export default function Page() {
           {activeTab === "Dashboard" && <Dashboard data={data} setActive={setActive} role={adminUser.role} />}
           {activeTab === "Análises" && <AnalyticsSection data={data} />}
           {activeTab === "Produtos" && <Products data={data} query={query} reload={reloadSection} notify={notify} adminUser={adminUser} />}
-          {activeTab === "Categorias" && <CategoryBrandSection title="Categorias" table="Categoria" imageField="imagem" items={data.categorias} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
+          {activeTab === "Categorias" && <CategoryHierarchySection data={data} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Marcas" && <CategoryBrandSection title="Marcas" table="Marca" imageField="logo" items={data.marcas} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Montadoras" && <VehicleSection data={data} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Aplicações" && <Applications items={data.aplicacoes} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
@@ -1152,6 +1198,8 @@ function AnalyticsSection({ data }: { data: AppData }) {
   }, {})).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
   const productById = new Map(data.produtos.map((item) => [item.id, item]));
   const categoryById = new Map(data.categorias.map((item) => [item.id, item.nome]));
+  const subcategoryById = new Map(data.subcategorias.map((item) => [item.id, item.nome]));
+  const productGroupById = new Map(data.gruposProduto.map((item) => [item.id, item.nome]));
   const brandById = new Map(data.marcas.map((item) => [item.id, item.nome]));
   const productViews = eventIs("product_view");
   const searches = eventIs("search_results", "search_zero_results");
@@ -1165,6 +1213,14 @@ function AnalyticsSection({ data }: { data: AppData }) {
   const categoryRank = rank(productViews.map((event) => {
     const product = productById.get(String(event.metadata?.productId || ""));
     return categoryById.get(String(event.metadata?.categoryId || product?.categoriaId || "")) || "Não informado";
+  }));
+  const subcategoryRank = rank(productViews.map((event) => {
+    const product = productById.get(String(event.metadata?.productId || ""));
+    return subcategoryById.get(String(event.metadata?.subcategoryId || product?.subcategoriaId || "")) || "Sem subcategoria";
+  }));
+  const productGroupRank = rank(productViews.map((event) => {
+    const product = productById.get(String(event.metadata?.productId || ""));
+    return productGroupById.get(String(event.metadata?.productGroupId || product?.grupoProdutoId || "")) || "Sem grupo";
   }));
   const brandRank = rank(productViews.map((event) => {
     const product = productById.get(String(event.metadata?.productId || ""));
@@ -1244,6 +1300,8 @@ function AnalyticsSection({ data }: { data: AppData }) {
         <RankingPanel title="Buscas mais realizadas" rows={searchRank} empty="Nenhuma busca registrada no período." />
         <RankingPanel title="Marcas mais procuradas" rows={brandRank} empty="As marcas aparecerão conforme produtos forem visualizados." />
         <RankingPanel title="Categorias mais vistas" rows={categoryRank} empty="As categorias aparecerão conforme produtos forem visualizados." />
+        <RankingPanel title="Subcategorias mais vistas" rows={subcategoryRank} empty="As subcategorias aparecerão conforme produtos forem visualizados." />
+        <RankingPanel title="Grupos mais vistos" rows={productGroupRank} empty="Os grupos aparecerão conforme produtos forem visualizados." />
       </div>
       <div className="grid gap-6 xl:grid-cols-[1.1fr_1fr]">
         <RankingPanel title="Páginas mais acessadas" rows={pageRank} empty="Nenhuma navegação registrada." />
@@ -1294,6 +1352,8 @@ function Products({ data, query, reload, notify, adminUser }: { data: AppData; q
   const [optimizingImages, setOptimizingImages] = useState(false);
   const [imageProgress, setImageProgress] = useState({ completed: 0, total: 0 });
   const [categoryFilter, setCategoryFilter] = useState("");
+  const [subcategoryFilter, setSubcategoryFilter] = useState("");
+  const [productGroupFilter, setProductGroupFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [pendingFilter, setPendingFilter] = useState("all");
   const [sortMode, setSortMode] = useState("newest");
@@ -1302,6 +1362,8 @@ function Products({ data, query, reload, notify, adminUser }: { data: AppData; q
   const products = data.produtos
     .filter((item) => [item.nome, item.codigoInterno, item.ean, item.ncm].join(" ").toLowerCase().includes(lower))
     .filter((item) => !categoryFilter || item.categoriaId === categoryFilter)
+    .filter((item) => !subcategoryFilter || item.subcategoriaId === subcategoryFilter)
+    .filter((item) => !productGroupFilter || item.grupoProdutoId === productGroupFilter)
     .filter((item) => statusFilter === "all" ||
       (statusFilter === "active" && item.ativo !== false) ||
       (statusFilter === "inactive" && item.ativo === false) ||
@@ -1325,8 +1387,8 @@ function Products({ data, query, reload, notify, adminUser }: { data: AppData; q
       if (sortMode === "updated") return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
       return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
     });
-  const hasFilters = Boolean(categoryFilter || statusFilter !== "all" || pendingFilter !== "all" || sortMode !== "newest");
-  const clearFilters = () => { setCategoryFilter(""); setStatusFilter("all"); setPendingFilter("all"); setSortMode("newest"); };
+  const hasFilters = Boolean(categoryFilter || subcategoryFilter || productGroupFilter || statusFilter !== "all" || pendingFilter !== "all" || sortMode !== "newest");
+  const clearFilters = () => { setCategoryFilter(""); setSubcategoryFilter(""); setProductGroupFilter(""); setStatusFilter("all"); setPendingFilter("all"); setSortMode("newest"); };
 
   const optimizeExistingImages = async () => {
     const pending = data.produtos.filter((product) => product.imagemPrincipal && (!product.imagemCard || !product.imagemDetalhe));
@@ -1379,6 +1441,8 @@ function Products({ data, query, reload, notify, adminUser }: { data: AppData; q
     const rows = data.produtos.map((product) => ({
       ...product,
       categoria: data.categorias.find((item) => item.id === product.categoriaId)?.nome || "",
+      subcategoria: data.subcategorias.find((item) => item.id === product.subcategoriaId)?.nome || "",
+      grupoProduto: data.gruposProduto.find((item) => item.id === product.grupoProdutoId)?.nome || "",
       marca: data.marcas.find((item) => item.id === product.marcaId)?.nome || "",
       aplicacoes: data.produtoAplicacoes
         .filter((item) => item.produtoId === product.id)
@@ -1492,7 +1556,9 @@ function Products({ data, query, reload, notify, adminUser }: { data: AppData; q
       <div className="mb-5 rounded-[24px] border border-line bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><div className="font-black">Filtros do cadastro</div><div className="text-xs font-semibold text-muted">Combine os filtros para localizar produtos e pendências rapidamente.</div></div>{hasFilters && <button className="btn-white" onClick={clearFilters}><RefreshCw size={15} /> Limpar filtros</button>}</div>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <Field label="Categoria"><select className="input" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="">Todas as categorias</option>{data.categorias.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>
+          <Field label="Categoria"><select className="input" value={categoryFilter} onChange={(event) => { setCategoryFilter(event.target.value); setSubcategoryFilter(""); setProductGroupFilter(""); }}><option value="">Todas as categorias</option>{data.categorias.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>
+          <Field label="Subcategoria"><select className="input" value={subcategoryFilter} onChange={(event) => { setSubcategoryFilter(event.target.value); setProductGroupFilter(""); }}><option value="">Todas as subcategorias</option>{data.subcategorias.filter((item) => !categoryFilter || item.categoriaId === categoryFilter).map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>
+          <Field label="Grupo de produtos"><select className="input" value={productGroupFilter} onChange={(event) => setProductGroupFilter(event.target.value)}><option value="">Todos os grupos</option>{data.gruposProduto.filter((item) => !subcategoryFilter || item.subcategoriaId === subcategoryFilter).map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>
           <Field label="Status"><select className="input" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">Todos os status</option><option value="active">Ativos</option><option value="inactive">Inativos</option><option value="featured">Destaques</option><option value="launch">Lançamentos</option><option value="promotion">Promoções</option></select></Field>
           <Field label="Informações pendentes"><select className="input" value={pendingFilter} onChange={(event) => setPendingFilter(event.target.value)}><option value="all">Todas as condições</option><option value="any">Qualquer dado essencial faltando</option><option value="photo">Sem foto</option><option value="price">Sem preço</option><option value="description">Sem descrição curta</option><option value="ean">Sem EAN</option><option value="ncm">Sem NCM</option><option value="masterBox">Sem caixa master</option><option value="stock">Sem estoque</option><option value="technicalSheet">Sem ficha técnica</option></select></Field>
           <Field label="Ordenar por"><select className="input" value={sortMode} onChange={(event) => setSortMode(event.target.value)}><option value="newest">Mais recentes primeiro</option><option value="oldest">Mais antigos primeiro</option><option value="updated">Atualizados recentemente</option><option value="name">Nome (A–Z)</option><option value="code">Código</option></select></Field>
@@ -1537,6 +1603,8 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
   const [saving, setSaving] = useState(false);
   const isNew = !data.produtos.some((item) => item.id === product.id);
   const extras = draft.imagensExtras || [];
+  const availableSubcategories = data.subcategorias.filter((item) => item.categoriaId === draft.categoriaId && item.ativo !== false);
+  const availableGroups = data.gruposProduto.filter((item) => item.subcategoriaId === draft.subcategoriaId && item.ativo !== false);
   const set = <K extends keyof Produto>(key: K, value: Produto[K]) => setDraft((current) => ({ ...current, [key]: value }));
 
   const save = async () => {
@@ -1547,6 +1615,8 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
         slug: draft.slug || slugify(`${draft.codigoInterno}-${draft.nome}`),
         codigoInterno: draft.codigoInterno || "",
         categoriaId: draft.categoriaId || data.categorias[0]?.id || "",
+        subcategoriaId: draft.subcategoriaId || null,
+        grupoProdutoId: draft.grupoProdutoId || null,
         marcaId: draft.marcaId || data.marcas[0]?.id || "",
         descricaoCurta: draft.descricaoCurta || null,
         descricaoCompleta: draft.descricaoCompleta || null,
@@ -1648,7 +1718,9 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
         <Field label="Código interno"><input className="input" value={draft.codigoInterno || ""} onChange={(event) => set("codigoInterno", event.target.value)} /></Field>
         <Field label="Nome"><input className="input" value={draft.nome || ""} onChange={(event) => set("nome", event.target.value)} /></Field>
         <Field label="Slug"><input className="input" value={draft.slug || ""} onChange={(event) => set("slug", event.target.value)} /></Field>
-        <Field label="Categoria"><select className="input" value={draft.categoriaId || ""} onChange={(event) => set("categoriaId", event.target.value)}>{data.categorias.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>
+        <Field label="Categoria"><select className="input" value={draft.categoriaId || ""} onChange={(event) => { const next = event.target.value; if ((draft.subcategoriaId || draft.grupoProdutoId) && !confirm("Ao trocar a categoria, a subcategoria e o grupo incompatíveis serão limpos. Deseja continuar?")) return; setDraft((current) => ({ ...current, categoriaId: next, subcategoriaId: null, grupoProdutoId: null })); }}>{data.categorias.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>
+        <Field label="Subcategoria (opcional)"><select className="input" value={draft.subcategoriaId || ""} onChange={(event) => { const next = event.target.value || null; if (draft.grupoProdutoId && !confirm("Ao trocar a subcategoria, o grupo incompatível será limpo. Deseja continuar?")) return; setDraft((current) => ({ ...current, subcategoriaId: next, grupoProdutoId: null })); }}><option value="">Sem subcategoria</option>{availableSubcategories.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>
+        <Field label="Grupo de produtos (opcional)"><select className="input" value={draft.grupoProdutoId || ""} disabled={!draft.subcategoriaId} onChange={(event) => set("grupoProdutoId", event.target.value || null)}><option value="">Sem grupo de produtos</option>{availableGroups.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>
         <Field label="Marca"><select className="input" value={draft.marcaId || ""} onChange={(event) => set("marcaId", event.target.value)}>{data.marcas.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>
         <Field label="EAN"><input className="input" value={draft.ean || ""} onChange={(event) => set("ean", event.target.value)} /></Field>
         <Field label="NCM"><input className="input" value={draft.ncm || ""} onChange={(event) => set("ncm", event.target.value)} /></Field>
@@ -1746,6 +1818,42 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
       <ModalActions saving={saving} onSave={save} onDelete={!isNew ? remove : undefined} />
     </Modal>
   );
+}
+
+type TaxonomyEdit = { table: "Categoria" | "Subcategoria" | "GrupoProduto"; item: Categoria | Subcategoria | GrupoProduto; isNew?: boolean };
+
+function CategoryHierarchySection({ data, query, reload, notify, canDelete }: { data: AppData; query: string; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean }) {
+  const [categoryId, setCategoryId] = useState(data.categorias[0]?.id || "");
+  const subcategories = data.subcategorias.filter((item) => item.categoriaId === categoryId);
+  const [subcategoryId, setSubcategoryId] = useState(subcategories[0]?.id || "");
+  const groups = data.gruposProduto.filter((item) => item.subcategoriaId === subcategoryId);
+  const [editing, setEditing] = useState<TaxonomyEdit | null>(null);
+  useEffect(() => { if (!data.categorias.some((item) => item.id === categoryId)) setCategoryId(data.categorias[0]?.id || ""); }, [data.categorias, categoryId]);
+  useEffect(() => { if (!subcategories.some((item) => item.id === subcategoryId)) setSubcategoryId(subcategories[0]?.id || ""); }, [categoryId, data.subcategorias, subcategoryId]);
+  const filteredCategories = data.categorias.filter((item) => item.nome.toLowerCase().includes(query.toLowerCase()));
+  const create = (table: TaxonomyEdit["table"]) => {
+    if (table === "Categoria") setEditing({ table, isNew: true, item: { id: createId("cat"), nome: "Nova categoria", slug: "nova-categoria", ativo: true, ordem: data.categorias.length + 1 } });
+    if (table === "Subcategoria" && categoryId) setEditing({ table, isNew: true, item: { id: createId("subcat"), categoriaId: categoryId, nome: "Nova subcategoria", slug: "nova-subcategoria", ativo: true, ordem: subcategories.length + 1 } });
+    if (table === "GrupoProduto" && subcategoryId) setEditing({ table, isNew: true, item: { id: createId("grupo"), subcategoriaId: subcategoryId, nome: "Novo grupo", slug: "novo-grupo", ativo: true, ordem: groups.length + 1 } });
+  };
+  return <>
+    <div className="mb-5 flex flex-wrap gap-3"><button className="btn-yellow" onClick={() => create("Categoria")}><Plus size={17}/> Criar categoria</button><button className="btn-white" disabled={!categoryId} onClick={() => create("Subcategoria")}><Plus size={17}/> Criar subcategoria</button><button className="btn-white" disabled={!subcategoryId} onClick={() => create("GrupoProduto")}><Plus size={17}/> Criar grupo de produtos</button></div>
+    <div className="grid gap-5 xl:grid-cols-3">
+      <Panel title={`Categorias (${filteredCategories.length})`}><div className="space-y-2">{filteredCategories.map((item) => <button key={item.id} onClick={() => { setCategoryId(item.id); setSubcategoryId(data.subcategorias.find((sub) => sub.categoriaId === item.id)?.id || ""); }} className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left ${categoryId === item.id ? "border-blue-800 bg-blue-50" : "border-line bg-white"}`}>{item.imagem ? <img src={item.imagem} alt="" className="h-12 w-14 rounded-lg object-contain"/> : <div className="h-12 w-14 rounded-lg bg-soft"/>}<div className="min-w-0 flex-1"><div className="font-black">{item.nome}</div><div className="text-xs text-muted">{data.subcategorias.filter((sub) => sub.categoriaId === item.id).length} subcategorias · {data.produtos.filter((p) => p.categoriaId === item.id).length} produtos</div></div><span onClick={(event) => { event.stopPropagation(); setEditing({ table: "Categoria", item }); }} className="icon-btn"><Pencil size={15}/></span></button>)}</div></Panel>
+      <Panel title={`Subcategorias (${subcategories.length})`}><div className="space-y-2">{subcategories.map((item) => <button key={item.id} onClick={() => setSubcategoryId(item.id)} className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left ${subcategoryId === item.id ? "border-blue-800 bg-blue-50" : "border-line bg-white"}`}>{item.imagem ? <img src={item.imagem} alt="" className="h-12 w-14 rounded-lg object-contain"/> : <div className="h-12 w-14 rounded-lg bg-soft"/>}<div className="min-w-0 flex-1"><div className="font-black">{item.nome}</div><div className="text-xs text-muted">{data.gruposProduto.filter((group) => group.subcategoriaId === item.id).length} grupos · {data.produtos.filter((p) => p.subcategoriaId === item.id).length} produtos</div></div><span onClick={(event) => { event.stopPropagation(); setEditing({ table: "Subcategoria", item }); }} className="icon-btn"><Pencil size={15}/></span></button>)}{!subcategories.length && <div className="rounded-2xl bg-soft p-5 text-sm text-muted">Esta categoria ainda não possui subcategorias.</div>}</div></Panel>
+      <Panel title={`Grupos de produtos (${groups.length})`}><div className="space-y-2">{groups.map((item) => <div key={item.id} className="flex items-center gap-3 rounded-2xl border border-line p-3">{item.imagem ? <img src={item.imagem} alt="" className="h-12 w-14 rounded-lg object-contain"/> : <div className="h-12 w-14 rounded-lg bg-soft"/>}<div className="min-w-0 flex-1"><div className="font-black">{item.nome}</div><div className="text-xs text-muted">{data.produtos.filter((p) => p.grupoProdutoId === item.id).length} produtos</div></div><button className="icon-btn" onClick={() => setEditing({ table: "GrupoProduto", item })}><Pencil size={15}/></button></div>)}{!groups.length && <div className="rounded-2xl bg-soft p-5 text-sm text-muted">Esta subcategoria ainda não possui grupos.</div>}</div></Panel>
+    </div>
+    {editing && <TaxonomyModal editing={editing} reload={reload} notify={notify} canDelete={canDelete} onClose={() => setEditing(null)} />}
+  </>;
+}
+
+function TaxonomyModal({ editing, reload, notify, canDelete, onClose }: { editing: TaxonomyEdit; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean; onClose: () => void }) {
+  const [draft, setDraft] = useState(editing.item);
+  const [saving, setSaving] = useState(false);
+  const isNew = Boolean(editing.isNew);
+  const save = async () => { setSaving(true); try { const payload = { ...draft, slug: draft.slug || slugify(draft.nome), descricao: draft.descricao || null, imagem: draft.imagem || null, ordem: Number(draft.ordem || 0), ativo: draft.ativo !== false, updatedAt: new Date().toISOString() }; const request = isNew ? supabase.from(editing.table).insert(payload) : supabase.from(editing.table).update(payload).eq("id", draft.id); const { error } = await request; if (error) throw error; notify("Classificação salva."); await reload(); onClose(); } catch (error) { notify(friendlyAdminError(error, "salvar a classificação")); } finally { setSaving(false); } };
+  const remove = async () => { if (!confirm("Excluir esta classificação?")) return; if (editing.table === "Categoria") { const [{ count: products }, { count: subdivisions }] = await Promise.all([supabase.from("Produto").select("id", { count: "exact", head: true }).eq("categoriaId", draft.id), supabase.from("Subcategoria").select("id", { count: "exact", head: true }).eq("categoriaId", draft.id)]); if ((products || 0) + (subdivisions || 0) > 0) { notify(`Esta categoria não pode ser excluída: existem ${products || 0} produto(s) e ${subdivisions || 0} subcategoria(s) que precisam ser realocados.`); return; } } if (editing.table === "Subcategoria") { const [{ count: products }, { count: subdivisions }] = await Promise.all([supabase.from("Produto").select("id", { count: "exact", head: true }).eq("subcategoriaId", draft.id), supabase.from("GrupoProduto").select("id", { count: "exact", head: true }).eq("subcategoriaId", draft.id)]); if ((products || 0) + (subdivisions || 0) > 0) { notify(`Esta subcategoria não pode ser excluída: existem ${products || 0} produto(s) e ${subdivisions || 0} grupo(s) que precisam ser realocados.`); return; } } if (editing.table === "GrupoProduto") { const { count } = await supabase.from("Produto").select("id", { count: "exact", head: true }).eq("grupoProdutoId", draft.id); if (count) { notify(`Este grupo não pode ser excluído: existem ${count} produto(s) que precisam ser realocados.`); return; } } const { error } = await supabase.from(editing.table).delete().eq("id", draft.id); if (error) notify(friendlyAdminError(error, "excluir a classificação")); else { notify("Classificação excluída."); await reload(); onClose(); } };
+  return <Modal title={editing.table === "GrupoProduto" ? "Grupo de produtos" : editing.table} onClose={onClose}><div className="grid gap-4 lg:grid-cols-2"><Field label="Nome"><input className="input" value={draft.nome} onChange={(event) => setDraft({ ...draft, nome: event.target.value })}/></Field><Field label="Slug"><input className="input" value={draft.slug || ""} onChange={(event) => setDraft({ ...draft, slug: event.target.value })}/></Field><Field label="Ordem"><input className="input" type="number" value={draft.ordem || 0} onChange={(event) => setDraft({ ...draft, ordem: Number(event.target.value || 0) })}/></Field><Field label="Descrição"><textarea className="textarea" value={draft.descricao || ""} onChange={(event) => setDraft({ ...draft, descricao: event.target.value })}/></Field></div><div className="mt-4"><UploadBox label="Imagem/arte opcional" folder={`categorias/${editing.table.toLowerCase()}`} value={draft.imagem || ""} iconMode onUploaded={(url) => setDraft({ ...draft, imagem: url })}/></div><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(event) => setDraft({ ...draft, ativo: event.target.checked })}/> Ativo</label><ModalActions saving={saving} onSave={save} onDelete={!isNew && canDelete ? remove : undefined}/></Modal>;
 }
 
 function CategoryBrandSection({ title, table, imageField, items, query, reload, notify, canDelete }: { title: string; table: "Categoria" | "Marca"; imageField: "imagem" | "logo"; items: Array<Categoria | Marca>; query: string; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean }) {

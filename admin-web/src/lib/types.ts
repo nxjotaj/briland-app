@@ -6,6 +6,8 @@ export type Produto = {
   slug?: string | null;
   codigoInterno?: string | null;
   categoriaId?: string | null;
+  subcategoriaId?: string | null;
+  grupoProdutoId?: string | null;
   marcaId?: string | null;
   descricaoCurta?: string | null;
   descricaoCompleta?: string | null;
@@ -39,6 +41,8 @@ export type Produto = {
 };
 
 export type Categoria = { id: string; nome: string; slug?: string | null; descricao?: string | null; imagem?: string | null; ordem?: number | null; ativo?: boolean | null };
+export type Subcategoria = { id: string; categoriaId: string; nome: string; slug?: string | null; descricao?: string | null; imagem?: string | null; ordem?: number | null; ativo?: boolean | null };
+export type GrupoProduto = { id: string; subcategoriaId: string; nome: string; slug?: string | null; descricao?: string | null; imagem?: string | null; ordem?: number | null; ativo?: boolean | null };
 export type Marca = { id: string; nome: string; slug?: string | null; logo?: string | null; ativo?: boolean | null };
 export type Aplicacao = { id: string; nome: string; slug?: string | null; tipo?: string | null; ativo?: boolean | null };
 export type Montadora = { id: string; nome: string; slug?: string | null; imagem?: string | null; ativo?: boolean | null; createdAt?: string | null; updatedAt?: string | null };
@@ -133,6 +137,8 @@ export type CapacityHealth = {
 export type AppData = {
   produtos: Produto[];
   categorias: Categoria[];
+  subcategorias: Subcategoria[];
+  gruposProduto: GrupoProduto[];
   marcas: Marca[];
   aplicacoes: Aplicacao[];
   montadoras: Montadora[];

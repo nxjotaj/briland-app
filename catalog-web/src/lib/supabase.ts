@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import type { Automaker, Brand, CatalogData, Category, Product, Role, Settings, UserProfile, VehicleApplication, VehicleModel } from "./types";
+import type { Automaker, Brand, CatalogData, Category, Product, ProductGroup, Role, Settings, Subcategory, UserProfile, VehicleApplication, VehicleModel } from "./types";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || "";
 const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() || "";
@@ -9,9 +9,11 @@ const userFields = "id,name,company,email,role,status,phone,cnpj,address,city,st
 
 export async function loadCatalog(role:Role, token?:string):Promise<CatalogData> {
   void token;
-  const [products,categories,brands,automakers,models,applications,settings,permissions] = await Promise.all([
+  const [products,categories,subcategories,productGroups,brands,automakers,models,applications,settings,permissions] = await Promise.all([
     supabase.rpc("get_visible_products", { requested_role:role }),
     supabase.from("Categoria").select("*").eq("ativo",true).order("ordem"),
+    supabase.from("Subcategoria").select("*").eq("ativo",true).order("ordem"),
+    supabase.from("GrupoProduto").select("*").eq("ativo",true).order("ordem"),
     supabase.from("Marca").select("*").eq("ativo",true).order("nome"),
     supabase.from("Montadora").select("*").eq("ativo",true).order("nome"),
     supabase.from("ModeloVeiculo").select("*").eq("ativo",true).order("nome"),
@@ -19,10 +21,10 @@ export async function loadCatalog(role:Role, token?:string):Promise<CatalogData>
     supabase.rpc("get_app_settings"),
     supabase.rpc("get_current_product_permissions")
   ]);
-  const error = [products,categories,brands,automakers,models,applications,settings].find(item=>item.error)?.error;
+  const error = [products,categories,subcategories,productGroups,brands,automakers,models,applications,settings].find(item=>item.error)?.error;
   if (error) throw error;
   const appSettings=(settings.data||{}) as Settings;
-  return { products:(products.data||[]) as Product[], categories:(categories.data||[]) as Category[], brands:(brands.data||[]) as Brand[], automakers:(automakers.data||[]) as Automaker[], models:(models.data||[]) as VehicleModel[], applications:(applications.data||[]) as VehicleApplication[], settings:{...appSettings,permissions:(permissions.data||{}) as Record<string,boolean>} };
+  return { products:(products.data||[]) as Product[], categories:(categories.data||[]) as Category[], subcategories:(subcategories.data||[]) as Subcategory[], productGroups:(productGroups.data||[]) as ProductGroup[], brands:(brands.data||[]) as Brand[], automakers:(automakers.data||[]) as Automaker[], models:(models.data||[]) as VehicleModel[], applications:(applications.data||[]) as VehicleApplication[], settings:{...appSettings,permissions:(permissions.data||{}) as Record<string,boolean>} };
 }
 
 export async function currentProfile():Promise<UserProfile|null> {

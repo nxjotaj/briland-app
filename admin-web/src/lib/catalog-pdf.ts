@@ -667,18 +667,29 @@ export async function buildCatalogPdf(
     const opener = pdf.addPage([A4.width, A4.height]);
     categoryTargets.set(group.category.id, opener);
     await drawCategoryOpener(pdf, opener, fonts, logo, group, categoryIndex, warnings, editorial.categoryArt?.[group.category.id]);
-    const presentations = group.products.map((product) => buildPresentation(product, group.category, data, role));
-    allPresentations.push(...presentations);
-    const grid = chooseGrid();
-    let cursor = 0;
-    while (cursor < presentations.length) {
-      const remaining = presentations.length - cursor;
-      const pagesRemaining = Math.ceil(remaining / grid.capacity);
-      const balancedBatchSize = Math.ceil(remaining / pagesRemaining);
-      const page = pdf.addPage([A4.width, A4.height]);
-      const batch = presentations.slice(cursor, cursor + balancedBatchSize);
-      await drawGridPage(pdf, page, fonts, logo, batch, grid, group.category, categoryIndex, warnings);
-      cursor += batch.length;
+    const subcategories = data.subcategorias.filter((item) => item.categoriaId === group.category.id && item.ativo !== false).sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0) || a.nome.localeCompare(b.nome, "pt-BR"));
+    const sections: Array<{ label: string; products: Produto[] }> = [{ label: group.category.nome, products: group.products.filter((product) => !product.subcategoriaId) }];
+    for (const subcategory of subcategories) {
+      sections.push({ label: `${group.category.nome} › ${subcategory.nome}`, products: group.products.filter((product) => product.subcategoriaId === subcategory.id && !product.grupoProdutoId) });
+      for (const productGroup of data.gruposProduto.filter((item) => item.subcategoriaId === subcategory.id && item.ativo !== false).sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0) || a.nome.localeCompare(b.nome, "pt-BR"))) {
+        sections.push({ label: `${group.category.nome} › ${subcategory.nome} › ${productGroup.nome}`, products: group.products.filter((product) => product.grupoProdutoId === productGroup.id) });
+      }
+    }
+    for (const section of sections.filter((item) => item.products.length)) {
+      const sectionCategory = { ...group.category, nome: section.label };
+      const presentations = section.products.map((product) => buildPresentation(product, sectionCategory, data, role));
+      allPresentations.push(...presentations);
+      const grid = chooseGrid();
+      let cursor = 0;
+      while (cursor < presentations.length) {
+        const remaining = presentations.length - cursor;
+        const pagesRemaining = Math.ceil(remaining / grid.capacity);
+        const balancedBatchSize = Math.ceil(remaining / pagesRemaining);
+        const page = pdf.addPage([A4.width, A4.height]);
+        const batch = presentations.slice(cursor, cursor + balancedBatchSize);
+        await drawGridPage(pdf, page, fonts, logo, batch, grid, sectionCategory, categoryIndex, warnings);
+        cursor += batch.length;
+      }
     }
   }
 
