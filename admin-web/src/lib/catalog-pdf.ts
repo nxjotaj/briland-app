@@ -67,6 +67,12 @@ type ProductPresentation = {
 };
 type Grid = { columns: 4; rows: 3; capacity: 12; label: "4x3" };
 
+const IMAGE_LOAD_ATTEMPTS = 5;
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
 const roleLabel: Record<CatalogPdfRole, string> = {
   VISITANTE: "Visitante",
   NAO_CLIENTE: "Nao cliente",
@@ -179,8 +185,10 @@ async function prepareImage(
   warnings: CatalogImageWarning[],
   options: { trimWhitespace?: boolean } = {}
 ): Promise<LoadedImage | null> {
-  try {
-    const response = await fetch(url);
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= IMAGE_LOAD_ATTEMPTS; attempt += 1) {
+   try {
+    const response = await fetch(url, { cache: attempt === 1 ? "default" : "reload" });
     if (!response.ok || !(response.headers.get("content-type") || "").toLowerCase().startsWith("image/")) {
       throw new Error("O arquivo cadastrado nao respondeu como imagem.");
     }
@@ -250,14 +258,19 @@ async function prepareImage(
       sourceHeight,
       ratio: width / height
     };
-  } catch (error) {
-    warnings.push({
-      ...warning,
-      reason: "load-error",
-      detail: error instanceof Error ? error.message : "Nao foi possivel carregar a imagem."
-    });
-    return null;
+   } catch (error) {
+    lastError = error;
+    if (attempt < IMAGE_LOAD_ATTEMPTS) {
+      await wait(350 * attempt);
+    }
+   }
   }
+  warnings.push({
+    ...warning,
+    reason: "load-error",
+    detail: `Falha depois de ${IMAGE_LOAD_ATTEMPTS} tentativas: ${lastError instanceof Error ? lastError.message : "nao foi possivel carregar a imagem."}`
+  });
+  return null;
 }
 
 function fitImage(page: PDFPage, source: LoadedImage | { image: PDFImage; ratio: number }, x: number, y: number, width: number, height: number, fill = 0.88) {
@@ -485,7 +498,11 @@ async function drawProductCard(
       productCode: item.product.codigoInterno || undefined,
       productName: item.product.nome
     }, warnings);
-    if (image) fitImage(page, image, x + padding, imageY, width - padding * 2, imageHeight, 0.84);
+    if (!image) {
+      const reference = item.product.codigoInterno || item.product.nome;
+      throw new Error(`A geracao foi interrompida porque a imagem do produto ${reference} nao carregou depois de ${IMAGE_LOAD_ATTEMPTS} tentativas. Nenhum PDF incompleto foi publicado.`);
+    }
+    fitImage(page, image, x + padding, imageY, width - padding * 2, imageHeight, 0.84);
   } else {
     warnings.push({
       productId: item.product.id,
