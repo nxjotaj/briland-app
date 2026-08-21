@@ -43,6 +43,15 @@ import {
 } from "lucide-react";
 import { createRegistrationCredential, supabase, uploadCatalogBlob, uploadCatalogMedia } from "@/lib/supabase";
 import { createId, csvEscape, downloadBlob, formatLocalDate, formatLocalDateTime, money, numberOrNull, slugify } from "@/lib/helpers";
+
+function automaticSlug(value: string, items: Array<{ id: string; slug?: string | null }>, currentId?: string) {
+  const base = slugify(value) || "item";
+  const used = new Set(items.filter((item) => item.id !== currentId).map((item) => String(item.slug || "").toLowerCase()));
+  if (!used.has(base)) return base;
+  let suffix = 2;
+  while (used.has(`${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
+}
 import type {
   AboutSettings,
   CatalogAppearance,
@@ -440,7 +449,7 @@ async function importProductsFromTemplate(file: File, data: AppData) {
   const ensureMarca = async (nome: string) => {
     const existing = findByNameOrId(marcas, nome);
     if (existing) return existing;
-    const created = { id: createId("marca"), nome, slug: slugify(nome), ativo: true };
+    const created = { id: createId("marca"), nome, slug: automaticSlug(nome, marcas), ativo: true };
     const { error } = await supabase.from("Marca").insert(created);
     if (error) throw error;
     marcas.push(created);
@@ -449,7 +458,7 @@ async function importProductsFromTemplate(file: File, data: AppData) {
   const ensureAplicacao = async (nome: string) => {
     const existing = findByNameOrId(aplicacoes, nome);
     if (existing) return existing;
-    const created = { id: createId("apl"), nome, slug: slugify(nome), tipo: null, ativo: true };
+    const created = { id: createId("apl"), nome, slug: automaticSlug(nome, aplicacoes), tipo: null, ativo: true };
     const { error } = await supabase.from("Aplicacao").insert(created);
     if (error) throw error;
     aplicacoes.push(created);
@@ -485,7 +494,7 @@ async function importProductsFromTemplate(file: File, data: AppData) {
       const marca = await ensureMarca(marcaText); const productId = existing?.id || createId("prod");
       const payload = {
       nome,
-      slug: importValue(row, ["slug"]) || slugify(`${codigoInterno}-${nome}`),
+      slug: existing?.slug || automaticSlug(`${codigoInterno}-${nome}`, data.produtos, existing?.id),
       codigoInterno,
       categoriaId: categoria.id,
       subcategoriaId: effectiveSubcategoryId,
@@ -1489,7 +1498,7 @@ function Products({ data, query, reload, notify, adminUser }: { data: AppData; q
       const productId = existing?.id || createId("prod");
       const payload = {
         nome,
-        slug: String(row.slug || slugify(`${codigoInterno}-${nome}`)),
+        slug: existing?.slug || automaticSlug(`${codigoInterno}-${nome}`, data.produtos, existing?.id),
         codigoInterno,
         categoriaId: data.categorias.find((item) => item.id === categoriaText || item.nome.toLowerCase() === categoriaText)?.id || data.categorias[0]?.id || "",
         marcaId: data.marcas.find((item) => item.id === marcaText || item.nome.toLowerCase() === marcaText)?.id || data.marcas[0]?.id || "",
@@ -1618,7 +1627,7 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
     try {
       const payload = {
         nome: draft.nome,
-        slug: draft.slug || slugify(`${draft.codigoInterno}-${draft.nome}`),
+        slug: isNew ? automaticSlug(`${draft.codigoInterno}-${draft.nome}`, data.produtos, draft.id) : (draft.slug || slugify(`${draft.codigoInterno}-${draft.nome}`)),
         codigoInterno: draft.codigoInterno || "",
         categoriaId: draft.categoriaId || data.categorias[0]?.id || "",
         subcategoriaId: draft.subcategoriaId || null,
@@ -1723,7 +1732,7 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
       <div className="grid gap-4 lg:grid-cols-3">
         <Field label="Código interno"><input className="input" value={draft.codigoInterno || ""} onChange={(event) => set("codigoInterno", event.target.value)} /></Field>
         <Field label="Nome"><input className="input" value={draft.nome || ""} onChange={(event) => set("nome", event.target.value)} /></Field>
-        <Field label="Slug"><input className="input" value={draft.slug || ""} onChange={(event) => set("slug", event.target.value)} /></Field>
+        <Field label="Slug automático"><input className="input bg-soft text-muted" value={isNew ? automaticSlug(`${draft.codigoInterno}-${draft.nome}`, data.produtos, draft.id) : (draft.slug || slugify(`${draft.codigoInterno}-${draft.nome}`))} readOnly /></Field>
         <Field label="Categoria"><select className="input" value={draft.categoriaId || ""} onChange={(event) => { const next = event.target.value; if ((draft.subcategoriaId || draft.grupoProdutoId) && !confirm("Ao trocar a categoria, a subcategoria e o grupo incompatíveis serão limpos. Deseja continuar?")) return; setDraft((current) => ({ ...current, categoriaId: next, subcategoriaId: null, grupoProdutoId: null })); }}>{data.categorias.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>
         <Field label="Subcategoria (opcional)"><select className="input" value={draft.subcategoriaId || ""} onChange={(event) => { const next = event.target.value || null; if (draft.grupoProdutoId && !confirm("Ao trocar a subcategoria, o grupo incompatível será limpo. Deseja continuar?")) return; setDraft((current) => ({ ...current, subcategoriaId: next, grupoProdutoId: null })); }}><option value="">Sem subcategoria</option>{availableSubcategories.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>
         <Field label="Grupo de produtos (opcional)"><select className="input" value={draft.grupoProdutoId || ""} disabled={!draft.subcategoriaId} onChange={(event) => set("grupoProdutoId", event.target.value || null)}><option value="">Sem grupo de produtos</option>{availableGroups.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>
@@ -1857,9 +1866,11 @@ function TaxonomyModal({ editing, data, reload, notify, canDelete, onClose }: { 
   const [draft, setDraft] = useState(editing.item);
   const [saving, setSaving] = useState(false);
   const isNew = Boolean(editing.isNew);
-  const save = async () => { setSaving(true); try { const name = draft.nome.trim(); if (!name) throw new Error("O nome é obrigatório."); if (editing.table === "Subcategoria" && !(draft as Subcategoria).categoriaId) throw new Error("Selecione a categoria vinculada."); if (editing.table === "GrupoProduto" && !(draft as GrupoProduto).subcategoriaId) throw new Error("Selecione a subcategoria vinculada."); const payload: Record<string, unknown> = { nome: name, slug: draft.slug?.trim() || slugify(name), descricao: draft.descricao?.trim() || null, imagem: draft.imagem || null, ordem: Number(draft.ordem || 0), ativo: draft.ativo !== false }; if (editing.table !== "Categoria") payload.updatedAt = new Date().toISOString(); if (editing.table === "Subcategoria") payload.categoriaId = (draft as Subcategoria).categoriaId; if (editing.table === "GrupoProduto") payload.subcategoriaId = (draft as GrupoProduto).subcategoriaId; const request = isNew ? supabase.from(editing.table).insert({ id: draft.id, ...payload }) : supabase.from(editing.table).update(payload).eq("id", draft.id); const { error } = await request; if (error) throw error; notify(editing.table === "Categoria" ? "Categoria atualizada. Todos os produtos vinculados já exibem o novo nome." : "Classificação salva."); await reload(); onClose(); } catch (error) { notify(friendlyAdminError(error, "salvar a classificação")); } finally { setSaving(false); } };
+  const scopedItems = editing.table === "Categoria" ? data.categorias : editing.table === "Subcategoria" ? data.subcategorias.filter((item) => item.categoriaId === (draft as Subcategoria).categoriaId) : data.gruposProduto.filter((item) => item.subcategoriaId === (draft as GrupoProduto).subcategoriaId);
+  const automaticSlugPreview = isNew ? automaticSlug(draft.nome, scopedItems, draft.id) : (draft.slug || slugify(draft.nome));
+  const save = async () => { setSaving(true); try { const name = draft.nome.trim(); if (!name) throw new Error("O nome é obrigatório."); if (editing.table === "Subcategoria" && !(draft as Subcategoria).categoriaId) throw new Error("Selecione a categoria vinculada."); if (editing.table === "GrupoProduto" && !(draft as GrupoProduto).subcategoriaId) throw new Error("Selecione a subcategoria vinculada."); const payload: Record<string, unknown> = { nome: name, slug: automaticSlugPreview, descricao: draft.descricao?.trim() || null, imagem: draft.imagem || null, ordem: Number(draft.ordem || 0), ativo: draft.ativo !== false }; if (editing.table !== "Categoria") payload.updatedAt = new Date().toISOString(); if (editing.table === "Subcategoria") payload.categoriaId = (draft as Subcategoria).categoriaId; if (editing.table === "GrupoProduto") payload.subcategoriaId = (draft as GrupoProduto).subcategoriaId; const request = isNew ? supabase.from(editing.table).insert({ id: draft.id, ...payload }) : supabase.from(editing.table).update(payload).eq("id", draft.id); const { error } = await request; if (error) throw error; notify(editing.table === "Categoria" ? "Categoria atualizada. Todos os produtos vinculados já exibem o novo nome." : "Classificação salva."); await reload(); onClose(); } catch (error) { notify(friendlyAdminError(error, "salvar a classificação")); } finally { setSaving(false); } };
   const remove = async () => { if (!confirm("Excluir esta classificação?")) return; if (editing.table === "Categoria") { const [{ count: products }, { count: subdivisions }] = await Promise.all([supabase.from("Produto").select("id", { count: "exact", head: true }).eq("categoriaId", draft.id), supabase.from("Subcategoria").select("id", { count: "exact", head: true }).eq("categoriaId", draft.id)]); if ((products || 0) + (subdivisions || 0) > 0) { notify(`Esta categoria não pode ser excluída: existem ${products || 0} produto(s) e ${subdivisions || 0} subcategoria(s) que precisam ser realocados.`); return; } } if (editing.table === "Subcategoria") { const [{ count: products }, { count: subdivisions }] = await Promise.all([supabase.from("Produto").select("id", { count: "exact", head: true }).eq("subcategoriaId", draft.id), supabase.from("GrupoProduto").select("id", { count: "exact", head: true }).eq("subcategoriaId", draft.id)]); if ((products || 0) + (subdivisions || 0) > 0) { notify(`Esta subcategoria não pode ser excluída: existem ${products || 0} produto(s) e ${subdivisions || 0} grupo(s) que precisam ser realocados.`); return; } } if (editing.table === "GrupoProduto") { const { count } = await supabase.from("Produto").select("id", { count: "exact", head: true }).eq("grupoProdutoId", draft.id); if (count) { notify(`Este grupo não pode ser excluído: existem ${count} produto(s) que precisam ser realocados.`); return; } } const { error } = await supabase.from(editing.table).delete().eq("id", draft.id); if (error) notify(friendlyAdminError(error, "excluir a classificação")); else { notify("Classificação excluída."); await reload(); onClose(); } };
-  return <Modal title={editing.table === "GrupoProduto" ? "Grupo de produtos" : editing.table} onClose={onClose}><div className="mb-5 rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm font-semibold text-blue-950">{editing.table === "Subcategoria" ? "Escolha abaixo a categoria à qual esta subcategoria pertence." : editing.table === "GrupoProduto" ? "Escolha abaixo a subcategoria à qual este grupo pertence." : "A alteração do nome será refletida automaticamente em todos os produtos vinculados."}</div><div className="grid gap-4 lg:grid-cols-2">{editing.table === "Subcategoria" && <Field label="Categoria vinculada *"><select className="input" value={(draft as Subcategoria).categoriaId || ""} onChange={(event) => setDraft({ ...draft, categoriaId: event.target.value } as typeof draft)}><option value="">Selecione a categoria</option>{data.categorias.filter((item) => item.ativo !== false || item.id === (draft as Subcategoria).categoriaId).map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>}{editing.table === "GrupoProduto" && <Field label="Subcategoria vinculada *"><select className="input" value={(draft as GrupoProduto).subcategoriaId || ""} onChange={(event) => setDraft({ ...draft, subcategoriaId: event.target.value } as typeof draft)}><option value="">Selecione a subcategoria</option>{data.subcategorias.filter((item) => item.ativo !== false || item.id === (draft as GrupoProduto).subcategoriaId).map((item) => <option key={item.id} value={item.id}>{data.categorias.find((category) => category.id === item.categoriaId)?.nome || "Categoria"} → {item.nome}</option>)}</select></Field>}<Field label="Nome"><input className="input" value={draft.nome} onChange={(event) => setDraft({ ...draft, nome: event.target.value })}/></Field><Field label="Slug"><input className="input" value={draft.slug || ""} onChange={(event) => setDraft({ ...draft, slug: event.target.value })}/></Field><Field label="Ordem"><input className="input" type="number" value={draft.ordem || 0} onChange={(event) => setDraft({ ...draft, ordem: Number(event.target.value || 0) })}/></Field><Field label="Descrição"><textarea className="textarea" value={draft.descricao || ""} onChange={(event) => setDraft({ ...draft, descricao: event.target.value })}/></Field></div><div className="mt-4"><UploadBox label="Imagem/arte opcional" folder={`categorias/${editing.table.toLowerCase()}`} value={draft.imagem || ""} iconMode onUploaded={(url) => setDraft({ ...draft, imagem: url })}/></div><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(event) => setDraft({ ...draft, ativo: event.target.checked })}/> Ativo</label><ModalActions saving={saving} onSave={save} onDelete={!isNew && canDelete ? remove : undefined}/></Modal>;
+  return <Modal title={editing.table === "GrupoProduto" ? "Grupo de produtos" : editing.table} onClose={onClose}><div className="mb-5 rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm font-semibold text-blue-950">{editing.table === "Subcategoria" ? "Escolha abaixo a categoria à qual esta subcategoria pertence." : editing.table === "GrupoProduto" ? "Escolha abaixo a subcategoria à qual este grupo pertence." : "A alteração do nome será refletida automaticamente em todos os produtos vinculados."}</div><div className="grid gap-4 lg:grid-cols-2">{editing.table === "Subcategoria" && <Field label="Categoria vinculada *"><select className="input" value={(draft as Subcategoria).categoriaId || ""} onChange={(event) => setDraft({ ...draft, categoriaId: event.target.value } as typeof draft)}><option value="">Selecione a categoria</option>{data.categorias.filter((item) => item.ativo !== false || item.id === (draft as Subcategoria).categoriaId).map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>}{editing.table === "GrupoProduto" && <Field label="Subcategoria vinculada *"><select className="input" value={(draft as GrupoProduto).subcategoriaId || ""} onChange={(event) => setDraft({ ...draft, subcategoriaId: event.target.value } as typeof draft)}><option value="">Selecione a subcategoria</option>{data.subcategorias.filter((item) => item.ativo !== false || item.id === (draft as GrupoProduto).subcategoriaId).map((item) => <option key={item.id} value={item.id}>{data.categorias.find((category) => category.id === item.categoriaId)?.nome || "Categoria"} → {item.nome}</option>)}</select></Field>}<Field label="Nome"><input className="input" value={draft.nome} onChange={(event) => setDraft({ ...draft, nome: event.target.value })}/></Field><Field label="Slug automático"><input className="input bg-soft text-muted" value={automaticSlugPreview} readOnly /></Field><Field label="Ordem"><input className="input" type="number" value={draft.ordem || 0} onChange={(event) => setDraft({ ...draft, ordem: Number(event.target.value || 0) })}/></Field><Field label="Descrição"><textarea className="textarea" value={draft.descricao || ""} onChange={(event) => setDraft({ ...draft, descricao: event.target.value })}/></Field></div><div className="mt-4"><UploadBox label="Imagem/arte opcional" folder={`categorias/${editing.table.toLowerCase()}`} value={draft.imagem || ""} navigationCardMode onUploaded={(url) => setDraft({ ...draft, imagem: url })}/></div><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(event) => setDraft({ ...draft, ativo: event.target.checked })}/> Ativo</label><ModalActions saving={saving} onSave={save} onDelete={!isNew && canDelete ? remove : undefined}/></Modal>;
 }
 
 function CategoryBrandSection({ title, table, imageField, items, query, reload, notify, canDelete }: { title: string; table: "Categoria" | "Marca"; imageField: "imagem" | "logo"; items: Array<Categoria | Marca>; query: string; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean }) {
@@ -1878,19 +1889,20 @@ function CategoryBrandSection({ title, table, imageField, items, query, reload, 
           })}</tbody>
         </Table>
       </Panel>
-      {editing && <CategoryBrandModal table={table} imageField={imageField} item={editing} reload={reload} notify={notify} canDelete={canDelete} onClose={() => setEditing(null)} />}
+      {editing && <CategoryBrandModal table={table} imageField={imageField} item={editing} items={items} reload={reload} notify={notify} canDelete={canDelete} onClose={() => setEditing(null)} />}
     </>
   );
 }
 
-function CategoryBrandModal({ table, imageField, item, reload, notify, canDelete, onClose }: { table: "Categoria" | "Marca"; imageField: "imagem" | "logo"; item: Categoria | Marca; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean; onClose: () => void }) {
+function CategoryBrandModal({ table, imageField, item, items, reload, notify, canDelete, onClose }: { table: "Categoria" | "Marca"; imageField: "imagem" | "logo"; item: Categoria | Marca; items: Array<Categoria | Marca>; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean; onClose: () => void }) {
   const [draft, setDraft] = useState<Record<string, unknown>>(item as Record<string, unknown>);
   const [saving, setSaving] = useState(false);
-  const isNew = item.id.includes("_");
+  const isNew = !items.some((current) => current.id === item.id);
+  const automaticSlugPreview = isNew ? automaticSlug(String(draft.nome || ""), items, item.id) : String(draft.slug || slugify(String(draft.nome || "")));
   const save = async () => {
     setSaving(true);
     try {
-      const payload: Record<string, unknown> = { nome: draft.nome, slug: draft.slug || slugify(String(draft.nome)), ativo: draft.ativo !== false };
+      const payload: Record<string, unknown> = { nome: draft.nome, slug: automaticSlugPreview, ativo: draft.ativo !== false };
       if (table === "Categoria") {
         payload.descricao = draft.descricao || null;
         payload.ordem = Number(draft.ordem || 0);
@@ -1923,11 +1935,11 @@ function CategoryBrandModal({ table, imageField, item, reload, notify, canDelete
     <Modal title={`Editar ${table}`} onClose={onClose}>
       <div className="grid gap-4 lg:grid-cols-2">
         <Field label="Nome"><input className="input" value={String(draft.nome || "")} onChange={(event) => setDraft({ ...draft, nome: event.target.value })} /></Field>
-        <Field label="Slug"><input className="input" value={String(draft.slug || "")} onChange={(event) => setDraft({ ...draft, slug: event.target.value })} /></Field>
+        <Field label="Slug automático"><input className="input bg-soft text-muted" value={automaticSlugPreview} readOnly /></Field>
         {table === "Categoria" && <Field label="Ordem"><input className="input" type="number" value={String(draft.ordem ?? 0)} onChange={(event) => setDraft({ ...draft, ordem: Number(event.target.value || 0) })} /></Field>}
         {table === "Categoria" && <Field label="Descrição"><textarea className="textarea" value={String(draft.descricao || "")} onChange={(event) => setDraft({ ...draft, descricao: event.target.value })} /></Field>}
       </div>
-      <div className="mt-4"><UploadBox label={imageField === "imagem" ? "Imagem da categoria" : "Logo da marca"} folder={imageField === "imagem" ? "categorias" : "marcas"} value={String(draft[imageField] || "")} iconMode={imageField === "imagem"} onUploaded={(url) => setDraft({ ...draft, [imageField]: url })} /></div>
+      <div className="mt-4"><UploadBox label={imageField === "imagem" ? "Imagem da categoria" : "Logo da marca"} folder={imageField === "imagem" ? "categorias" : "marcas"} value={String(draft[imageField] || "")} navigationCardMode={imageField === "imagem"} onUploaded={(url) => setDraft({ ...draft, [imageField]: url })} /></div>
       <label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(event) => setDraft({ ...draft, ativo: event.target.checked })} /> Ativo</label>
       <ModalActions saving={saving} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} />
     </Modal>
@@ -1952,18 +1964,19 @@ function VehicleSection({ data, query, reload, notify, canDelete }: { data: AppD
       <Panel title={`${models.length} modelos`}>
         <Table><thead><tr><Th>Modelo</Th><Th>Montadora</Th><Th>Período</Th><Th>Slug</Th><Th>Status</Th><Th /></tr></thead><tbody>{models.map((model) => <tr key={model.id}><Td>{model.nome}</Td><Td>{data.montadoras.find((brand) => brand.id === model.montadoraId)?.nome || "-"}</Td><Td>{yearRangeLabel(model.anoInicial, model.anoFinal)}</Td><Td>{model.slug}</Td><Td><Toggle checked={model.ativo !== false} onChange={(checked) => updateRow("ModeloVeiculo", model.id, { ativo: checked, updatedAt: new Date().toISOString() }, reload, notify)} /></Td><Td><button className="icon-btn" onClick={() => setEditingModel(model)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table>
       </Panel>
-      {editingBrand && <VehicleBrandModal item={editingBrand} reload={reload} notify={notify} canDelete={canDelete} onClose={() => setEditingBrand(null)} />}
-      {editingModel && <VehicleModelModal item={editingModel} brands={data.montadoras} reload={reload} notify={notify} canDelete={canDelete} onClose={() => setEditingModel(null)} />}
+      {editingBrand && <VehicleBrandModal item={editingBrand} items={data.montadoras} reload={reload} notify={notify} canDelete={canDelete} onClose={() => setEditingBrand(null)} />}
+      {editingModel && <VehicleModelModal item={editingModel} brands={data.montadoras} models={data.modelosVeiculo} reload={reload} notify={notify} canDelete={canDelete} onClose={() => setEditingModel(null)} />}
     </div>
   );
 }
 
-function VehicleBrandModal({ item, reload, notify, canDelete, onClose }: { item: Montadora; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean; onClose: () => void }) {
+function VehicleBrandModal({ item, items, reload, notify, canDelete, onClose }: { item: Montadora; items: Montadora[]; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean; onClose: () => void }) {
   const [draft, setDraft] = useState(item);
   const [uploading, setUploading] = useState(false);
   const isNew = !item.createdAt;
+  const automaticSlugPreview = isNew ? automaticSlug(draft.nome, items, draft.id) : (draft.slug || slugify(draft.nome));
   const save = async () => {
-    const payload = { nome: draft.nome, slug: slugify(draft.nome), imagem: draft.imagem || null, ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
+    const payload = { nome: draft.nome, slug: automaticSlugPreview, imagem: draft.imagem || null, ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
     const { error } = isNew ? await supabase.from("Montadora").insert({ id: draft.id, ...payload }) : await supabase.from("Montadora").update(payload).eq("id", item.id);
     if (error) notify(friendlyAdminError(error, "salvar a montadora"));
     else {
@@ -1976,7 +1989,7 @@ function VehicleBrandModal({ item, reload, notify, canDelete, onClose }: { item:
     if (!file) return;
     setUploading(true);
     try {
-      const optimizedFile = await compressIconImage(file);
+      const optimizedFile = await compressImage(file, 1200, 800, 0.86);
       const url = await uploadCatalogMedia(optimizedFile, "montadoras");
       setDraft({ ...draft, imagem: url });
       notify("Imagem enviada.");
@@ -2000,8 +2013,8 @@ function VehicleBrandModal({ item, reload, notify, canDelete, onClose }: { item:
     <Modal title="Montadora" onClose={onClose}>
       <div className="grid gap-4 lg:grid-cols-[1fr_220px]">
         <div className="space-y-4">
-          <Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value, slug: slugify(e.target.value) })} /></Field>
-          <Field label="Slug automático"><input className="input bg-soft text-muted" value={slugify(draft.nome)} readOnly /></Field>
+          <Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value })} /></Field>
+          <Field label="Slug automático"><input className="input bg-soft text-muted" value={automaticSlugPreview} readOnly /></Field>
           <label className="inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativa</label>
         </div>
         <div className="rounded-2xl border border-line bg-soft p-4">
@@ -2014,7 +2027,7 @@ function VehicleBrandModal({ item, reload, notify, canDelete, onClose }: { item:
             Enviar imagem
             <input type="file" accept="image/*" className="hidden" onChange={(event) => void uploadImage(event.target.files?.[0])} />
           </label>
-          <p className="mt-2 text-xs text-muted">Recomendado: PNG/WebP quadrado, 256 x 256 px. O app carrega como ícone leve.</p>
+          <p className="mt-2 text-xs text-muted">Recomendado: 1200 × 800 px. A arte será otimizada para o novo card.</p>
         </div>
       </div>
       <ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} />
@@ -2022,13 +2035,15 @@ function VehicleBrandModal({ item, reload, notify, canDelete, onClose }: { item:
   );
 }
 
-function VehicleModelModal({ item, brands, reload, notify, canDelete, onClose }: { item: ModeloVeiculo; brands: Montadora[]; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean; onClose: () => void }) {
+function VehicleModelModal({ item, brands, models, reload, notify, canDelete, onClose }: { item: ModeloVeiculo; brands: Montadora[]; models: ModeloVeiculo[]; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean; onClose: () => void }) {
   const [draft, setDraft] = useState(item);
   const isNew = !item.createdAt;
+  const scopedModels = models.filter((model) => model.montadoraId === draft.montadoraId);
+  const automaticSlugPreview = isNew ? automaticSlug(draft.nome, scopedModels, draft.id) : (item.slug || slugify(item.nome));
   const save = async () => {
     const anoInicial = draft.anoInicial || null;
     const anoFinal = anoInicial ? (draft.anoFinal || anoInicial) : null;
-    const payload = { nome: draft.nome, slug: slugify(draft.nome), montadoraId: draft.montadoraId || brands[0]?.id || "", anoInicial, anoFinal, ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
+    const payload = { nome: draft.nome, slug: automaticSlugPreview, montadoraId: draft.montadoraId || brands[0]?.id || "", anoInicial, anoFinal, ativo: draft.ativo !== false, updatedAt: new Date().toISOString() };
     const { error } = isNew ? await supabase.from("ModeloVeiculo").insert({ id: draft.id, ...payload }) : await supabase.from("ModeloVeiculo").update(payload).eq("id", item.id);
     if (error) notify(friendlyAdminError(error, "salvar o modelo"));
     else {
@@ -2047,7 +2062,7 @@ function VehicleModelModal({ item, brands, reload, notify, canDelete, onClose }:
       onClose();
     }
   };
-  return <Modal title="Modelo de veículo" onClose={onClose}><div className="grid gap-4 lg:grid-cols-5"><Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value, slug: slugify(e.target.value) })} /></Field><Field label="Slug automático"><input className="input bg-soft text-muted" value={slugify(draft.nome)} readOnly /></Field><Field label="Montadora"><select className="input" value={draft.montadoraId} onChange={(e) => setDraft({ ...draft, montadoraId: e.target.value })}>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.nome}</option>)}</select></Field><Field label="Ano inicial (de) — opcional"><select className="input" value={draft.anoInicial ?? ""} onChange={(e) => { const anoInicial = e.target.value ? Number(e.target.value) : null; setDraft({ ...draft, anoInicial, anoFinal: anoInicial ? (draft.anoFinal && draft.anoFinal >= anoInicial ? draft.anoFinal : anoInicial) : null }); }}><option value="">Todos os anos</option>{VEHICLE_YEARS.map((year) => <option key={year} value={year}>{year}</option>)}</select></Field><Field label="Ano final (até) — opcional"><select className="input" disabled={!draft.anoInicial} value={draft.anoFinal ?? ""} onChange={(e) => setDraft({ ...draft, anoFinal: e.target.value ? Number(e.target.value) : draft.anoInicial ?? null })}><option value="">Mesmo ano</option>{VEHICLE_YEARS.filter((year) => year >= (draft.anoInicial ?? 1950)).map((year) => <option key={year} value={year}>{year}</option>)}</select></Field></div><p className="mt-3 text-xs font-semibold text-muted">Os anos são opcionais. Sem preencher, o modelo será considerado compatível com todos os anos. Quando usados, a lista vai de 1950 até o próximo ano e se atualiza automaticamente.</p><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativo</label><ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} /></Modal>;
+  return <Modal title="Modelo de veículo" onClose={onClose}><div className="grid gap-4 lg:grid-cols-5"><Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value })} /></Field><Field label="Slug automático"><input className="input bg-soft text-muted" value={automaticSlugPreview} readOnly /></Field><Field label="Montadora"><select className="input" value={draft.montadoraId} onChange={(e) => setDraft({ ...draft, montadoraId: e.target.value })}>{brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.nome}</option>)}</select></Field><Field label="Ano inicial (de) — opcional"><select className="input" value={draft.anoInicial ?? ""} onChange={(e) => { const anoInicial = e.target.value ? Number(e.target.value) : null; setDraft({ ...draft, anoInicial, anoFinal: anoInicial ? (draft.anoFinal && draft.anoFinal >= anoInicial ? draft.anoFinal : anoInicial) : null }); }}><option value="">Todos os anos</option>{VEHICLE_YEARS.map((year) => <option key={year} value={year}>{year}</option>)}</select></Field><Field label="Ano final (até) — opcional"><select className="input" disabled={!draft.anoInicial} value={draft.anoFinal ?? ""} onChange={(e) => setDraft({ ...draft, anoFinal: e.target.value ? Number(e.target.value) : draft.anoInicial ?? null })}><option value="">Mesmo ano</option>{VEHICLE_YEARS.filter((year) => year >= (draft.anoInicial ?? 1950)).map((year) => <option key={year} value={year}>{year}</option>)}</select></Field></div><p className="mt-3 text-xs font-semibold text-muted">Os anos são opcionais. Sem preencher, o modelo será considerado compatível com todos os anos. Quando usados, a lista vai de 1950 até o próximo ano e se atualiza automaticamente.</p><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativo</label><ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} /></Modal>;
 }
 
 function Applications({ items, query, reload, notify, canDelete }: { items: Aplicacao[]; query: string; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean }) {
@@ -2059,16 +2074,17 @@ function Applications({ items, query, reload, notify, canDelete }: { items: Apli
       <Panel title={`${filtered.length} aplicações`}>
         <Table><thead><tr><Th>Nome</Th><Th>Tipo</Th><Th>Status</Th><Th /></tr></thead><tbody>{filtered.map((item) => <tr key={item.id}><Td>{item.nome}</Td><Td>{item.tipo}</Td><Td><Toggle checked={item.ativo !== false} onChange={(checked) => updateRow("Aplicacao", item.id, { ativo: checked }, reload, notify)} /></Td><Td><button className="icon-btn" onClick={() => setEditing(item)}><Pencil size={16} /></button></Td></tr>)}</tbody></Table>
       </Panel>
-      {editing && <ApplicationModal item={editing} reload={reload} notify={notify} canDelete={canDelete} onClose={() => setEditing(null)} />}
+      {editing && <ApplicationModal item={editing} items={items} reload={reload} notify={notify} canDelete={canDelete} onClose={() => setEditing(null)} />}
     </>
   );
 }
 
-function ApplicationModal({ item, reload, notify, canDelete, onClose }: { item: Aplicacao; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean; onClose: () => void }) {
+function ApplicationModal({ item, items, reload, notify, canDelete, onClose }: { item: Aplicacao; items: Aplicacao[]; reload: () => Promise<void>; notify: (message: string) => void; canDelete: boolean; onClose: () => void }) {
   const [draft, setDraft] = useState(item);
-  const isNew = item.id.includes("_");
+  const isNew = !items.some((current) => current.id === item.id);
+  const automaticSlugPreview = isNew ? automaticSlug(draft.nome, items, draft.id) : (item.slug || slugify(item.nome));
   const save = async () => {
-    const payload = { nome: draft.nome, slug: draft.slug || slugify(draft.nome), tipo: draft.tipo || null, ativo: draft.ativo !== false };
+    const payload = { nome: draft.nome, slug: automaticSlugPreview, tipo: draft.tipo || null, ativo: draft.ativo !== false };
     const { error } = isNew ? await supabase.from("Aplicacao").insert({ id: draft.id, ...payload }) : await supabase.from("Aplicacao").update(payload).eq("id", item.id);
     if (error) notify(friendlyAdminError(error, "salvar a aplicação"));
     else {
@@ -2087,7 +2103,7 @@ function ApplicationModal({ item, reload, notify, canDelete, onClose }: { item: 
       onClose();
     }
   };
-  return <Modal title="Aplicação" onClose={onClose}><div className="grid gap-4 lg:grid-cols-3"><Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value })} /></Field><Field label="Slug"><input className="input" value={draft.slug || ""} onChange={(e) => setDraft({ ...draft, slug: e.target.value })} /></Field><Field label="Tipo"><input className="input" value={draft.tipo || ""} onChange={(e) => setDraft({ ...draft, tipo: e.target.value })} /></Field></div><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativa</label><ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} /></Modal>;
+  return <Modal title="Aplicação" onClose={onClose}><div className="grid gap-4 lg:grid-cols-3"><Field label="Nome"><input className="input" value={draft.nome} onChange={(e) => setDraft({ ...draft, nome: e.target.value })} /></Field><Field label="Slug automático"><input className="input bg-soft text-muted" value={automaticSlugPreview} readOnly /></Field><Field label="Tipo"><input className="input" value={draft.tipo || ""} onChange={(e) => setDraft({ ...draft, tipo: e.target.value })} /></Field></div><label className="mt-4 inline-flex items-center gap-2"><input type="checkbox" checked={draft.ativo !== false} onChange={(e) => setDraft({ ...draft, ativo: e.target.checked })} /> Ativa</label><ModalActions saving={false} onSave={save} onDelete={!isNew && canDelete ? remove : undefined} /></Modal>;
 }
 
 function Leads({ leads, products, query, reload, notify, canCompleteDeletion }: { leads: Lead[]; products: Produto[]; query: string; reload: () => Promise<void>; notify: (message: string) => void; canCompleteDeletion: boolean }) {
@@ -2741,7 +2757,7 @@ function newProduct(data: AppData): Produto {
   };
 }
 
-function UploadBox({ label, folder, value, iconMode = false, productMode = false, onUploaded, onProductUploaded }: { label: string; folder: string; value?: string; iconMode?: boolean; productMode?: boolean; onUploaded: (url: string) => void; onProductUploaded?: (variants: ProductImageVariants) => void }) {
+function UploadBox({ label, folder, value, iconMode = false, navigationCardMode = false, productMode = false, onUploaded, onProductUploaded }: { label: string; folder: string; value?: string; iconMode?: boolean; navigationCardMode?: boolean; productMode?: boolean; onUploaded: (url: string) => void; onProductUploaded?: (variants: ProductImageVariants) => void }) {
   const [uploading, setUploading] = useState(false);
   const upload = async (file: File) => {
     if (!isImageFile(file)) {
@@ -2755,14 +2771,14 @@ function UploadBox({ label, folder, value, iconMode = false, productMode = false
         onProductUploaded?.(variants);
         onUploaded(variants.detail);
       } else {
-        const uploadFile = iconMode ? await compressIconImage(file) : folder === "produtos/extras" ? await compressImage(file, 1600, 1200, 0.88) : file;
+        const uploadFile = navigationCardMode ? await compressImage(file, 1200, 800, 0.86) : iconMode ? await compressIconImage(file) : folder === "produtos/extras" ? await compressImage(file, 1600, 1200, 0.88) : file;
         onUploaded(await uploadCatalogMedia(uploadFile, folder));
       }
     } finally {
       setUploading(false);
     }
   };
-  return <div className="rounded-2xl border border-line bg-white p-4"><div className="mb-3 text-sm font-black">{label}</div>{value && !isPdfUrl(value) ? <img src={value} alt="" className="mb-3 h-36 w-full rounded-xl bg-soft object-contain" /> : <div className="mb-3 flex h-36 items-center justify-center rounded-xl bg-soft text-sm text-muted">{value ? "Arquivo atual nao e imagem" : "Sem imagem"}</div>}<label className="btn-white inline-flex cursor-pointer">{uploading ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />} {uploading ? "Otimizando..." : "Enviar imagem"}<input className="hidden" type="file" accept="image/*" onChange={(event) => event.target.files?.[0] && void upload(event.target.files[0])} /></label>{iconMode && <p className="mt-2 text-xs text-muted">A imagem sera comprimida para 256 x 256 px e usada como icone leve no app.</p>}{productMode && <p className="mt-2 text-xs text-muted">O original será preservado e o sistema criará automaticamente versões WebP para card e detalhe.</p>}</div>;
+  return <div className="rounded-2xl border border-line bg-white p-4"><div className="mb-3 text-sm font-black">{label}</div>{value && !isPdfUrl(value) ? <img src={value} alt="" className="mb-3 h-36 w-full rounded-xl bg-soft object-contain" /> : <div className="mb-3 flex h-36 items-center justify-center rounded-xl bg-soft text-sm text-muted">{value ? "Arquivo atual nao e imagem" : "Sem imagem"}</div>}<label className="btn-white inline-flex cursor-pointer">{uploading ? <Loader2 className="animate-spin" size={16} /> : <Upload size={16} />} {uploading ? "Otimizando..." : "Enviar imagem"}<input className="hidden" type="file" accept="image/*" onChange={(event) => event.target.files?.[0] && void upload(event.target.files[0])} /></label>{iconMode && <p className="mt-2 text-xs text-muted">A imagem sera comprimida para 256 x 256 px e usada como icone leve no app.</p>}{navigationCardMode && <p className="mt-2 text-xs text-muted">Recomendado: 1200 × 800 px. A arte será otimizada sem deformação para os cards de navegação.</p>}{productMode && <p className="mt-2 text-xs text-muted">O original será preservado e o sistema criará automaticamente versões WebP para card e detalhe.</p>}</div>;
 }
 
 function SettingsPanel({ title, children, onSave }: { title: string; children: React.ReactNode; onSave: () => void | Promise<void> }) {

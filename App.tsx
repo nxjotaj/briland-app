@@ -1172,14 +1172,14 @@ export default function App() {
               <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} appearance={appearance} quoteCount={quoteCount} notificationCount={unreadNotificationCount} showQuote={quoteListAllowed} onQuote={() => go("quote")} onNotifications={() => go("notifications")} />
               {error && <ErrorBanner message={error} onRetry={reload} />}
               {route === "home" && <HomeScreen go={openDirectCatalogRoute} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""} imageVersion={imageRefreshVersion} />}
-              {route === "categories" && <CategoriesScreen categories={data.categorias} imageVersion={imageRefreshVersion} onPick={(id) => {
+              {route === "categories" && <CategoriesScreen categories={data.categorias} products={activeProducts} imageVersion={imageRefreshVersion} onPick={(id) => {
                 clearCatalogFilters();
                 setCategoryFilter(id);
                 void trackTelemetry({ eventType: "category_filter", screen: "categories", route: "products", userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { categoryId: id } }, authToken);
                 go(data.subcategorias.some((item) => item.categoriaId === id && item.ativo !== false) ? "subcategories" : "products");
               }} />}
-              {route === "subcategories" && categoryFilter && <TaxonomyLevelScreen title={categoryById.get(categoryFilter)?.nome || "Categoria"} breadcrumb="Categorias" items={data.subcategorias.filter((item) => item.categoriaId === categoryFilter && item.ativo !== false)} directProducts={activeProducts.filter((item) => item.categoriaId === categoryFilter && !item.subcategoriaId)} imageVersion={imageRefreshVersion} onPick={(id) => { setSubcategoryFilter(id); setProductGroupFilter(null); void trackTelemetry({ eventType: "subcategory_view", screen: "subcategories", route: "subcategories", userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { categoryId: categoryFilter, subcategoryId: id } }, authToken); go(data.gruposProduto.some((item) => item.subcategoriaId === id && item.ativo !== false) ? "productGroups" : "products"); }} onProduct={openProduct} />}
-              {route === "productGroups" && subcategoryFilter && <TaxonomyLevelScreen title={subcategoryById.get(subcategoryFilter)?.nome || "Subcategoria"} breadcrumb={`${categoryById.get(categoryFilter || "")?.nome || "Categoria"} › Subcategorias`} items={data.gruposProduto.filter((item) => item.subcategoriaId === subcategoryFilter && item.ativo !== false)} directProducts={activeProducts.filter((item) => item.subcategoriaId === subcategoryFilter && !item.grupoProdutoId)} imageVersion={imageRefreshVersion} onPick={(id) => { setProductGroupFilter(id); void trackTelemetry({ eventType: "product_group_view", screen: "productGroups", route: "products", userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { categoryId: categoryFilter, subcategoryId: subcategoryFilter, productGroupId: id } }, authToken); go("products"); }} onProduct={openProduct} />}
+              {route === "subcategories" && categoryFilter && <TaxonomyLevelScreen title={categoryById.get(categoryFilter)?.nome || "Categoria"} breadcrumb="Categorias" items={data.subcategorias.filter((item) => item.categoriaId === categoryFilter && item.ativo !== false)} allProducts={activeProducts} directProducts={activeProducts.filter((item) => item.categoriaId === categoryFilter && !item.subcategoriaId)} imageVersion={imageRefreshVersion} onPick={(id) => { setSubcategoryFilter(id); setProductGroupFilter(null); void trackTelemetry({ eventType: "subcategory_view", screen: "subcategories", route: "subcategories", userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { categoryId: categoryFilter, subcategoryId: id } }, authToken); go(data.gruposProduto.some((item) => item.subcategoriaId === id && item.ativo !== false) ? "productGroups" : "products"); }} onProduct={openProduct} />}
+              {route === "productGroups" && subcategoryFilter && <TaxonomyLevelScreen title={subcategoryById.get(subcategoryFilter)?.nome || "Subcategoria"} breadcrumb={`${categoryById.get(categoryFilter || "")?.nome || "Categoria"} › Subcategorias`} items={data.gruposProduto.filter((item) => item.subcategoriaId === subcategoryFilter && item.ativo !== false)} allProducts={activeProducts} directProducts={activeProducts.filter((item) => item.subcategoriaId === subcategoryFilter && !item.grupoProdutoId)} imageVersion={imageRefreshVersion} onPick={(id) => { setProductGroupFilter(id); void trackTelemetry({ eventType: "product_group_view", screen: "productGroups", route: "products", userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { categoryId: categoryFilter, subcategoryId: subcategoryFilter, productGroupId: id } }, authToken); go("products"); }} onProduct={openProduct} />}
               {route === "vehicleBrands" && <VehicleBrandsScreen montadoras={data.montadoras} applications={data.produtoModelosVeiculo} imageVersion={imageRefreshVersion} onPick={(id) => { clearCatalogFilters(); setMontadoraFilter(id); trackVehicleFilter("montadora", id); go("products"); }} />}
               {retainedCatalogRoute && (
                 <View style={styles.catalogStage}>
@@ -1536,20 +1536,26 @@ function HomeScreen({ go, products, categories, montadoras, media, catalogPdfUrl
   );
 }
 
-function CategoriesScreen({ categories, imageVersion, onPick }: { categories: Categoria[]; imageVersion: number; onPick: (id: string) => void }) {
+function ProgressiveNavigationCard({ title, description, count, image, imageVersion, icon, onPress }: { title: string; description?: string | null; count: number; image?: string | null; imageVersion: number; icon: keyof typeof Ionicons.glyphMap; onPress: () => void }) {
+  return (
+    <Pressable style={({ pressed }) => [styles.progressiveCard, pressed && styles.progressiveCardPressed]} onPress={onPress}>
+      {image ? <Image source={{ uri: liveImageUrl(image, imageSize.categoryIcon, imageVersion) }} style={styles.progressiveCardImage} resizeMode="cover" /> : <LinearGradient colors={[colors.navy, "#0A3262"]} style={styles.progressiveCardImageFallback}><Ionicons name={icon} size={54} color={colors.yellow} /></LinearGradient>}
+      <LinearGradient colors={["transparent", "rgba(2,17,38,.36)", "rgba(2,17,38,.96)"]} locations={[0, .36, 1]} style={styles.progressiveCardGradient} />
+      <BlurView intensity={24} tint="dark" style={styles.progressiveCardBlur} />
+      <View style={styles.progressiveCardContent}><Text style={styles.progressiveCardTitle} numberOfLines={2}>{title}</Text>{description ? <Text style={styles.progressiveCardDescription} numberOfLines={2}>{description}</Text> : null}<Text style={styles.progressiveCardCount}>{count} {count === 1 ? "produto" : "produtos"}</Text></View>
+      <View style={styles.progressiveCardArrow}><Ionicons name="arrow-forward" size={18} color={colors.navy} /></View>
+    </Pressable>
+  );
+}
+
+function CategoriesScreen({ categories, products, imageVersion, onPick }: { categories: Categoria[]; products: Produto[]; imageVersion: number; onPick: (id: string) => void }) {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <PageTitle title="Categorias" subtitle="Explore todas as nossas linhas de produtos." />
       {categories.length === 0 ? <EmptyState text="Nenhuma categoria disponível." /> : (
         <View style={styles.grid}>
           {categories.map((item) => (
-            <Pressable style={styles.categoryCard} key={item.id} onPress={() => onPick(item.id)}>
-              <View style={styles.categoryIcon}>
-                {item.imagem ? <Image source={{ uri: liveImageUrl(item.imagem, imageSize.categoryIcon, imageVersion) }} style={styles.categoryImage} resizeMode="contain" /> : <Ionicons name="grid-outline" size={34} color={colors.navy} />}
-              </View>
-              <Text style={styles.categoryName} numberOfLines={3}>{item.nome}</Text>
-              <Ionicons name="arrow-forward-outline" size={24} color={colors.navy} style={styles.categoryArrow} />
-            </Pressable>
+            <ProgressiveNavigationCard key={item.id} title={item.nome} description={item.descricao} count={products.filter((product) => product.categoriaId === item.id).length} image={item.imagem} imageVersion={imageVersion} icon="grid-outline" onPress={() => onPick(item.id)} />
           ))}
         </View>
       )}
@@ -1557,17 +1563,13 @@ function CategoriesScreen({ categories, imageVersion, onPick }: { categories: Ca
   );
 }
 
-function TaxonomyLevelScreen({ title, breadcrumb, items, directProducts, imageVersion, onPick, onProduct }: { title: string; breadcrumb: string; items: Array<Subcategoria | GrupoProduto>; directProducts: Produto[]; imageVersion: number; onPick: (id: string) => void; onProduct: (product: Produto) => void }) {
+function TaxonomyLevelScreen({ title, breadcrumb, items, allProducts, directProducts, imageVersion, onPick, onProduct }: { title: string; breadcrumb: string; items: Array<Subcategoria | GrupoProduto>; allProducts: Produto[]; directProducts: Produto[]; imageVersion: number; onPick: (id: string) => void; onProduct: (product: Produto) => void }) {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
       <Text style={styles.mutedSmall}>{breadcrumb}</Text>
       <PageTitle title={title} subtitle="Escolha uma opção ou consulte os produtos disponíveis neste nível." />
       {items.length > 0 && <View style={styles.grid}>{items.map((item) => (
-        <Pressable style={styles.categoryCard} key={item.id} onPress={() => onPick(item.id)}>
-          <View style={styles.categoryIcon}>{item.imagem ? <Image source={{ uri: liveImageUrl(item.imagem, imageSize.categoryIcon, imageVersion) }} style={styles.categoryImage} resizeMode="contain" /> : <Ionicons name="albums-outline" size={34} color={colors.navy} />}</View>
-          <Text style={styles.categoryName} numberOfLines={3}>{item.nome}</Text>
-          <Ionicons name="arrow-forward-outline" size={24} color={colors.navy} style={styles.categoryArrow} />
-        </Pressable>
+        <ProgressiveNavigationCard key={item.id} title={item.nome} description={item.descricao} count={allProducts.filter((product) => "categoriaId" in item ? product.subcategoriaId === item.id : product.grupoProdutoId === item.id).length} image={item.imagem} imageVersion={imageVersion} icon="albums-outline" onPress={() => onPick(item.id)} />
       ))}</View>}
       {directProducts.length > 0 && <><Text style={styles.sectionTitle}>Produtos desta seleção</Text><View style={styles.grid}>{directProducts.map((product) => (
         <Pressable style={styles.categoryCard} key={product.id} onPress={() => onProduct(product)}>
@@ -1599,14 +1601,7 @@ function VehicleBrandsScreen({ montadoras, applications, imageVersion, onPick }:
           {montadoras.map((item) => {
             const count = productCountByBrand.get(item.id)?.size ?? 0;
             return (
-              <Pressable style={styles.vehicleBrandCard} key={item.id} onPress={() => onPick(item.id)}>
-                <View style={styles.vehicleBrandIcon}>
-                  {item.imagem ? <Image source={{ uri: liveImageUrl(item.imagem, imageSize.categoryIcon, imageVersion) }} style={styles.vehicleBrandImage} resizeMode="contain" /> : <Ionicons name="car-sport-outline" size={34} color={colors.navy} />}
-                </View>
-                <Text style={styles.vehicleBrandName} numberOfLines={2}>{item.nome}</Text>
-                <Text style={styles.mutedSmall}>{count} produtos vinculados</Text>
-                <Ionicons name="arrow-forward" size={24} color={colors.yellow} style={styles.vehicleBrandArrow} />
-              </Pressable>
+              <ProgressiveNavigationCard key={item.id} title={item.nome} count={count} image={item.imagem} imageVersion={imageVersion} icon="car-sport-outline" onPress={() => onPick(item.id)} />
             );
           })}
         </View>
@@ -3212,6 +3207,17 @@ const styles = StyleSheet.create({
   vehicleBrandImage: { width: 44, height: 44 },
   vehicleBrandName: { color: colors.navy, fontSize: 19, lineHeight: 23, fontWeight: "900", marginBottom: 6 },
   vehicleBrandArrow: { position: "absolute", right: 14, bottom: 14 },
+  progressiveCard: { width: "47.4%", height: 226, borderRadius: 18, overflow: "hidden", backgroundColor: colors.navy, ...shadow },
+  progressiveCardPressed: { transform: [{ scale: 0.975 }], opacity: 0.94 },
+  progressiveCardImage: { width: "100%", height: "100%" },
+  progressiveCardImageFallback: { width: "100%", height: "100%", alignItems: "center", justifyContent: "center", paddingBottom: 54 },
+  progressiveCardGradient: { position: "absolute", left: 0, right: 0, top: 42, bottom: 0 },
+  progressiveCardBlur: { position: "absolute", left: 0, right: 0, bottom: 0, height: 94, opacity: 0.72 },
+  progressiveCardContent: { position: "absolute", left: 14, right: 42, bottom: 13 },
+  progressiveCardTitle: { color: colors.white, fontSize: 18, lineHeight: 21, fontWeight: "900", textShadowColor: "rgba(0,0,0,.4)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
+  progressiveCardDescription: { color: "#E3EAF2", fontSize: 11, lineHeight: 14, marginTop: 3 },
+  progressiveCardCount: { color: colors.yellow, fontSize: 11, fontWeight: "900", marginTop: 5 },
+  progressiveCardArrow: { position: "absolute", right: 12, bottom: 14, width: 27, height: 27, borderRadius: 14, backgroundColor: colors.yellow, alignItems: "center", justifyContent: "center" },
   searchRow: { flexDirection: "row", gap: 12 },
   searchSuggestions: { marginTop: 10, borderRadius: 15, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.white, overflow: "hidden" },
   suggestionLabel: { paddingHorizontal: 14, paddingTop: 12, paddingBottom: 7, color: colors.muted, fontSize: 11, fontWeight: "900", textTransform: "uppercase" },
