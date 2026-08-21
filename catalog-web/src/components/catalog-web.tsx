@@ -15,6 +15,7 @@ let catalogMemoryCache:{data:CatalogData;profile:UserProfile|null}|null=null;
 const officialLogo="/briland-logo.png";
 
 function pathFor(segments:string[]) { return `/${segments.map(encodeURIComponent).join("/")}`; }
+function safeProductRoute(value:string) { return value.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,""); }
 function permission(settings:CatalogData["settings"],key:string) { return settings.permissions?.[key] === true; }
 function productPermission(product:Product,settings:CatalogData["settings"],key:string) {
   if(product.permissoesProduto&&key in product.permissoesProduto)return product.permissoesProduto[key]===true;
@@ -27,7 +28,7 @@ export default function CatalogWeb({initialSegments}:{initialSegments:string[]})
   const [query,setQuery]=useState(""); const [category,setCategory]=useState(""); const [subcategory,setSubcategory]=useState(""); const [productGroup,setProductGroup]=useState(""); const [brand,setBrand]=useState(""); const [automaker,setAutomaker]=useState(""); const [model,setModel]=useState(""); const [year,setYear]=useState<number|null>(null); const [sort,setSort]=useState("order");
   const [filtersOpen,setFiltersOpen]=useState(false); const [menuOpen,setMenuOpen]=useState(false); const [favorites,setFavorites]=useState<string[]>([]); const [quote,setQuote]=useState<Record<string,number>>({}); const [galleryIndex,setGalleryIndex]=useState(0); const [recentProducts,setRecentProducts]=useState<string[]>([]); const [popularProducts,setPopularProducts]=useState<string[]>([]);
   const realtimeRefreshTimer=useRef<ReturnType<typeof setTimeout>|null>(null); const frontendVersion=useRef("");
-  const route=initialSegments[0]||"home"; const detailRef=route==="produto"?initialSegments[1]:"";
+  const route=initialSegments[0]||"home"; const detailRef=route==="produto"?initialSegments.slice(1).join("/"):"";
   const role=(profile?.role||"VISITANTE") as Role;
 
   const refresh=async(silent=false)=>{if(!silent&&!catalogMemoryCache)setLoading(true);try{const next=await loadCatalog(role);setData(next);catalogMemoryCache={data:next,profile};setError("");}catch(err){setError(err instanceof Error?err.message:"Não foi possível carregar o catálogo.");}finally{setLoading(false);}};
@@ -44,7 +45,7 @@ export default function CatalogWeb({initialSegments}:{initialSegments:string[]})
   const canRequestQuote=permission(data.settings,"botaoOrcamento");
   const canWhatsApp=permission(data.settings,"whatsappButton")&&permission(data.settings,"botaoWhatsApp");
   const categoryMap=useMemo(()=>new Map(data.categories.map(item=>[item.id,item])),[data.categories]); const subcategoryMap=useMemo(()=>new Map(data.subcategories.map(item=>[item.id,item])),[data.subcategories]); const productGroupMap=useMemo(()=>new Map(data.productGroups.map(item=>[item.id,item])),[data.productGroups]); const brandMap=useMemo(()=>new Map(data.brands.map(item=>[item.id,item])),[data.brands]);
-  const product=route==="produto"?data.products.find(item=>[item.slug,item.id,item.codigoInterno].some(value=>String(value||"").toLowerCase()===decodeURIComponent(detailRef||"").toLowerCase())):undefined;
+  const product=route==="produto"?data.products.find(item=>[item.slug,item.id,item.codigoInterno].some(value=>safeProductRoute(String(value||""))===safeProductRoute(decodeURIComponent(detailRef||"")))):undefined;
   const recommendations=useMemo(()=>{if(!product)return[];const ids=[...recentProducts,...popularProducts];const related=data.products.filter(item=>item.id!==product.id&&item.ativo!==false&&(item.grupoProdutoId&&item.grupoProdutoId===product.grupoProdutoId||item.subcategoriaId&&item.subcategoriaId===product.subcategoriaId||item.categoriaId===product.categoriaId||item.marcaId===product.marcaId)).sort((a,b)=>Number(Boolean(b.grupoProdutoId&&b.grupoProdutoId===product.grupoProdutoId))-Number(Boolean(a.grupoProdutoId&&a.grupoProdutoId===product.grupoProdutoId))||Number(Boolean(b.subcategoriaId&&b.subcategoriaId===product.subcategoriaId))-Number(Boolean(a.subcategoriaId&&a.subcategoriaId===product.subcategoriaId))||Number(b.destaque)-Number(a.destaque)||(a.ordem||0)-(b.ordem||0));return [...ids.map(id=>data.products.find(item=>item.id===id)),...related,...data.products.filter(item=>item.destaque&&item.ativo!==false)].filter((item,index,list):item is Product=>Boolean(item)&&item!.id!==product.id&&item!.ativo!==false&&list.findIndex(candidate=>candidate?.id===item!.id)===index).slice(0,8);},[data.products,product,recentProducts,popularProducts]);
   const rememberProduct=(id:string)=>{const next=[id,...recentProducts.filter(value=>value!==id)].slice(0,20);setRecentProducts(next);localStorage.setItem("briland-web-recent-products",JSON.stringify(next));};
   const routeCategory=route==="categoria"?data.categories.find(item=>[item.slug,item.id].includes(decodeURIComponent(initialSegments[1]||"")))?.id:"";

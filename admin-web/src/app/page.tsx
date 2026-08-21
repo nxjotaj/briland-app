@@ -1627,7 +1627,7 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
     try {
       const payload = {
         nome: draft.nome,
-        slug: isNew ? automaticSlug(`${draft.codigoInterno}-${draft.nome}`, data.produtos, draft.id) : (draft.slug || slugify(`${draft.codigoInterno}-${draft.nome}`)),
+        slug: isNew ? automaticSlug(`${draft.codigoInterno}-${draft.nome}`, data.produtos, draft.id) : slugify(draft.slug || `${draft.codigoInterno}-${draft.nome}`),
         codigoInterno: draft.codigoInterno || "",
         categoriaId: draft.categoriaId || data.categorias[0]?.id || "",
         subcategoriaId: draft.subcategoriaId || null,
@@ -1732,7 +1732,7 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
       <div className="grid gap-4 lg:grid-cols-3">
         <Field label="Código interno"><input className="input" value={draft.codigoInterno || ""} onChange={(event) => set("codigoInterno", event.target.value)} /></Field>
         <Field label="Nome"><input className="input" value={draft.nome || ""} onChange={(event) => set("nome", event.target.value)} /></Field>
-        <Field label="Slug automático"><input className="input bg-soft text-muted" value={isNew ? automaticSlug(`${draft.codigoInterno}-${draft.nome}`, data.produtos, draft.id) : (draft.slug || slugify(`${draft.codigoInterno}-${draft.nome}`))} readOnly /></Field>
+        <Field label="Slug automático"><input className="input bg-soft text-muted" value={isNew ? automaticSlug(`${draft.codigoInterno}-${draft.nome}`, data.produtos, draft.id) : slugify(draft.slug || `${draft.codigoInterno}-${draft.nome}`)} readOnly /></Field>
         <Field label="Categoria"><select className="input" value={draft.categoriaId || ""} onChange={(event) => { const next = event.target.value; if ((draft.subcategoriaId || draft.grupoProdutoId) && !confirm("Ao trocar a categoria, a subcategoria e o grupo incompatíveis serão limpos. Deseja continuar?")) return; setDraft((current) => ({ ...current, categoriaId: next, subcategoriaId: null, grupoProdutoId: null })); }}>{data.categorias.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>
         <Field label="Subcategoria (opcional)"><select className="input" value={draft.subcategoriaId || ""} onChange={(event) => { const next = event.target.value || null; if (draft.grupoProdutoId && !confirm("Ao trocar a subcategoria, o grupo incompatível será limpo. Deseja continuar?")) return; setDraft((current) => ({ ...current, subcategoriaId: next, grupoProdutoId: null })); }}><option value="">Sem subcategoria</option>{availableSubcategories.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>
         <Field label="Grupo de produtos (opcional)"><select className="input" value={draft.grupoProdutoId || ""} disabled={!draft.subcategoriaId} onChange={(event) => set("grupoProdutoId", event.target.value || null)}><option value="">Sem grupo de produtos</option>{availableGroups.map((item) => <option key={item.id} value={item.id}>{item.nome}</option>)}</select></Field>
