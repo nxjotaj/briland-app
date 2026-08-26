@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ExcelJS from "exceljs";
 import brilandLogo from "../../../assets/briland-logo.png";
 import { BulkProductImages } from "@/components/bulk-product-images";
+import { StockMaintenance } from "@/components/stock-maintenance";
 import { buildCatalogPdf, type CatalogImageWarning } from "@/lib/catalog-pdf";
 import {
   BarChart3,
@@ -39,7 +40,8 @@ import {
   Trash2,
   TrendingUp,
   Upload,
-  Users
+  Users,
+  Warehouse
 } from "lucide-react";
 import { createRegistrationCredential, supabase, uploadCatalogBlob, uploadCatalogMedia } from "@/lib/supabase";
 import { createId, csvEscape, downloadBlob, formatLocalDate, formatLocalDateTime, money, numberOrNull, slugify } from "@/lib/helpers";
@@ -86,6 +88,7 @@ type Tab =
   | "Dashboard"
   | "Análises"
   | "Produtos"
+  | "Manutenção de saldo"
   | "Categorias"
   | "Marcas"
   | "Montadoras"
@@ -107,6 +110,7 @@ const tabs: { id: Tab; icon: React.ElementType }[] = [
   { id: "Dashboard", icon: BarChart3 },
   { id: "Análises", icon: TrendingUp },
   { id: "Produtos", icon: Boxes },
+  { id: "Manutenção de saldo", icon: Warehouse },
   { id: "Categorias", icon: Tags },
   { id: "Marcas", icon: ShieldCheck },
   { id: "Montadoras", icon: Building2 },
@@ -171,7 +175,7 @@ const isCollaborator = (role?: Role | null) => role === "ADMIN_COLABORADOR";
 const canUseAdminWeb = (role?: Role | null) => isMaster(role) || isCollaborator(role);
 const visibleTabsFor = (role?: Role | null) => {
   if (isMaster(role)) return tabs;
-  return tabs.filter(({ id }) => ["Dashboard", "Produtos", "Categorias", "Marcas", "Montadoras", "Aplicações", "Leads"].includes(id));
+  return tabs.filter(({ id }) => ["Dashboard", "Produtos", "Manutenção de saldo", "Categorias", "Marcas", "Montadoras", "Aplicações", "Leads"].includes(id));
 };
 
 function leadDepartment(lead: Lead) {
@@ -721,7 +725,7 @@ export default function Page() {
   const reloadSection = async () => {
     const master = isMaster(adminUser?.role);
     try {
-      if (active === "Produtos") {
+      if (active === "Produtos" || active === "Manutenção de saldo") {
         const [produtos, produtoAplicacoes, produtoModelosVeiculo] = await Promise.all([
           supabase.from("Produto").select("*").order("ordem", { ascending: true }).order("nome").returns<Produto[]>(),
           supabase.from("ProdutoAplicacao").select("*").returns<ProdutoAplicacao[]>(),
@@ -990,6 +994,7 @@ export default function Page() {
           {activeTab === "Dashboard" && <Dashboard data={data} setActive={setActive} role={adminUser.role} />}
           {activeTab === "Análises" && <AnalyticsSection data={data} />}
           {activeTab === "Produtos" && <Products data={data} query={query} reload={reloadSection} notify={notify} adminUser={adminUser} />}
+          {activeTab === "Manutenção de saldo" && <StockMaintenance products={data.produtos} categories={data.categorias} notify={notify} reloadProducts={reloadSection} />}
           {activeTab === "Categorias" && <CategoryHierarchySection data={data} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Marcas" && <CategoryBrandSection title="Marcas" table="Marca" imageField="logo" items={data.marcas} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Montadoras" && <VehicleSection data={data} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
