@@ -168,7 +168,7 @@ async function loadCapacityHealth() {
   };
 }
 
-const userSelectFields = "id,name,company,email,role,status,notes,phone,cnpj,address,city,state,registrationNotes,approvedAt,approvedBy,lastLoginAt,createdAt,updatedAt,authUserId";
+const userSelectFields = "id,name,company,email,role,status,notes,phone,cnpj,address,city,state,registrationNotes,approvedAt,approvedBy,representanteId,lastLoginAt,createdAt,updatedAt,authUserId";
 
 const isMaster = (role?: Role | null) => role === "ADMIN_MASTER" || role === "ADMIN";
 const isCollaborator = (role?: Role | null) => role === "ADMIN_COLABORADOR";
@@ -319,6 +319,8 @@ function friendlyAdminError(error: unknown, action = "concluir esta operação")
   const raw = error instanceof Error ? error.message : parts.join(" — ") || (typeof error === "string" ? error : "");
   if (/invalid login credentials/i.test(raw)) return "E-mail ou senha incorretos. Confira os dados e tente novamente.";
   if (/email not confirmed/i.test(raw)) return "Seu e-mail ainda não foi confirmado. Abra a mensagem de confirmação recebida antes de entrar.";
+  if (/representante atende .*cliente|Realoque ou remova esses vínculos/i.test(raw)) return raw;
+  if (/Somente usuários com perfil CLIENTE|não possui o perfil REPRESENTANTE|representante selecionado está inativo|representante de si mesmo/i.test(raw)) return raw;
   if (/user not found|sem vínculo|inactive|inativo/i.test(raw)) return "Este usuário não está disponível para acesso. Procure o administrador responsável.";
   if (/ProdutoModeloVeiculo_modeloId_fkey|ModeloVeiculo.*foreign key|foreign key.*ModeloVeiculo/i.test(raw)) return "Este modelo não pode ser excluído porque está vinculado a um ou mais produtos. Remova o modelo das aplicações desses produtos ou deixe o modelo inativo.";
   if (/ProdutoModeloVeiculo_montadoraId_fkey|ModeloVeiculo_montadoraId_fkey|Montadora.*foreign key|foreign key.*Montadora/i.test(raw)) return "Esta montadora não pode ser excluída porque possui modelos ou produtos vinculados. Remova primeiro esses vínculos ou deixe a montadora inativa.";
@@ -2146,23 +2148,241 @@ function UsersSection({ users, presence, telemetry, products, query, reload, not
   const [creating, setCreating] = useState(false);
   const [activityUser, setActivityUser] = useState<Usuario | null>(null);
   const [registrationFilter, setRegistrationFilter] = useState<"all" | "48h">("all");
+  const [roleFilter, setRoleFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [relationshipFilter, setRelationshipFilter] = useState("all");
+  const [representativeFilter, setRepresentativeFilter] = useState("all");
+  const [cityFilter, setCityFilter] = useState("all");
+  const [stateFilter, setStateFilter] = useState("all");
+  const [presenceFilter, setPresenceFilter] = useState("all");
+  const [createdFrom, setCreatedFrom] = useState("");
+  const [createdTo, setCreatedTo] = useState("");
   const newUserThreshold = Date.now() - 48 * 60 * 60 * 1000;
+  const representatives = users.filter((user) => user.role === "REPRESENTANTE").sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  const clients = users.filter((user) => user.role === "CLIENTE");
+  const representativeById = new Map(representatives.map((representative) => [representative.id, representative]));
   const newUsers48h = users.filter((user) => Date.parse(user.createdAt || "") >= newUserThreshold);
-  const filtered = users.filter((user) => [user.name, user.email, user.company, user.phone, user.cnpj, user.role, user.status].join(" ").toLowerCase().includes(query.toLowerCase()) && (registrationFilter === "all" || Date.parse(user.createdAt || "") >= newUserThreshold));
   const pending = users.filter((user) => user.status === "PENDING").length;
   const activeAdmins = users.filter((user) => user.status === "ACTIVE" && (isMaster(user.role) || isCollaborator(user.role))).length;
   const latestByUser = new Map<string, PresenceSession>();
-  presence.forEach((session) => { if (session.userId && !latestByUser.has(session.userId)) latestByUser.set(session.userId, session); });
+  presence.forEach((session) => {
+    if (session.userId && !latestByUser.has(session.userId)) latestByUser.set(session.userId, session);
+  });
   const eventsByUser = new Map<string, TelemetryEvent[]>();
-  telemetry.forEach((event) => { if (event.userId) eventsByUser.set(event.userId, [...(eventsByUser.get(event.userId) || []), event]); });
+  telemetry.forEach((event) => {
+    if (event.userId) eventsByUser.set(event.userId, [...(eventsByUser.get(event.userId) || []), event]);
+  });
   const isOnline = (session?: PresenceSession) => Boolean(session && !session.endedAt && Date.now() - Date.parse(session.lastSeenAt) <= 120000);
-  return <><div className="mb-5 flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2"><button className={registrationFilter === "all" ? "btn-primary" : "btn-white"} onClick={() => setRegistrationFilter("all")}>Todos os usuários</button><button className={registrationFilter === "48h" ? "btn-yellow" : "btn-white"} onClick={() => setRegistrationFilter("48h")}><Clock3 size={16} /> Novos nas últimas 48h ({newUsers48h.length})</button></div><button className="btn-yellow" onClick={() => setCreating(true)}><Plus size={17} /> Cadastrar usuário</button></div><div className="mb-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5"><Summary label="Novos nas últimas 48h" value={newUsers48h.length} /><Summary label="Online agora" value={Array.from(latestByUser.values()).filter(isOnline).length} /><Summary label="Pendentes" value={pending} /><Summary label="Usuários ativos" value={users.filter((user) => user.status === "ACTIVE").length} /><Summary label="Admins ativos" value={activeAdmins} /></div><Panel title={registrationFilter === "48h" ? `${filtered.length} novos usuários nas últimas 48 horas` : `${filtered.length} usuários`}><Table><thead><tr><Th>Nome</Th><Th>E-mail</Th><Th>Empresa</Th><Th>Cadastro</Th><Th>Presença</Th><Th>Último login/acesso</Th><Th>Última origem</Th><Th>Perfil</Th><Th>Status</Th><Th /></tr></thead><tbody>{filtered.map((user) => { const session = latestByUser.get(user.id); const userEvents = eventsByUser.get(user.id) || []; const lastEvent = userEvents[0]; const lastAccess = [user.lastLoginAt, session?.lastSeenAt, lastEvent?.createdAt].filter(Boolean).sort().at(-1); const origin = session ? `${session.city || "Não informado"}/${session.state || "-"} • ${session.deviceType || "-"} • ${session.networkType || "-"}` : lastEvent ? `${lastEvent.city || "Não informado"}/${lastEvent.state || "-"} • ${String(lastEvent.metadata?.source || "Catálogo")}` : "-"; return <tr key={user.id}><Td>{user.name}</Td><Td>{user.email}</Td><Td>{user.company}</Td><Td><div>{formatLocalDateTime(user.createdAt)}</div>{Date.parse(user.createdAt || "") >= newUserThreshold && <span className="status-pill bg-amber-100 text-amber-800">Novo</span>}</Td><Td>{isOnline(session) ? <span className="status-pill bg-emerald-100 text-emerald-800">Online agora</span> : "Offline"}</Td><Td>{formatLocalDateTime(lastAccess)}</Td><Td>{origin}</Td><Td>{user.role === "NAO_CLIENTE" ? "Não cliente" : user.role}</Td><Td>{user.status === "ACTIVE" ? "Ativo" : user.status === "PENDING" ? "Pendente" : "Inativo"}</Td><Td><div className="flex gap-2"><button className="icon-btn" title="Ver histórico de atividade" onClick={() => setActivityUser(user)}><Eye size={16} /></button><button className="icon-btn" title="Editar usuário e alterar perfil" onClick={() => setEditing(user)}><Pencil size={16} /></button></div></Td></tr>; })}</tbody></Table>{!filtered.length && <div className="py-10 text-center text-sm text-muted">Nenhum usuário encontrado neste período.</div>}</Panel>{creating && <UserModal reload={reload} notify={notify} adminUser={adminUser} onClose={() => setCreating(false)} />}{editing && <UserModal user={editing} reload={reload} notify={notify} adminUser={adminUser} onClose={() => setEditing(null)} />}{activityUser && <UserActivityModal user={activityUser} events={eventsByUser.get(activityUser.id) || []} sessions={presence.filter((item) => item.userId === activityUser.id)} products={products} onClose={() => setActivityUser(null)} />}</>;
+  const cities = Array.from(new Set(users.map((user) => user.city?.trim()).filter((value): value is string => Boolean(value)))).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const states = Array.from(new Set(users.map((user) => user.state?.trim().toUpperCase()).filter((value): value is string => Boolean(value)))).sort();
+  const filtered = users.filter((user) => {
+    const registeredAt = Date.parse(user.createdAt || "");
+    const online = isOnline(latestByUser.get(user.id));
+    const relationshipMatches = relationshipFilter === "all" || (relationshipFilter === "linked" ? user.role === "CLIENTE" && Boolean(user.representanteId) : user.role === "CLIENTE" && !user.representanteId);
+    return [user.name, user.email, user.company, user.phone, user.cnpj].join(" ").toLowerCase().includes(query.toLowerCase()) && (registrationFilter === "all" || registeredAt >= newUserThreshold) && (roleFilter === "all" || user.role === roleFilter) && (statusFilter === "all" || user.status === statusFilter) && relationshipMatches && (representativeFilter === "all" || user.representanteId === representativeFilter) && (cityFilter === "all" || user.city === cityFilter) && (stateFilter === "all" || user.state?.toUpperCase() === stateFilter) && (presenceFilter === "all" || (presenceFilter === "online" ? online : !online)) && (!createdFrom || registeredAt >= new Date(`${createdFrom}T00:00:00`).getTime()) && (!createdTo || registeredAt <= new Date(`${createdTo}T23:59:59.999`).getTime());
+  });
+  const filtersActive = registrationFilter !== "all" || [roleFilter, statusFilter, relationshipFilter, representativeFilter, cityFilter, stateFilter, presenceFilter].some((value) => value !== "all") || Boolean(createdFrom || createdTo);
+  const clearFilters = () => {
+    setRegistrationFilter("all");
+    setRoleFilter("all");
+    setStatusFilter("all");
+    setRelationshipFilter("all");
+    setRepresentativeFilter("all");
+    setCityFilter("all");
+    setStateFilter("all");
+    setPresenceFilter("all");
+    setCreatedFrom("");
+    setCreatedTo("");
+  };
+  return (
+    <>
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex gap-2">
+          <button className={registrationFilter === "all" ? "btn-primary" : "btn-white"} onClick={() => setRegistrationFilter("all")}>
+            Todos os usuários
+          </button>
+          <button className={registrationFilter === "48h" ? "btn-yellow" : "btn-white"} onClick={() => setRegistrationFilter("48h")}>
+            <Clock3 size={16} /> Novos nas últimas 48h ({newUsers48h.length})
+          </button>
+        </div>
+        <button className="btn-yellow" onClick={() => setCreating(true)}>
+          <Plus size={17} /> Cadastrar usuário
+        </button>
+      </div>
+      <Panel title="Filtros de usuários">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <Field label="Perfil">
+            <select className="input" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
+              <option value="all">Todos os perfis</option>
+              <option value="NAO_CLIENTE">Não cliente</option>
+              <option value="CLIENTE">Cliente</option>
+              <option value="REPRESENTANTE">Representante</option>
+              <option value="ADMIN_COLABORADOR">Admin colaborador</option>
+              <option value="ADMIN_MASTER">Admin master</option>
+            </select>
+          </Field>
+          <Field label="Status">
+            <select className="input" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="all">Todos</option>
+              <option value="ACTIVE">Ativo</option>
+              <option value="PENDING">Pendente</option>
+              <option value="INACTIVE">Inativo</option>
+            </select>
+          </Field>
+          <Field label="Vínculo comercial">
+            <select className="input" value={relationshipFilter} onChange={(event) => setRelationshipFilter(event.target.value)}>
+              <option value="all">Todos</option>
+              <option value="linked">Clientes com representante</option>
+              <option value="unlinked">Clientes sem representante</option>
+            </select>
+          </Field>
+          <Field label="Representante">
+            <select className="input" value={representativeFilter} onChange={(event) => setRepresentativeFilter(event.target.value)}>
+              <option value="all">Todos os representantes</option>
+              {representatives.map((representative) => (
+                <option key={representative.id} value={representative.id}>
+                  {representative.name}
+                  {representative.status !== "ACTIVE" ? " — inativo" : ""}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Cidade">
+            <select className="input" value={cityFilter} onChange={(event) => setCityFilter(event.target.value)}>
+              <option value="all">Todas as cidades</option>
+              {cities.map((city) => (
+                <option key={city}>{city}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="UF">
+            <select className="input" value={stateFilter} onChange={(event) => setStateFilter(event.target.value)}>
+              <option value="all">Todas as UFs</option>
+              {states.map((state) => (
+                <option key={state}>{state}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Presença">
+            <select className="input" value={presenceFilter} onChange={(event) => setPresenceFilter(event.target.value)}>
+              <option value="all">Online e offline</option>
+              <option value="online">Online agora</option>
+              <option value="offline">Offline</option>
+            </select>
+          </Field>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Cadastro de">
+              <input className="input" type="date" value={createdFrom} max={createdTo || undefined} onChange={(event) => setCreatedFrom(event.target.value)} />
+            </Field>
+            <Field label="Cadastro até">
+              <input className="input" type="date" value={createdTo} min={createdFrom || undefined} onChange={(event) => setCreatedTo(event.target.value)} />
+            </Field>
+          </div>
+        </div>
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <span className="text-sm font-bold text-muted">
+            {filtered.length} de {users.length} usuário(s) encontrado(s).
+          </span>
+          <button className="btn-white" disabled={!filtersActive} onClick={clearFilters}>
+            Limpar filtros
+          </button>
+        </div>
+      </Panel>
+      <div className="my-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <Summary label="Clientes com representante" value={clients.filter((user) => user.representanteId).length} />
+        <Summary label="Clientes sem representante" value={clients.filter((user) => !user.representanteId).length} />
+        <Summary label="Representantes ativos" value={representatives.filter((user) => user.status === "ACTIVE").length} />
+        <Summary label="Representantes com clientes" value={new Set(clients.map((user) => user.representanteId).filter(Boolean)).size} />
+      </div>
+      <div className="mb-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <Summary label="Novos nas últimas 48h" value={newUsers48h.length} />
+        <Summary label="Online agora" value={Array.from(latestByUser.values()).filter(isOnline).length} />
+        <Summary label="Pendentes" value={pending} />
+        <Summary label="Usuários ativos" value={users.filter((user) => user.status === "ACTIVE").length} />
+        <Summary label="Admins ativos" value={activeAdmins} />
+      </div>
+      <Panel title={registrationFilter === "48h" ? `${filtered.length} novos usuários nas últimas 48 horas` : `${filtered.length} usuários`}>
+        <Table>
+          <thead>
+            <tr>
+              <Th>Nome</Th>
+              <Th>E-mail</Th>
+              <Th>Empresa</Th>
+              <Th>Representante</Th>
+              <Th>Cadastro</Th>
+              <Th>Presença</Th>
+              <Th>Último login/acesso</Th>
+              <Th>Última origem</Th>
+              <Th>Perfil</Th>
+              <Th>Status</Th>
+              <Th />
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((user) => {
+              const session = latestByUser.get(user.id);
+              const userEvents = eventsByUser.get(user.id) || [];
+              const lastEvent = userEvents[0];
+              const lastAccess = [user.lastLoginAt, session?.lastSeenAt, lastEvent?.createdAt].filter(Boolean).sort().at(-1);
+              const origin = session ? `${session.city || "Não informado"}/${session.state || "-"} • ${session.deviceType || "-"} • ${session.networkType || "-"}` : lastEvent ? `${lastEvent.city || "Não informado"}/${lastEvent.state || "-"} • ${String(lastEvent.metadata?.source || "Catálogo")}` : "-";
+              const representative = user.representanteId ? representativeById.get(user.representanteId) : null;
+              return (
+                <tr key={user.id}>
+                  <Td>{user.name}</Td>
+                  <Td>{user.email}</Td>
+                  <Td>{user.company}</Td>
+                  <Td>
+                    {user.role === "CLIENTE" ? (
+                      representative ? (
+                        <div>
+                          <span className="font-black">{representative.name}</span>
+                          {representative.status !== "ACTIVE" && <div className="text-xs font-bold text-red-700">Representante inativo</div>}
+                        </div>
+                      ) : (
+                        <span className="font-bold text-amber-700">Sem vínculo</span>
+                      )
+                    ) : (
+                      "-"
+                    )}
+                  </Td>
+                  <Td>
+                    <div>{formatLocalDateTime(user.createdAt)}</div>
+                    {Date.parse(user.createdAt || "") >= newUserThreshold && <span className="status-pill bg-amber-100 text-amber-800">Novo</span>}
+                  </Td>
+                  <Td>{isOnline(session) ? <span className="status-pill bg-emerald-100 text-emerald-800">Online agora</span> : "Offline"}</Td>
+                  <Td>{formatLocalDateTime(lastAccess)}</Td>
+                  <Td>{origin}</Td>
+                  <Td>{user.role === "NAO_CLIENTE" ? "Não cliente" : user.role}</Td>
+                  <Td>{user.status === "ACTIVE" ? "Ativo" : user.status === "PENDING" ? "Pendente" : "Inativo"}</Td>
+                  <Td>
+                    <div className="flex gap-2">
+                      <button className="icon-btn" title="Ver histórico de atividade" onClick={() => setActivityUser(user)}>
+                        <Eye size={16} />
+                      </button>
+                      <button className="icon-btn" title="Editar usuário e alterar perfil" onClick={() => setEditing(user)}>
+                        <Pencil size={16} />
+                      </button>
+                    </div>
+                  </Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </Table>
+        {!filtered.length && <div className="py-10 text-center text-sm text-muted">Nenhum usuário encontrado neste período.</div>}
+      </Panel>
+      {creating && <UserModal users={users} reload={reload} notify={notify} adminUser={adminUser} onClose={() => setCreating(false)} />}
+      {editing && <UserModal user={editing} users={users} reload={reload} notify={notify} adminUser={adminUser} onClose={() => setEditing(null)} />}
+      {activityUser && <UserActivityModal user={activityUser} events={eventsByUser.get(activityUser.id) || []} sessions={presence.filter((item) => item.userId === activityUser.id)} products={products} onClose={() => setActivityUser(null)} />}
+    </>
+  );
 }
 
 function UserActivityModal({ user, events, sessions, products, onClose }: { user: Usuario; events: TelemetryEvent[]; sessions: PresenceSession[]; products: Produto[]; onClose: () => void }) {
   const isoDate = (date: Date) => date.toISOString().slice(0, 10);
   const today = isoDate(new Date());
-  const initialStart = new Date(); initialStart.setDate(initialStart.getDate() - 29);
+  const initialStart = new Date();
+  initialStart.setDate(initialStart.getDate() - 29);
   const [period, setPeriod] = useState("30");
   const [startDate, setStartDate] = useState(isoDate(initialStart));
   const [endDate, setEndDate] = useState(today);
@@ -2172,49 +2392,223 @@ function UserActivityModal({ user, events, sessions, products, onClose }: { user
   const setPeriodDates = (value: string) => {
     setPeriod(value);
     if (value === "custom") return;
-    const end = new Date(); const start = new Date(); start.setDate(start.getDate() - (Number(value) - 1));
-    setStartDate(isoDate(start)); setEndDate(isoDate(end));
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - (Number(value) - 1));
+    setStartDate(isoDate(start));
+    setEndDate(isoDate(end));
   };
   const actionGroups: Record<string, string[]> = {
-    pages: ["screen_view"], products: ["product_view", "gallery_interaction", "product_share", "favorite_toggle"],
+    pages: ["screen_view"],
+    products: ["product_view", "gallery_interaction", "product_share", "favorite_toggle"],
     searches: ["search_results", "search_zero_results", "vehicle_filter", "category_filter"],
     commercial: ["whatsapp_open", "quote_start", "quote_sent"],
-    downloads: ["download_started", "download_completed", "download_failed", "download_opened", "download_shared"]
+    downloads: ["download_started", "download_completed", "download_failed", "download_opened", "download_shared"],
   };
   const startAt = new Date(`${startDate}T00:00:00`).getTime();
   const endAt = new Date(`${endDate}T23:59:59.999`).getTime();
-  const periodEvents = events.filter((event) => { const at = Date.parse(event.createdAt || ""); return at >= startAt && at <= endAt; });
+  const periodEvents = events.filter((event) => {
+    const at = Date.parse(event.createdAt || "");
+    return at >= startAt && at <= endAt;
+  });
   const filteredEvents = periodEvents.filter((event) => actionType === "all" || actionGroups[actionType]?.includes(event.eventType));
-  const filteredSessions = sessions.filter((session) => { const at = Date.parse(session.startedAt); return at >= startAt && at <= endAt; });
+  const filteredSessions = sessions.filter((session) => {
+    const at = Date.parse(session.startedAt);
+    return at >= startAt && at <= endAt;
+  });
   const pageViews = filteredEvents.filter((event) => event.eventType === "screen_view");
   const productViews = filteredEvents.filter((event) => event.eventType === "product_view");
-  const rank = (values: string[]) => Object.entries(values.reduce<Record<string, number>>((acc, value) => { if (value) acc[value] = (acc[value] || 0) + 1; return acc; }, {})).sort((a, b) => b[1] - a[1]);
+  const rank = (values: string[]) =>
+    Object.entries(
+      values.reduce<Record<string, number>>((acc, value) => {
+        if (value) acc[value] = (acc[value] || 0) + 1;
+        return acc;
+      }, {}),
+    ).sort((a, b) => b[1] - a[1]);
   const topPages = rank(pageViews.map((event) => readablePage(event.route || event.screen, products))).slice(0, 8);
   const topProducts = rank(productViews.map((event) => readableAction(event, products).replace(/^Visualizou /, ""))).slice(0, 8);
   const latestSession = sessions[0];
   const totalPages = Math.max(1, Math.ceil(filteredEvents.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const visibleEvents = filteredEvents.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const changeFilter = (callback: () => void) => { callback(); setPage(1); };
-  return <Modal title={`Atividade de ${user.name}`} onClose={onClose}>
-    <div className="mb-5 rounded-2xl bg-soft p-4"><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-      <Field label="Período"><select className="input" value={period} onChange={(event) => changeFilter(() => setPeriodDates(event.target.value))}><option value="1">Hoje</option><option value="7">Últimos 7 dias</option><option value="15">Últimos 15 dias</option><option value="30">Últimos 30 dias</option><option value="custom">Personalizado</option></select></Field>
-      <Field label="Data inicial"><input className="input" type="date" required max={endDate} value={startDate} onChange={(event) => { if (event.target.value) changeFilter(() => { setPeriod("custom"); setStartDate(event.target.value); }); }} /></Field>
-      <Field label="Data final"><input className="input" type="date" required min={startDate} max={today} value={endDate} onChange={(event) => { if (event.target.value) changeFilter(() => { setPeriod("custom"); setEndDate(event.target.value); }); }} /></Field>
-      <Field label="Tipo de ação"><select className="input" value={actionType} onChange={(event) => changeFilter(() => setActionType(event.target.value))}><option value="all">Todas as ações</option><option value="pages">Páginas abertas</option><option value="products">Produtos e imagens</option><option value="searches">Buscas e filtros</option><option value="commercial">WhatsApp e orçamentos</option><option value="downloads">Downloads</option></select></Field>
-    </div><div className="mt-3 text-xs font-bold text-muted">Exibindo {filteredEvents.length} ação(ões) entre {new Date(`${startDate}T12:00:00`).toLocaleDateString("pt-BR")} e {new Date(`${endDate}T12:00:00`).toLocaleDateString("pt-BR")}.</div></div>
-    <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Summary label="Ações no período" value={filteredEvents.length} /><Summary label="Páginas abertas" value={pageViews.length} /><Summary label="Produtos vistos" value={productViews.length} /><Summary label="Sessões registradas" value={filteredSessions.length} /></div>
-    <div className="mb-5 grid gap-5 lg:grid-cols-2"><Panel title="Páginas mais acessadas"><div className="space-y-2">{topPages.map(([name, count]) => <div key={name} className="flex justify-between rounded-xl bg-soft px-3 py-2 text-sm"><span>{name}</span><b>{count}</b></div>)}{!topPages.length && <div className="text-sm text-muted">Nenhuma página registrada neste período.</div>}</div></Panel><Panel title="Produtos mais visualizados"><div className="space-y-2">{topProducts.map(([name, count]) => <div key={name} className="flex justify-between rounded-xl bg-soft px-3 py-2 text-sm"><span>{name}</span><b>{count}</b></div>)}{!topProducts.length && <div className="text-sm text-muted">Nenhum produto registrado neste período.</div>}</div></Panel></div>
-    <Panel title="Histórico detalhado"><Table><thead><tr><Th>Data e hora</Th><Th>Ação</Th><Th>Página</Th><Th>Local / origem</Th></tr></thead><tbody>{visibleEvents.map((event) => <tr key={event.id}><Td>{formatLocalDateTime(event.createdAt)}</Td><Td><span className="font-black">{readableAction(event, products)}</span></Td><Td>{readablePage(event.route || event.screen, products)}</Td><Td>{[event.city || latestSession?.city || "Não informado", event.state || latestSession?.state].filter(Boolean).join("/")} • {String(event.metadata?.source || latestSession?.source || "Catálogo")}</Td></tr>)}</tbody></Table>{!filteredEvents.length && <div className="py-8 text-center text-sm text-muted">Nenhuma ação encontrada para os filtros selecionados.</div>}{filteredEvents.length > pageSize && <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-4"><span className="text-sm font-bold text-muted">Página {currentPage} de {totalPages}</span><div className="flex gap-2"><button className="btn-white" disabled={currentPage === 1} onClick={() => setPage(Math.max(1, currentPage - 1))}>Anterior</button><button className="btn-white" disabled={currentPage === totalPages} onClick={() => setPage(Math.min(totalPages, currentPage + 1))}>Próxima</button></div></div>}</Panel>
-    <p className="mt-4 text-xs font-semibold text-muted">Histórico disponível conforme a retenção analítica de 30 dias. A localização é aproximada.</p>
-  </Modal>;
+  const changeFilter = (callback: () => void) => {
+    callback();
+    setPage(1);
+  };
+  return (
+    <Modal title={`Atividade de ${user.name}`} onClose={onClose}>
+      <div className="mb-5 rounded-2xl bg-soft p-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <Field label="Período">
+            <select className="input" value={period} onChange={(event) => changeFilter(() => setPeriodDates(event.target.value))}>
+              <option value="1">Hoje</option>
+              <option value="7">Últimos 7 dias</option>
+              <option value="15">Últimos 15 dias</option>
+              <option value="30">Últimos 30 dias</option>
+              <option value="custom">Personalizado</option>
+            </select>
+          </Field>
+          <Field label="Data inicial">
+            <input
+              className="input"
+              type="date"
+              required
+              max={endDate}
+              value={startDate}
+              onChange={(event) => {
+                if (event.target.value)
+                  changeFilter(() => {
+                    setPeriod("custom");
+                    setStartDate(event.target.value);
+                  });
+              }}
+            />
+          </Field>
+          <Field label="Data final">
+            <input
+              className="input"
+              type="date"
+              required
+              min={startDate}
+              max={today}
+              value={endDate}
+              onChange={(event) => {
+                if (event.target.value)
+                  changeFilter(() => {
+                    setPeriod("custom");
+                    setEndDate(event.target.value);
+                  });
+              }}
+            />
+          </Field>
+          <Field label="Tipo de ação">
+            <select className="input" value={actionType} onChange={(event) => changeFilter(() => setActionType(event.target.value))}>
+              <option value="all">Todas as ações</option>
+              <option value="pages">Páginas abertas</option>
+              <option value="products">Produtos e imagens</option>
+              <option value="searches">Buscas e filtros</option>
+              <option value="commercial">WhatsApp e orçamentos</option>
+              <option value="downloads">Downloads</option>
+            </select>
+          </Field>
+        </div>
+        <div className="mt-3 text-xs font-bold text-muted">
+          Exibindo {filteredEvents.length} ação(ões) entre {new Date(`${startDate}T12:00:00`).toLocaleDateString("pt-BR")} e {new Date(`${endDate}T12:00:00`).toLocaleDateString("pt-BR")}.
+        </div>
+      </div>
+      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Summary label="Ações no período" value={filteredEvents.length} />
+        <Summary label="Páginas abertas" value={pageViews.length} />
+        <Summary label="Produtos vistos" value={productViews.length} />
+        <Summary label="Sessões registradas" value={filteredSessions.length} />
+      </div>
+      <div className="mb-5 grid gap-5 lg:grid-cols-2">
+        <Panel title="Páginas mais acessadas">
+          <div className="space-y-2">
+            {topPages.map(([name, count]) => (
+              <div key={name} className="flex justify-between rounded-xl bg-soft px-3 py-2 text-sm">
+                <span>{name}</span>
+                <b>{count}</b>
+              </div>
+            ))}
+            {!topPages.length && <div className="text-sm text-muted">Nenhuma página registrada neste período.</div>}
+          </div>
+        </Panel>
+        <Panel title="Produtos mais visualizados">
+          <div className="space-y-2">
+            {topProducts.map(([name, count]) => (
+              <div key={name} className="flex justify-between rounded-xl bg-soft px-3 py-2 text-sm">
+                <span>{name}</span>
+                <b>{count}</b>
+              </div>
+            ))}
+            {!topProducts.length && <div className="text-sm text-muted">Nenhum produto registrado neste período.</div>}
+          </div>
+        </Panel>
+      </div>
+      <Panel title="Histórico detalhado">
+        <Table>
+          <thead>
+            <tr>
+              <Th>Data e hora</Th>
+              <Th>Ação</Th>
+              <Th>Página</Th>
+              <Th>Local / origem</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleEvents.map((event) => (
+              <tr key={event.id}>
+                <Td>{formatLocalDateTime(event.createdAt)}</Td>
+                <Td>
+                  <span className="font-black">{readableAction(event, products)}</span>
+                </Td>
+                <Td>{readablePage(event.route || event.screen, products)}</Td>
+                <Td>
+                  {[event.city || latestSession?.city || "Não informado", event.state || latestSession?.state].filter(Boolean).join("/")} • {String(event.metadata?.source || latestSession?.source || "Catálogo")}
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+        {!filteredEvents.length && <div className="py-8 text-center text-sm text-muted">Nenhuma ação encontrada para os filtros selecionados.</div>}
+        {filteredEvents.length > pageSize && (
+          <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-4">
+            <span className="text-sm font-bold text-muted">
+              Página {currentPage} de {totalPages}
+            </span>
+            <div className="flex gap-2">
+              <button className="btn-white" disabled={currentPage === 1} onClick={() => setPage(Math.max(1, currentPage - 1))}>
+                Anterior
+              </button>
+              <button className="btn-white" disabled={currentPage === totalPages} onClick={() => setPage(Math.min(totalPages, currentPage + 1))}>
+                Próxima
+              </button>
+            </div>
+          </div>
+        )}
+      </Panel>
+      <p className="mt-4 text-xs font-semibold text-muted">Histórico disponível conforme a retenção analítica de 30 dias. A localização é aproximada.</p>
+    </Modal>
+  );
 }
 
-function UserModal({ user, reload, notify, adminUser, onClose }: { user?: Usuario; reload: () => Promise<void>; notify: (message: string) => void; adminUser: Usuario; onClose: () => void }) {
-  const [draft, setDraft] = useState<Usuario>(user || { id: createId("user"), name: "", company: "", email: "", role: "CLIENTE", status: "PENDING", phone: "", cnpj: "", address: "", city: "", state: "", registrationNotes: "", notes: "" });
+function UserModal({ user, users, reload, notify, adminUser, onClose }: { user?: Usuario; users: Usuario[]; reload: () => Promise<void>; notify: (message: string) => void; adminUser: Usuario; onClose: () => void }) {
+  const [draft, setDraft] = useState<Usuario>(
+    user || {
+      id: createId("user"),
+      name: "",
+      company: "",
+      email: "",
+      role: "CLIENTE",
+      status: "PENDING",
+      phone: "",
+      cnpj: "",
+      address: "",
+      city: "",
+      state: "",
+      registrationNotes: "",
+      notes: "",
+      representanteId: null,
+    },
+  );
   const [saving, setSaving] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const linkedClients = user?.role === "REPRESENTANTE" ? users.filter((candidate) => candidate.role === "CLIENTE" && candidate.representanteId === user.id) : [];
+  const representatives = users.filter((candidate) => candidate.role === "REPRESENTANTE" && (candidate.status === "ACTIVE" || candidate.id === draft.representanteId)).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  const changeRole = (role: Role) => {
+    if (draft.role === "CLIENTE" && role !== "CLIENTE" && draft.representanteId) {
+      if (!confirm("Ao mudar este perfil, o vínculo com o representante será removido. Deseja continuar?")) return;
+      setDraft({ ...draft, role, representanteId: null });
+      return;
+    }
+    setDraft({
+      ...draft,
+      role,
+      representanteId: role === "CLIENTE" ? draft.representanteId : null,
+    });
+  };
   const save = async () => {
     if (!draft.name.trim() || !draft.email.trim()) {
       notify("Preencha nome e e-mail.");
@@ -2224,17 +2618,49 @@ function UserModal({ user, reload, notify, adminUser, onClose }: { user?: Usuari
       notify(password.length < 8 ? "A senha inicial precisa ter no mínimo 8 caracteres." : "A senha e a confirmação não coincidem.");
       return;
     }
+    if (user?.role === "REPRESENTANTE" && draft.role !== "REPRESENTANTE" && linkedClients.length) {
+      notify(`Este representante atende ${linkedClients.length} cliente(s). Realoque ou remova esses vínculos antes de alterar o perfil.`);
+      return;
+    }
     setSaving(true);
-    const approvedAt = draft.status === "ACTIVE" ? (draft.approvedAt || new Date().toISOString()) : draft.approvedAt || null;
-    const approvedBy = draft.status === "ACTIVE" ? (draft.approvedBy || adminUser.id) : draft.approvedBy || null;
-    const values = { name: draft.name.trim(), company: draft.company?.trim() || null, email: draft.email.trim().toLowerCase(), role: draft.role, status: draft.status, phone: draft.phone?.trim() || null, cnpj: draft.cnpj?.trim() || null, address: draft.address?.trim() || null, city: draft.city?.trim() || null, state: draft.state?.trim() || null, registrationNotes: draft.registrationNotes?.trim() || null, notes: draft.notes?.trim() || null, approvedAt, approvedBy, updatedAt: new Date().toISOString() };
+    const approvedAt = draft.status === "ACTIVE" ? draft.approvedAt || new Date().toISOString() : draft.approvedAt || null;
+    const approvedBy = draft.status === "ACTIVE" ? draft.approvedBy || adminUser.id : draft.approvedBy || null;
+    const values = {
+      name: draft.name.trim(),
+      company: draft.company?.trim() || null,
+      email: draft.email.trim().toLowerCase(),
+      role: draft.role,
+      status: draft.status,
+      phone: draft.phone?.trim() || null,
+      cnpj: draft.cnpj?.trim() || null,
+      address: draft.address?.trim() || null,
+      city: draft.city?.trim() || null,
+      state: draft.state?.trim() || null,
+      registrationNotes: draft.registrationNotes?.trim() || null,
+      notes: draft.notes?.trim() || null,
+      representanteId: draft.role === "CLIENTE" ? draft.representanteId || null : null,
+      approvedAt,
+      approvedBy,
+      updatedAt: new Date().toISOString(),
+    };
     try {
       if (!user) {
-        await createRegistrationCredential({ name: values.name, company: values.company, phone: values.phone, email: values.email, cnpj: values.cnpj, registrationNotes: values.registrationNotes, password });
+        await createRegistrationCredential({
+          name: values.name,
+          company: values.company,
+          phone: values.phone,
+          email: values.email,
+          cnpj: values.cnpj,
+          registrationNotes: values.registrationNotes,
+          password,
+        });
       }
-      const result = await supabase.from("User").update(values).eq(user ? "id" : "email", user ? user.id : values.email);
+      const result = await supabase
+        .from("User")
+        .update(values)
+        .eq(user ? "id" : "email", user ? user.id : values.email);
       if (result.error) throw result.error;
-      notify(user ? "Usuário atualizado." : "Usuário cadastrado. Enviamos a confirmação para o e-mail informado.");
+      notify(user ? "Usuário e vínculo comercial atualizados." : "Usuário cadastrado. Enviamos a confirmação para o e-mail informado.");
       await reload();
       onClose();
     } catch (error) {
@@ -2252,7 +2678,9 @@ function UserModal({ user, reload, notify, adminUser, onClose }: { user?: Usuari
     }
     if (!confirm(`Excluir definitivamente o cadastro de ${user.name}? A credencial de login também será removida.`)) return;
     setSaving(true);
-    const { error } = await supabase.rpc("admin_delete_user", { p_user_id: user.id });
+    const { error } = await supabase.rpc("admin_delete_user", {
+      p_user_id: user.id,
+    });
     setSaving(false);
     if (error) notify(friendlyAdminError(error, "salvar o usuário"));
     else {
@@ -2261,7 +2689,119 @@ function UserModal({ user, reload, notify, adminUser, onClose }: { user?: Usuari
       onClose();
     }
   };
-  return <Modal title={user ? "Editar usuário" : "Cadastrar usuário"} onClose={onClose}><div className="grid gap-4 lg:grid-cols-2"><Field label="Nome"><input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field><Field label="Empresa"><input className="input" value={draft.company || ""} onChange={(e) => setDraft({ ...draft, company: e.target.value })} /></Field><Field label="E-mail"><input className="input" type="email" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} /></Field><Field label="Telefone / WhatsApp"><input className="input" value={draft.phone || ""} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} /></Field><Field label="CNPJ"><input className="input" value={draft.cnpj || ""} onChange={(e) => setDraft({ ...draft, cnpj: e.target.value })} /></Field><Field label="Endereço"><input className="input" value={draft.address || ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} /></Field><Field label="Cidade"><input className="input" value={draft.city || ""} onChange={(e) => setDraft({ ...draft, city: e.target.value })} /></Field><Field label="UF"><input className="input" value={draft.state || ""} onChange={(e) => setDraft({ ...draft, state: e.target.value })} /></Field>{!user && <><Field label="Senha inicial"><input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field><Field label="Confirmar senha"><input className="input" type="password" value={passwordConfirmation} onChange={(e) => setPasswordConfirmation(e.target.value)} /></Field></>}<Field label="Role"><select className="input" value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value as Role })}><option>ADMIN_MASTER</option><option>ADMIN_COLABORADOR</option><option>NAO_CLIENTE</option><option>CLIENTE</option><option>REPRESENTANTE</option></select></Field><Field label="Status"><select className="input" value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value as Usuario["status"] })}><option>PENDING</option><option>ACTIVE</option><option>INACTIVE</option></select></Field><Field label="Observações do cadastro"><textarea className="textarea" value={draft.registrationNotes || ""} onChange={(e) => setDraft({ ...draft, registrationNotes: e.target.value })} /></Field><Field label="Notas internas"><textarea className="textarea" value={draft.notes || ""} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} /></Field></div><ModalActions saving={saving} onSave={save} onDelete={user ? remove : undefined} /></Modal>;
+  return (
+    <Modal title={user ? "Editar usuário" : "Cadastrar usuário"} onClose={onClose}>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Field label="Nome">
+          <input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+        </Field>
+        <Field label="Empresa">
+          <input className="input" value={draft.company || ""} onChange={(e) => setDraft({ ...draft, company: e.target.value })} />
+        </Field>
+        <Field label="E-mail">
+          <input className="input" type="email" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} />
+        </Field>
+        <Field label="Telefone / WhatsApp">
+          <input className="input" value={draft.phone || ""} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} />
+        </Field>
+        <Field label="CNPJ">
+          <input className="input" value={draft.cnpj || ""} onChange={(e) => setDraft({ ...draft, cnpj: e.target.value })} />
+        </Field>
+        <Field label="Endereço">
+          <input className="input" value={draft.address || ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} />
+        </Field>
+        <Field label="Cidade">
+          <input className="input" value={draft.city || ""} onChange={(e) => setDraft({ ...draft, city: e.target.value })} />
+        </Field>
+        <Field label="UF">
+          <input className="input" value={draft.state || ""} onChange={(e) => setDraft({ ...draft, state: e.target.value })} />
+        </Field>
+        {!user && (
+          <>
+            <Field label="Senha inicial">
+              <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            </Field>
+            <Field label="Confirmar senha">
+              <input className="input" type="password" value={passwordConfirmation} onChange={(e) => setPasswordConfirmation(e.target.value)} />
+            </Field>
+          </>
+        )}
+        <Field label="Perfil">
+          <select className="input" value={draft.role} onChange={(e) => changeRole(e.target.value as Role)}>
+            <option>ADMIN_MASTER</option>
+            <option>ADMIN_COLABORADOR</option>
+            <option>NAO_CLIENTE</option>
+            <option>CLIENTE</option>
+            <option>REPRESENTANTE</option>
+          </select>
+        </Field>
+        <Field label="Status">
+          <select
+            className="input"
+            value={draft.status}
+            onChange={(e) =>
+              setDraft({
+                ...draft,
+                status: e.target.value as Usuario["status"],
+              })
+            }
+          >
+            <option>PENDING</option>
+            <option>ACTIVE</option>
+            <option>INACTIVE</option>
+          </select>
+        </Field>
+        {draft.role === "CLIENTE" && (
+          <Field label="Representante responsável — opcional">
+            <select
+              className="input"
+              value={draft.representanteId || ""}
+              onChange={(event) =>
+                setDraft({
+                  ...draft,
+                  representanteId: event.target.value || null,
+                })
+              }
+            >
+              <option value="">Sem representante vinculado</option>
+              {representatives.map((representative) => (
+                <option key={representative.id} value={representative.id}>
+                  {representative.name}
+                  {representative.company ? ` — ${representative.company}` : ""}
+                  {representative.city ? ` — ${representative.city}/${representative.state || "-"}` : ""}
+                  {representative.status !== "ACTIVE" ? " — INATIVO" : ""}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        <Field label="Observações do cadastro">
+          <textarea className="textarea" value={draft.registrationNotes || ""} onChange={(e) => setDraft({ ...draft, registrationNotes: e.target.value })} />
+        </Field>
+        <Field label="Notas internas">
+          <textarea className="textarea" value={draft.notes || ""} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} />
+        </Field>
+      </div>
+      {draft.role === "REPRESENTANTE" && (
+        <div className="mt-5 rounded-2xl bg-soft p-4">
+          <div className="font-black text-navy">{linkedClients.length} cliente(s) atendido(s)</div>
+          {linkedClients.length ? (
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {linkedClients.map((client) => (
+                <div key={client.id} className="rounded-xl bg-white px-3 py-2 text-sm">
+                  <b>{client.name}</b>
+                  <div className="text-xs text-muted">{client.company || client.email}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-2 text-sm text-muted">Nenhum cliente vinculado a este representante.</div>
+          )}
+        </div>
+      )}
+      <ModalActions saving={saving} onSave={save} onDelete={user ? remove : undefined} />
+    </Modal>
+  );
 }
 
 function PermissionsSection({ permissions, query, reload, notify }: { permissions: Permission[]; query: string; reload: () => Promise<void>; notify: (message: string) => void }) {
