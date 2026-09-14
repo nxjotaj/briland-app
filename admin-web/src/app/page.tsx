@@ -21,6 +21,7 @@ import {
   Eye,
   FileSpreadsheet,
   ImageIcon,
+  KeyRound,
   LinkIcon,
   Loader2,
   Lock,
@@ -2147,6 +2148,7 @@ function UsersSection({ users, presence, telemetry, products, query, reload, not
   const [editing, setEditing] = useState<Usuario | null>(null);
   const [creating, setCreating] = useState(false);
   const [activityUser, setActivityUser] = useState<Usuario | null>(null);
+  const [sendingPasswordResetId, setSendingPasswordResetId] = useState<string | null>(null);
   const [registrationFilter, setRegistrationFilter] = useState<"all" | "48h">("all");
   const [roleFilter, setRoleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -2193,6 +2195,26 @@ function UsersSection({ users, presence, telemetry, products, query, reload, not
     setPresenceFilter("all");
     setCreatedFrom("");
     setCreatedTo("");
+  };
+  const resendPasswordReset = async (user: Usuario) => {
+    const email = user.email.trim().toLowerCase();
+    if (!email) {
+      notify("Este usuário não possui um e-mail válido para recuperação de senha.");
+      return;
+    }
+    if (!window.confirm(`Enviar um link para ${email} criar uma nova senha?`)) return;
+    setSendingPasswordResetId(user.id);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: "https://briland-catalogo.vercel.app/?acao=redefinir-senha"
+      });
+      if (error) throw error;
+      notify(`Link para criar uma nova senha enviado para ${email}.`);
+    } catch (error) {
+      notify(friendlyAdminError(error, "reenviar o link de redefinição de senha"));
+    } finally {
+      setSendingPasswordResetId(null);
+    }
   };
   return (
     <>
@@ -2358,6 +2380,15 @@ function UsersSection({ users, presence, telemetry, products, query, reload, not
                     <div className="flex gap-2">
                       <button className="icon-btn" title="Ver histórico de atividade" onClick={() => setActivityUser(user)}>
                         <Eye size={16} />
+                      </button>
+                      <button
+                        className="icon-btn"
+                        title="Enviar link para redefinir senha"
+                        aria-label={`Enviar redefinição de senha para ${user.name}`}
+                        disabled={sendingPasswordResetId !== null}
+                        onClick={() => void resendPasswordReset(user)}
+                      >
+                        {sendingPasswordResetId === user.id ? <Loader2 className="animate-spin" size={16} /> : <KeyRound size={16} />}
                       </button>
                       <button className="icon-btn" title="Editar usuário e alterar perfil" onClick={() => setEditing(user)}>
                         <Pencil size={16} />
