@@ -5,6 +5,7 @@ import ExcelJS from "exceljs";
 import brilandLogo from "../../../assets/briland-logo.png";
 import { BulkProductImages } from "@/components/bulk-product-images";
 import { StockMaintenance } from "@/components/stock-maintenance";
+import { SalesOrders } from "@/components/sales-orders";
 import { buildCatalogPdf, type CatalogImageWarning } from "@/lib/catalog-pdf";
 import {
   BarChart3,
@@ -95,6 +96,7 @@ type Tab =
   | "Montadoras"
   | "Aplicações"
   | "Leads"
+  | "Pedidos"
   | "Usuários"
   | "Permissões"
   | "Diagnóstico"
@@ -117,6 +119,7 @@ const tabs: { id: Tab; icon: React.ElementType }[] = [
   { id: "Montadoras", icon: Building2 },
   { id: "Aplicações", icon: Building2 },
   { id: "Leads", icon: MessageCircle },
+  { id: "Pedidos", icon: PackagePlus },
   { id: "Usuários", icon: Users },
   { id: "Permissões", icon: Lock },
   { id: "Diagnóstico", icon: Activity },
@@ -169,14 +172,14 @@ async function loadCapacityHealth() {
   };
 }
 
-const userSelectFields = "id,name,company,email,role,status,notes,phone,cnpj,address,city,state,registrationNotes,approvedAt,approvedBy,representanteId,lastLoginAt,createdAt,updatedAt,authUserId";
+const userSelectFields = "id,name,company,email,role,status,notes,phone,cnpj,address,zipCode,neighborhood,city,state,registrationNotes,approvedAt,approvedBy,representanteId,orderDiscountLimit,lastLoginAt,createdAt,updatedAt,authUserId";
 
 const isMaster = (role?: Role | null) => role === "ADMIN_MASTER" || role === "ADMIN";
 const isCollaborator = (role?: Role | null) => role === "ADMIN_COLABORADOR";
 const canUseAdminWeb = (role?: Role | null) => isMaster(role) || isCollaborator(role);
 const visibleTabsFor = (role?: Role | null) => {
   if (isMaster(role)) return tabs;
-  return tabs.filter(({ id }) => ["Dashboard", "Produtos", "Manutenção de saldo", "Categorias", "Marcas", "Montadoras", "Aplicações", "Leads"].includes(id));
+  return tabs.filter(({ id }) => ["Dashboard", "Produtos", "Manutenção de saldo", "Categorias", "Marcas", "Montadoras", "Aplicações", "Leads", "Pedidos"].includes(id));
 };
 
 function leadDepartment(lead: Lead) {
@@ -1003,6 +1006,7 @@ export default function Page() {
           {activeTab === "Montadoras" && <VehicleSection data={data} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Aplicações" && <Applications items={data.aplicacoes} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Leads" && <Leads leads={data.leads} products={data.produtos} query={query} reload={reloadSection} notify={notify} canCompleteDeletion={isMaster(adminUser.role)} />}
+          {activeTab === "Pedidos" && <SalesOrders products={data.produtos} users={data.usuarios} notify={notify} />}
           {activeTab === "Usuários" && <UsersSection users={data.usuarios} presence={data.presence} telemetry={data.telemetry} products={data.produtos} query={query} reload={reloadSection} notify={notify} adminUser={adminUser} />}
           {activeTab === "Permissões" && <PermissionsSectionV2 permissions={data.permissoes} query={query} reload={reloadSection} notify={notify} />}
           {activeTab === "Diagnóstico" && <Diagnostics data={data} />}
@@ -2616,11 +2620,14 @@ function UserModal({ user, users, reload, notify, adminUser, onClose }: { user?:
       phone: "",
       cnpj: "",
       address: "",
+      zipCode: "",
+      neighborhood: "",
       city: "",
       state: "",
       registrationNotes: "",
       notes: "",
       representanteId: null,
+      orderDiscountLimit: 15,
     },
   );
   const [saving, setSaving] = useState(false);
@@ -2665,11 +2672,14 @@ function UserModal({ user, users, reload, notify, adminUser, onClose }: { user?:
       phone: draft.phone?.trim() || null,
       cnpj: draft.cnpj?.trim() || null,
       address: draft.address?.trim() || null,
+      zipCode: draft.zipCode?.trim() || null,
+      neighborhood: draft.neighborhood?.trim() || null,
       city: draft.city?.trim() || null,
       state: draft.state?.trim() || null,
       registrationNotes: draft.registrationNotes?.trim() || null,
       notes: draft.notes?.trim() || null,
       representanteId: draft.role === "CLIENTE" ? draft.representanteId || null : null,
+      orderDiscountLimit: draft.role === "REPRESENTANTE" ? Number(draft.orderDiscountLimit ?? 15) : 15,
       approvedAt,
       approvedBy,
       updatedAt: new Date().toISOString(),
@@ -2741,6 +2751,12 @@ function UserModal({ user, users, reload, notify, adminUser, onClose }: { user?:
         <Field label="Endereço">
           <input className="input" value={draft.address || ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} />
         </Field>
+        <Field label="CEP">
+          <input className="input" value={draft.zipCode || ""} onChange={(e) => setDraft({ ...draft, zipCode: e.target.value })} />
+        </Field>
+        <Field label="Bairro">
+          <input className="input" value={draft.neighborhood || ""} onChange={(e) => setDraft({ ...draft, neighborhood: e.target.value })} />
+        </Field>
         <Field label="Cidade">
           <input className="input" value={draft.city || ""} onChange={(e) => setDraft({ ...draft, city: e.target.value })} />
         </Field>
@@ -2804,6 +2820,11 @@ function UserModal({ user, users, reload, notify, adminUser, onClose }: { user?:
                 </option>
               ))}
             </select>
+          </Field>
+        )}
+        {draft.role === "REPRESENTANTE" && (
+          <Field label="Limite máximo de desconto (%)">
+            <input className="input" type="number" min="0" max="100" step="0.01" value={draft.orderDiscountLimit ?? 15} onChange={(e) => setDraft({ ...draft, orderDiscountLimit: Number(e.target.value) })} />
           </Field>
         )}
         <Field label="Observações do cadastro">
