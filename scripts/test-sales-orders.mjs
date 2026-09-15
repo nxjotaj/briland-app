@@ -13,6 +13,13 @@ try {
   let product = (await client.query(`select * from public."Produto" where ativo=true and preco is not null and coalesce(estoque,0)>=2 limit 1`)).rows[0];
   ensure(representative, "Não existe representante ativo com credencial para o teste.");
   ensure(admin, "Não existe administrador master ativo com credencial para o teste.");
+  for (const account of [admin, representative]) {
+    await client.query("select set_config('request.jwt.claim.sub',$1,true)", [String(account.authUserId)]);
+    await client.query("set local role authenticated");
+    const visibleSelf = (await client.query(`select id from public."User" where "authUserId"=auth.uid()`)).rows;
+    ensure(visibleSelf.length === 1, `A política de usuários bloqueou o perfil ${account.role}.`);
+    await client.query("reset role");
+  }
   if (!product) {
     const productId = `test_product_${Date.now()}`;
     const category = (await client.query(`select id from public."Categoria" where ativo=true limit 1`)).rows[0];
