@@ -33,7 +33,7 @@ Conheça o catálogo digital Briland e encontre produtos de forma rápida e orga
 
 Consulte categorias, marcas, aplicações por montadora e modelo, lançamentos e promoções selecionadas pela equipe Briland. Use a busca e os filtros para localizar o produto adequado e acesse fotos, descrições e informações comerciais disponíveis para o seu perfil.
 
-Visitantes podem explorar o catálogo público. Empresas, clientes e representantes autorizados podem acessar informações específicas após a aprovação do cadastro. O aplicativo também permite solicitar atendimento e orçamento diretamente pelos canais Briland.
+Visitantes podem explorar o catálogo público. Empresas, clientes e representantes autorizados podem acessar informações específicas após a aprovação do cadastro. Representantes autorizados também podem criar, salvar, enviar e consultar pedidos comerciais.
 
 Principais recursos:
 
@@ -42,7 +42,7 @@ Principais recursos:
 - seções de lançamentos e promoções;
 - detalhes, imagens e aplicações dos produtos;
 - cadastro empresarial sujeito à aprovação;
-- contato e solicitação de orçamento;
+- contato e criação de pedidos por representantes autorizados;
 - controles de privacidade e exclusão de cadastro.
 
 ## Texto sugerido para a App Store
@@ -58,7 +58,7 @@ Revisar no momento do preenchimento das lojas, considerando todas as versões di
 
 - Informações de contato: nome, e-mail, telefone e endereço.
 - Identificadores: identificador interno do usuário e identificador de autenticação.
-- Conteúdo do usuário: mensagens, observações de cadastro e pedidos de contato/orçamento.
+- Conteúdo do usuário: mensagens, observações de cadastro e pedidos comerciais.
 - Uso do aplicativo: telas/rotas acessadas e tempo de carregamento.
 - Diagnósticos: erros e resultado das operações.
 - Finalidades: funcionalidade do aplicativo, gestão de conta, atendimento, segurança e análise operacional.

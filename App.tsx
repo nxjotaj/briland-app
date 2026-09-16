@@ -36,19 +36,17 @@ import {
 
 import { CONFIG_STORAGE_KEY, getPersistedSession, requestPasswordReset, resendSignupConfirmation, setTelemetryContext, signInWithPassword, signOutSession, signUpRegistration, supabaseDelete, supabaseGet, supabasePatch, supabasePost, supabasePostMinimal, supabaseRealtime, supabaseRpc, trackTelemetry, updateCurrentPassword, uploadStorageObject } from "./src/api/supabase";
 import { colors, defaultAbout, defaultSocialLinks } from "./src/config/brand";
-import type { AboutSettings, Aplicacao, AppData, CatalogAppearance, CatalogPdfRole, CatalogPdfSettings, CatalogRevision, Categoria, GrupoProduto, Lead, Marca, MediaSettings, ModeloVeiculo, Montadora, Permission, Produto, ProdutoModeloVeiculo, ProdutoModeloVeiculoView, Role, Route, SocialLinks, Subcategoria, Usuario } from "./src/types/domain";
+import type { AboutSettings, Aplicacao, AppData, CatalogAppearance, CatalogPdfRole, CatalogPdfSettings, CatalogRevision, Categoria, GrupoProduto, Lead, Marca, MediaSettings, ModeloVeiculo, Montadora, Permission, Produto, ProdutoModeloVeiculo, ProdutoModeloVeiculoView, Role, Route, SalesOrder, SalesOrderItem, SalesStock, SocialLinks, Subcategoria, Usuario } from "./src/types/domain";
 import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage, money, optimizedImageUrl, parseCsv, slugify } from "./src/utils/helpers";
 import { MotionDrawer, MotionPage, MotionPressable } from "./src/components/motion";
 
 type IconName = keyof typeof Ionicons.glyphMap;
 type RegistrationRequest = { nome: string; empresa: string; telefone: string; email: string; cnpj: string; observacoes: string; senha: string; confirmarSenha: string };
 type CachedImageProps = ImageProps & { resizeMode?: ImageProps["contentFit"] };
-type QuoteItems = Record<string, number>;
 type CatalogNotification = { id: string; type: "launch" | "promotion" | "availability"; title: string; message: string; productId: string; createdAt: string; read?: boolean };
 
 const logo = require("./assets/briland-logo.png");
 const loadingBlueprint = require("./assets/loading-automotive-blueprint.png");
-const QUOTE_STORAGE_KEY = "briland-quote-items";
 const FAVORITES_STORAGE_KEY = "briland-favorite-products";
 const VISIT_STORAGE_KEY = "briland-last-visit";
 const NOTIFICATION_STORAGE_KEY = "briland-catalog-notifications";
@@ -231,7 +229,7 @@ export default function App() {
   const [catalogPdfSettings, setCatalogPdfSettings] = useState<CatalogPdfSettings>({});
   const [aboutSettings, setAboutSettings] = useState<AboutSettings>(defaultAbout);
   const [appearance, setAppearance] = useState<CatalogAppearance>(defaultAppearance);
-  const [quoteItems, setQuoteItems] = useState<QuoteItems>({});
+  const [mobileOrder, setMobileOrder] = useState<SalesOrder | null>(null);
   const [favoriteProductIds, setFavoriteProductIds] = useState<string[]>([]);
   const [catalogNotifications, setCatalogNotifications] = useState<CatalogNotification[]>([]);
   const [pendingProductReference, setPendingProductReference] = useState(initialProductReference);
@@ -686,15 +684,11 @@ export default function App() {
 
   useEffect(() => {
     void (async () => {
-      const [savedQuote, savedFavorites, lastVisit, savedNotifications] = await Promise.all([
-        AsyncStorage.getItem(QUOTE_STORAGE_KEY),
+      const [savedFavorites, lastVisit, savedNotifications] = await Promise.all([
         AsyncStorage.getItem(FAVORITES_STORAGE_KEY),
         AsyncStorage.getItem(VISIT_STORAGE_KEY),
         AsyncStorage.getItem(NOTIFICATION_STORAGE_KEY)
       ]);
-      if (savedQuote) {
-        try { setQuoteItems(JSON.parse(savedQuote) as QuoteItems); } catch { /* ignora cache inválido */ }
-      }
       if (savedFavorites) {
         try { setFavoriteProductIds(JSON.parse(savedFavorites) as string[]); } catch { /* ignora cache inválido */ }
       }
@@ -793,8 +787,6 @@ export default function App() {
   const catalogPdfRole = catalogPdfRoleFor(role);
   const catalogPdfUrl = catalogPdfSettings[catalogPdfRole]?.url || "";
   const catalogPdfAllowed = Boolean(catalogPdfUrl) && rolePermission("downloadCatalogButton") && rolePermission("catalogPdfDownload");
-  const quoteListAllowed = rolePermission("quoteButton");
-  const requestQuoteAllowed = rolePermission("botaoOrcamento");
   const generalWhatsAppAllowed = rolePermission("whatsappButton");
   const categoryById = useMemo(() => new Map(data.categorias.map((item) => [item.id, item])), [data.categorias]);
   const subcategoryById = useMemo(() => new Map(data.subcategorias.map((item) => [item.id, item])), [data.subcategorias]);
@@ -943,18 +935,6 @@ export default function App() {
     go("detail");
   };
 
-  const saveQuoteItems = (next: QuoteItems) => {
-    setQuoteItems(next);
-    void AsyncStorage.setItem(QUOTE_STORAGE_KEY, JSON.stringify(next));
-  };
-
-  const addToQuote = (product: Produto) => {
-    const next = { ...quoteItems, [product.id]: (quoteItems[product.id] || 0) + 1 };
-    saveQuoteItems(next);
-    void trackTelemetry({ eventType: "quote_start", screen: "detail", route: "detail", userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { productId: product.id, quantity: next[product.id] } }, authToken);
-    notify("Adicionado ao orçamento", `${product.codigoInterno || ""} — ${product.nome}`);
-  };
-
   const toggleFavorite = (product: Produto) => {
     const active = !favoriteProductIds.includes(product.id);
     const next = active ? [...favoriteProductIds, product.id] : favoriteProductIds.filter((id) => id !== product.id);
@@ -977,6 +957,20 @@ export default function App() {
 
   const trackProductEvent = (eventType: string, metadata?: Record<string, unknown>) => {
     void trackTelemetry({ eventType, screen: "detail", route: "detail", userId: currentUser?.id ?? null, userRole: role, success: true, metadata }, authToken);
+  };
+
+  const openNewMobileOrder = async () => {
+    if (role !== "REPRESENTANTE" || !authToken) return;
+    try {
+      setLoading(true);
+      const draft = await supabaseRpc<SalesOrder>("open_sales_order_draft", {}, authToken);
+      setMobileOrder(draft);
+      go("newOrder");
+    } catch (err) {
+      notify("Não foi possível abrir o pedido", err instanceof Error ? err.message : "Tente novamente.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const login = async (email: string, password: string) => {
@@ -1056,25 +1050,6 @@ export default function App() {
     }
   };
 
-  const quoteMessage = () => {
-    const lines = Object.entries(quoteItems).map(([productId, quantity]) => {
-      const product = data.produtos.find((item) => item.id === productId);
-      return product ? `• ${quantity}x ${product.codigoInterno || ""} — ${product.nome}` : "";
-    }).filter(Boolean);
-    return `Olá! Gostaria de solicitar um orçamento para:\n\n${lines.join("\n")}\n\nVeículo selecionado: ${selectedVehicleText || "não informado"}`;
-  };
-
-  const sendQuoteLead = async () => {
-    const firstProductId = Object.keys(quoteItems)[0] || null;
-    await createLead({ produtoId: firstProductId, mensagem: quoteMessage(), origem: "lista-orcamento" });
-    void trackTelemetry({ eventType: "quote_sent", screen: "quote", route: "quote", userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { channel: "lead", itemCount: Object.keys(quoteItems).length } }, authToken);
-  };
-
-  const sendQuoteWhatsapp = () => {
-    void trackTelemetry({ eventType: "quote_sent", screen: "quote", route: "quote", userId: currentUser?.id ?? null, userRole: role, success: true, metadata: { channel: "whatsapp", itemCount: Object.keys(quoteItems).length } }, authToken);
-    void Linking.openURL(whatsappWithText(socialLinks.whatsapp, quoteMessage()));
-  };
-
   const openNotification = (notification: CatalogNotification) => {
     const next = catalogNotifications.map((item) => item.id === notification.id ? { ...item, read: true } : item);
     setCatalogNotifications(next);
@@ -1152,7 +1127,6 @@ export default function App() {
       ? previousRoute
       : null;
   const pageTransitionKey = route === "detail" && retainedCatalogRoute ? retainedCatalogRoute : route;
-  const quoteCount = Object.values(quoteItems).reduce((total, quantity) => total + quantity, 0);
   const unreadNotificationCount = catalogNotifications.filter((item) => !item.read).length;
 
   return (
@@ -1170,7 +1144,7 @@ export default function App() {
             <AdminScreen role={role} data={data} active={adminTab} setActive={setAdminTab} onBack={() => go("home")} onLogout={logout} reload={() => reload(role, authToken)} authToken={authToken} socialLinks={socialLinks} setSocialLinks={(links) => void saveAdminConfig(links, mediaSettings, aboutSettings)} mediaSettings={mediaSettings} setMediaSettings={(settings) => void saveAdminConfig(socialLinks, settings, aboutSettings)} aboutSettings={aboutSettings} setAboutSettings={(settings) => void saveAdminConfig(socialLinks, mediaSettings, settings)} onAction={(text) => notify("Painel admin", text)} />
           ) : (
             <>
-              <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} appearance={appearance} quoteCount={quoteCount} notificationCount={unreadNotificationCount} showQuote={quoteListAllowed} onQuote={() => go("quote")} onNotifications={() => go("notifications")} />
+              <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} appearance={appearance} notificationCount={unreadNotificationCount} showCreateOrder={role === "REPRESENTANTE"} onCreateOrder={() => void openNewMobileOrder()} onNotifications={() => go("notifications")} />
               {error && <ErrorBanner message={error} onRetry={reload} />}
               {route === "home" && <HomeScreen go={openDirectCatalogRoute} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""} imageVersion={imageRefreshVersion} />}
               {route === "categories" && <CategoriesScreen categories={data.categorias} products={activeProducts} imageVersion={imageRefreshVersion} onPick={(id) => {
@@ -1327,12 +1301,13 @@ export default function App() {
                   launch
                 />
               )}
-              {route === "detail" && selectedProduct && <View style={[styles.detailOverlay, { backgroundColor: appearance.backgroundColor }]}><ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} imageVersion={imageRefreshVersion} selectedVehicle={selectedVehicleText} favorite={favoriteProductIds.includes(selectedProduct.id)} onFavorite={() => toggleFavorite(selectedProduct)} onQuote={() => addToQuote(selectedProduct)} onTrack={trackProductEvent} /></View>}
+              {route === "detail" && selectedProduct && <View style={[styles.detailOverlay, { backgroundColor: appearance.backgroundColor }]}><ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} imageVersion={imageRefreshVersion} selectedVehicle={selectedVehicleText} favorite={favoriteProductIds.includes(selectedProduct.id)} onFavorite={() => toggleFavorite(selectedProduct)} onTrack={trackProductEvent} /></View>}
                 </View>
               )}
-              {route === "detail" && !retainedCatalogRoute && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} imageVersion={imageRefreshVersion} selectedVehicle={selectedVehicleText} favorite={favoriteProductIds.includes(selectedProduct.id)} onFavorite={() => toggleFavorite(selectedProduct)} onQuote={() => addToQuote(selectedProduct)} onTrack={trackProductEvent} />}
+              {route === "detail" && !retainedCatalogRoute && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} imageVersion={imageRefreshVersion} selectedVehicle={selectedVehicleText} favorite={favoriteProductIds.includes(selectedProduct.id)} onFavorite={() => toggleFavorite(selectedProduct)} onTrack={trackProductEvent} />}
               {route === "contact" && <ContactScreen onSubmit={createLead} />}
-              {route === "quote" && (quoteListAllowed || requestQuoteAllowed) && <QuoteScreen products={data.produtos} items={quoteItems} allowWhatsApp={generalWhatsAppAllowed} onChange={(productId, quantity) => { const next = { ...quoteItems }; if (quantity <= 0) delete next[productId]; else next[productId] = quantity; saveQuoteItems(next); }} onSendLead={() => void sendQuoteLead()} onSendWhatsapp={sendQuoteWhatsapp} />}
+              {route === "representativeOrders" && role === "REPRESENTANTE" && authToken && <RepresentativeOrdersScreen token={authToken} onNew={() => void openNewMobileOrder()} onOpen={(order) => { setMobileOrder(order); go("newOrder"); }} />}
+              {route === "newOrder" && role === "REPRESENTANTE" && authToken && mobileOrder && <MobileOrderScreen order={mobileOrder} token={authToken} representative={currentUser} products={activeProducts} onSaved={(saved) => { setMobileOrder(saved); if (saved.status === "SUBMITTED") go("representativeOrders"); }} />}
               {route === "notifications" && <NotificationsScreen notifications={catalogNotifications} products={data.produtos} onOpen={openNotification} />}
               {route === "about" && <AboutScreen settings={aboutSettings} />}
               {route === "privacy" && <PrivacyScreen />}
@@ -1416,7 +1391,7 @@ function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => voi
   );
 }
 
-function Header({ back, onBack, onMenu, appearance, quoteCount, notificationCount, showQuote, onQuote, onNotifications }: { back?: boolean; onBack: () => void; onMenu: () => void; appearance: CatalogAppearance; quoteCount: number; notificationCount: number; showQuote: boolean; onQuote: () => void; onNotifications: () => void }) {
+function Header({ back, onBack, onMenu, appearance, notificationCount, showCreateOrder, onCreateOrder, onNotifications }: { back?: boolean; onBack: () => void; onMenu: () => void; appearance: CatalogAppearance; notificationCount: number; showCreateOrder: boolean; onCreateOrder: () => void; onNotifications: () => void }) {
   return (
     <View style={styles.header}>
       <MotionPressable style={styles.iconButton} onPress={back ? onBack : onMenu}>
@@ -1425,7 +1400,7 @@ function Header({ back, onBack, onMenu, appearance, quoteCount, notificationCoun
       <LogoPlate compact logoUrl={appearance.logoUrl} />
       <View style={styles.headerActions}>
         <MotionPressable accessibilityRole="button" accessibilityLabel="Abrir notificações" style={styles.headerSmallButton} onPress={onNotifications}><Ionicons name="notifications-outline" size={23} color={colors.navy} />{notificationCount > 0 && <View style={styles.headerBadge}><Text style={styles.headerBadgeText}>{Math.min(notificationCount, 9)}</Text></View>}</MotionPressable>
-        {showQuote && <MotionPressable accessibilityRole="button" accessibilityLabel="Abrir lista de orçamento" style={styles.headerSmallButton} onPress={onQuote}><Ionicons name="document-text-outline" size={23} color={colors.navy} />{quoteCount > 0 && <View style={styles.headerBadge}><Text style={styles.headerBadgeText}>{Math.min(quoteCount, 9)}</Text></View>}</MotionPressable>}
+        {showCreateOrder && <MotionPressable accessibilityRole="button" accessibilityLabel="Criar novo pedido" style={styles.headerSmallButton} onPress={onCreateOrder}><Ionicons name="add-circle-outline" size={25} color={colors.navy} /></MotionPressable>}
       </View>
     </View>
   );
@@ -1858,7 +1833,7 @@ function productPermission(product: Produto, key: string, fallback = true) {
   return fallback;
 }
 
-function ProductDetail({ product, role, category, subcategory, productGroup, brand, vehicleApplications, whatsappUrl, imageVersion, selectedVehicle, favorite, onFavorite, onQuote, onTrack }: { product: Produto; role: Role; category?: Categoria; subcategory?: Subcategoria; productGroup?: GrupoProduto; brand?: Marca; vehicleApplications: ProdutoModeloVeiculoView[]; whatsappUrl: string; imageVersion: number; selectedVehicle: string; favorite: boolean; onFavorite: () => void; onQuote: () => void; onTrack: (eventType: string, metadata?: Record<string, unknown>) => void }) {
+function ProductDetail({ product, role, category, subcategory, productGroup, brand, vehicleApplications, whatsappUrl, imageVersion, selectedVehicle, favorite, onFavorite, onTrack }: { product: Produto; role: Role; category?: Categoria; subcategory?: Subcategoria; productGroup?: GrupoProduto; brand?: Marca; vehicleApplications: ProdutoModeloVeiculoView[]; whatsappUrl: string; imageVersion: number; selectedVehicle: string; favorite: boolean; onFavorite: () => void; onTrack: (eventType: string, metadata?: Record<string, unknown>) => void }) {
   const { width: windowWidth } = useWindowDimensions();
   const [activeImage, setActiveImage] = useState(0);
   const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
@@ -1905,7 +1880,6 @@ function ProductDetail({ product, role, category, subcategory, productGroup, bra
   const showCommercialNote = productPermission(product, "observacaoComercial", false);
   const showManual = Boolean(product.manualPdf) && productPermission(product, "manualPdf", false);
   const showVehicleApplications = vehicleApplications.length > 0 && productPermission(product, "aplicacoesVeiculo", false);
-  const showQuote = productPermission(product, "botaoOrcamento", false);
   const showWhatsApp = productPermission(product, "whatsappButton", false) && productPermission(product, "botaoWhatsApp", false);
   return (<>
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
@@ -1982,7 +1956,6 @@ function ProductDetail({ product, role, category, subcategory, productGroup, bra
         <Text style={styles.detailText}>{product.observacaoComercial}</Text>
       </Accordion>}
       <View style={styles.actionRow}>
-        {showQuote && <MotionPressable accessibilityRole="button" accessibilityLabel="Adicionar produto ao orçamento" style={styles.yellowButton} onPress={onQuote}><Ionicons name="document-text-outline" size={20} color={colors.navy} /><Text style={styles.yellowButtonText}>Adicionar ao orçamento</Text></MotionPressable>}
         {showWhatsApp && <Pressable style={styles.whatsButton} onPress={openWhatsApp}><Ionicons name="logo-whatsapp" size={24} color={colors.green} /></Pressable>}
       </View>
     </ScrollView>
@@ -2189,7 +2162,7 @@ function ContactScreen({ onSubmit }: { onSubmit: (lead: Partial<Lead>) => void }
       <View style={styles.formCard}>
         <Text style={styles.label}>Com quem você quer falar? *</Text>
         <View style={styles.choiceRow}>
-          <Choice title="Comercial" subtitle="Dúvidas, orçamentos e parcerias" selected={department === "Comercial"} icon="briefcase-outline" onPress={() => setDepartment("Comercial")} />
+          <Choice title="Comercial" subtitle="Dúvidas, pedidos e parcerias" selected={department === "Comercial"} icon="briefcase-outline" onPress={() => setDepartment("Comercial")} />
           <Choice title="Suporte" subtitle="Atendimento técnico e suporte" selected={department === "Suporte"} icon="headset-outline" onPress={() => setDepartment("Suporte")} />
         </View>
         <Input label="Nome completo" value={form.nome} onChangeText={(nome) => setForm({ ...form, nome })} />
@@ -2360,7 +2333,7 @@ function PrivacyScreen() {
       <PageTitle title="Política de Privacidade" subtitle="Transparência sobre o uso dos seus dados no catálogo Briland." />
       <View style={styles.legalCard}>
         <Text style={styles.legalHeading}>Dados tratados</Text>
-        <Text style={styles.legalParagraph}>Podemos tratar dados de cadastro empresarial, como nome, empresa, e-mail, telefone, CNPJ e endereço; dados enviados em contatos e orçamentos; e dados técnicos mínimos de uso e diagnóstico.</Text>
+        <Text style={styles.legalParagraph}>Podemos tratar dados de cadastro empresarial, como nome, empresa, e-mail, telefone, CNPJ e endereço; dados enviados em contatos e pedidos; e dados técnicos mínimos de uso e diagnóstico.</Text>
         <Text style={styles.legalHeading}>Finalidades</Text>
         <Text style={styles.legalParagraph}>Usamos esses dados para analisar cadastros, autenticar usuários, atender solicitações, apresentar o catálogo conforme o perfil de acesso, proteger o serviço e corrigir falhas.</Text>
         <Text style={styles.legalHeading}>Compartilhamento e segurança</Text>
@@ -2424,25 +2397,21 @@ function AboutScreen({ settings }: { settings: AboutSettings }) {
   );
 }
 
-function QuoteScreen({ products, items, allowWhatsApp, onChange, onSendLead, onSendWhatsapp }: { products: Produto[]; items: QuoteItems; allowWhatsApp: boolean; onChange: (productId: string, quantity: number) => void; onSendLead: () => void; onSendWhatsapp: () => void }) {
-  const rows = Object.entries(items).map(([productId, quantity]) => ({ product: products.find((item) => item.id === productId), quantity })).filter((item): item is { product: Produto; quantity: number } => Boolean(item.product));
-  return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
-      <PageTitle title="Lista de orçamento" subtitle="Revise os produtos, ajuste as quantidades e envie tudo de uma vez." />
-      {rows.length === 0 ? <View style={styles.emptySearchCard}><Ionicons name="document-text-outline" size={40} color={colors.yellow} /><Text style={styles.emptySearchTitle}>Sua lista está vazia</Text><Text style={styles.muted}>Abra um produto e toque em “Adicionar ao orçamento”.</Text></View> : <>
-        {rows.map(({ product, quantity }) => (
-          <View key={product.id} style={styles.quoteItem}>
-            <Image source={{ uri: productImageUrl(product, "thumb", 0) }} style={styles.quoteImage} resizeMode="contain" />
-            <View style={styles.flex}><Text style={styles.productCode}>{product.codigoInterno}</Text><Text style={styles.quoteName} numberOfLines={2}>{product.nome}</Text><Text style={styles.mutedSmall}>{money(product.preco)}</Text></View>
-            <View style={styles.quantityControl}><Pressable style={styles.quantityButton} onPress={() => onChange(product.id, quantity - 1)}><Ionicons name={quantity === 1 ? "trash-outline" : "remove"} size={18} color={colors.navy} /></Pressable><Text style={styles.quantityText}>{quantity}</Text><Pressable style={styles.quantityButton} onPress={() => onChange(product.id, quantity + 1)}><Ionicons name="add" size={18} color={colors.navy} /></Pressable></View>
-          </View>
-        ))}
-        <View style={styles.quoteSummary}><Text style={styles.quoteSummaryTitle}>{rows.length} produto(s) na solicitação</Text><Text style={styles.muted}>As quantidades serão enviadas junto com os códigos dos produtos.</Text></View>
-        <Pressable style={styles.yellowButton} onPress={onSendLead}><Ionicons name="send-outline" size={20} color={colors.navy} /><Text style={styles.yellowButtonText}>Enviar solicitação</Text></Pressable>
-        {allowWhatsApp && <Pressable style={styles.quoteWhatsappButton} onPress={onSendWhatsapp}><Ionicons name="logo-whatsapp" size={22} color={colors.white} /><Text style={styles.quoteWhatsappText}>Enviar pelo WhatsApp</Text></Pressable>}
-      </>}
-    </ScrollView>
-  );
+const mobileOrderStatus:Record<string,string>={DRAFT:"Rascunho",SUBMITTED:"Enviado",RETURNED:"Devolvido",APPROVED:"Aprovado",REJECTED:"Rejeitado",CANCELLED:"Cancelado"};
+const mobileOrderNumber=(value:number)=>String(value).padStart(6,"0");
+
+function RepresentativeOrdersScreen({token,onNew,onOpen}:{token:string;onNew:()=>void;onOpen:(order:SalesOrder)=>void}){
+  const[orders,setOrders]=useState<SalesOrder[]>([]);const[loading,setLoading]=useState(true);const load=async()=>{setLoading(true);try{setOrders(await supabaseGet<SalesOrder>("SalesOrder","select=*,items:SalesOrderItem(*)&order=createdAt.desc",token));}catch(err){Alert.alert("Pedidos",err instanceof Error?err.message:"Não foi possível carregar.");}finally{setLoading(false);}};useEffect(()=>{void load();},[]);
+  return <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}><PageTitle title="Meus pedidos" subtitle="Consulte rapidamente rascunhos e pedidos já enviados."/><Pressable style={styles.yellowButton} onPress={onNew}><Ionicons name="add-circle-outline" size={21} color={colors.navy}/><Text style={styles.yellowButtonText}>Criar novo pedido</Text></Pressable>{loading?<ActivityIndicator style={{marginTop:30}} color={colors.navy}/>:orders.map(order=><Pressable key={order.id} style={styles.mobileOrderCard} onPress={()=>onOpen(order)}><View><Text style={styles.productCode}>PEDIDO {mobileOrderNumber(order.orderNumber)}</Text><Text style={styles.mobileOrderClient}>{String(order.clientSnapshot?.company||"Cliente ainda não selecionado")}</Text><Text style={styles.mutedSmall}>{new Date(order.updatedAt).toLocaleString("pt-BR")}</Text></View><View style={styles.mobileOrderRight}><Text style={styles.mobileOrderStatus}>{mobileOrderStatus[order.status]}</Text><Text style={styles.mobileOrderTotal}>{money(order.total)}</Text></View></Pressable>)}{!loading&&!orders.length&&<View style={styles.emptySearchCard}><Ionicons name="receipt-outline" size={42} color={colors.yellow}/><Text style={styles.emptySearchTitle}>Nenhum pedido</Text><Text style={styles.muted}>Crie o primeiro pedido pelo botão acima.</Text></View>}</ScrollView>;
+}
+
+function MobileOrderScreen({order,token,representative,products,onSaved}:{order:SalesOrder;token:string;representative:Usuario|null;products:Produto[];onSaved:(order:SalesOrder)=>void}){
+  const[clients,setClients]=useState<Usuario[]>([]);const[stock,setStock]=useState<SalesStock[]>([]);const[clientId,setClientId]=useState(order.clientId||"");const[freight,setFreight]=useState<"CIF"|"FOB">(order.freightType||"CIF");const[payment,setPayment]=useState<"UPFRONT"|"INSTALLMENTS">(order.paymentType||"INSTALLMENTS");const[terms,setTerms]=useState(order.paymentTerms||"");const[items,setItems]=useState<SalesOrderItem[]>(order.items||[]);const[query,setQuery]=useState("");const[busy,setBusy]=useState(false);const editable=["DRAFT","RETURNED"].includes(order.status);const limit=representative?.orderDiscountLimit??15;
+  useEffect(()=>{void Promise.all([supabaseGet<Usuario>("User",`select=*&role=eq.CLIENTE&representanteId=eq.${representative?.id||""}&order=company.asc`,token),supabaseRpc<SalesStock[]>("get_sales_stock",{},token)]).then(([c,s])=>{setClients(c);setStock(s);}).catch(err=>Alert.alert("Pedido",err instanceof Error?err.message:"Não foi possível carregar os dados."));},[token,representative?.id]);
+  const available=new Map(stock.map(row=>[row.productId,row.availableBalance]));const calculated=items.map(item=>{const extra=payment==="UPFRONT"?5:0;const effective=Math.min(100,Number(item.manualDiscountPercent||0)+extra);const unit=Number(item.listPrice)*(1-effective/100);return{...item,paymentDiscountPercent:extra,effectiveDiscountPercent:effective,unitPrice:unit,lineTotal:unit*Number(item.quantity)}});const total=calculated.reduce((sum,item)=>sum+item.lineTotal,0);const suggestions=query.trim().length>1?products.filter(product=>product.preco!=null&&!items.some(item=>item.productId===product.id)&&`${product.codigoInterno} ${product.nome}`.toLowerCase().includes(query.toLowerCase())).slice(0,6):[];
+  const add=(product:Produto)=>{setItems([...items,{productId:product.id,productCode:product.codigoInterno||product.id,productName:product.nome,quantity:1,listPrice:Number(product.preco),manualDiscountPercent:0,paymentDiscountPercent:0,effectiveDiscountPercent:0,unitPrice:Number(product.preco),lineTotal:Number(product.preco),sortOrder:items.length}]);setQuery("");};
+  const save=async(submit:boolean)=>{if(!clientId){Alert.alert("Cliente obrigatório","Selecione o cliente do pedido.");return;}if(!calculated.length){Alert.alert("Pedido vazio","Adicione pelo menos um produto.");return;}if(payment==="INSTALLMENTS"&&!terms.trim()){Alert.alert("Prazo obrigatório","Informe o prazo do pagamento parcelado.");return;}setBusy(true);try{const saved=await supabaseRpc<SalesOrder>("save_sales_order",{p_order_id:order.id,p_client_id:clientId,p_freight_type:freight,p_redispatch_name:null,p_redispatch_phone:null,p_payment_type:payment,p_payment_terms:terms,p_notes:null,p_items:calculated.map(item=>({productId:item.productId,quantity:item.quantity,manualDiscountPercent:item.manualDiscountPercent})),p_submit:submit},token);Alert.alert(submit?"Pedido enviado":"Rascunho salvo",submit?"O estoque foi reservado e o pedido seguiu para análise.":"Você pode continuar este pedido depois.");onSaved({...saved,items:calculated});}catch(err){Alert.alert("Não foi possível salvar",err instanceof Error?err.message:"Tente novamente.");}finally{setBusy(false);}};
+  return <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}><PageTitle title={`Pedido ${mobileOrderNumber(order.orderNumber)}`} subtitle={editable?"Preencha e envie sem sair do catálogo.":`Status: ${mobileOrderStatus[order.status]}`}/><Text style={styles.sheetLabel}>Cliente</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mobileChoiceRow}>{clients.map(client=><Pressable key={client.id} style={[styles.mobileChoice,clientId===client.id&&styles.mobileChoiceActive]} onPress={()=>editable&&setClientId(client.id)}><Text style={[styles.mobileChoiceText,clientId===client.id&&styles.mobileChoiceTextActive]}>{client.company||client.name}</Text></Pressable>)}</ScrollView><View style={styles.mobileOrderOptions}><Pressable style={[styles.mobileChoice,freight==="CIF"&&styles.mobileChoiceActive]} onPress={()=>editable&&setFreight("CIF")}><Text style={[styles.mobileChoiceText,freight==="CIF"&&styles.mobileChoiceTextActive]}>Frete CIF</Text></Pressable><Pressable style={[styles.mobileChoice,freight==="FOB"&&styles.mobileChoiceActive]} onPress={()=>editable&&setFreight("FOB")}><Text style={[styles.mobileChoiceText,freight==="FOB"&&styles.mobileChoiceTextActive]}>Frete FOB</Text></Pressable></View><Text style={styles.sheetLabel}>Pagamento</Text><View style={styles.mobileOrderOptions}><Pressable style={[styles.mobileChoice,payment==="INSTALLMENTS"&&styles.mobileChoiceActive]} onPress={()=>editable&&setPayment("INSTALLMENTS")}><Text style={[styles.mobileChoiceText,payment==="INSTALLMENTS"&&styles.mobileChoiceTextActive]}>Parcelado</Text></Pressable><Pressable style={[styles.mobileChoice,payment==="UPFRONT"&&styles.mobileChoiceActive]} onPress={()=>editable&&setPayment("UPFRONT")}><Text style={[styles.mobileChoiceText,payment==="UPFRONT"&&styles.mobileChoiceTextActive]}>À vista +5%</Text></Pressable></View>{payment==="INSTALLMENTS"&&<TextInput editable={editable} style={styles.mobileOrderInput} placeholder="Prazo: ex. 30/45/60" value={terms} onChangeText={setTerms}/>} {editable&&<><Text style={styles.sheetLabel}>Adicionar produtos</Text><TextInput style={styles.mobileOrderInput} placeholder="Buscar por código ou descrição" value={query} onChangeText={setQuery}/>{suggestions.map(product=><Pressable key={product.id} style={styles.mobileProductSuggestion} onPress={()=>add(product)}><Text style={styles.productCode}>{product.codigoInterno}</Text><Text style={styles.flex}>{product.nome}</Text><Ionicons name="add-circle" size={24} color={colors.navy}/></Pressable>)}</>}{calculated.map((item,index)=><View key={item.productId} style={styles.mobileOrderItem}><View style={styles.flex}><Text style={styles.productCode}>{item.productCode}</Text><Text style={styles.mobileOrderItemName}>{item.productName}</Text><Text style={styles.mutedSmall}>Disponível: {available.get(item.productId)??0} • {money(item.unitPrice)}</Text></View><View style={styles.mobileOrderControls}><TextInput editable={editable} keyboardType="number-pad" style={styles.mobileNumberInput} value={String(item.quantity)} onChangeText={value=>setItems(items.map((row,i)=>i===index?{...row,quantity:Math.max(1,Number(value)||1)}:row))}/><TextInput editable={editable} keyboardType="decimal-pad" style={styles.mobileNumberInput} value={String(item.manualDiscountPercent)} onChangeText={value=>setItems(items.map((row,i)=>i===index?{...row,manualDiscountPercent:Math.min(limit,Math.max(0,Number(value.replace(",","."))||0))}:row))}/>{editable&&<Pressable onPress={()=>setItems(items.filter((_,i)=>i!==index))}><Ionicons name="trash-outline" size={21} color={colors.red}/></Pressable>}</View></View>)}<View style={styles.mobileOrderSummary}><Text>Total do pedido</Text><Text style={styles.mobileOrderGrandTotal}>{money(total)}</Text></View>{editable&&<View style={styles.mobileOrderActions}><Pressable disabled={busy} style={styles.mobileDraftButton} onPress={()=>void save(false)}><Text style={styles.mobileDraftButtonText}>Salvar</Text></Pressable><Pressable disabled={busy} style={styles.yellowButton} onPress={()=>void save(true)}><Ionicons name="send-outline" size={20} color={colors.navy}/><Text style={styles.yellowButtonText}>Salvar e enviar</Text></Pressable></View>}</ScrollView>;
 }
 
 function NotificationsScreen({ notifications, products, onOpen }: { notifications: CatalogNotification[]; products: Produto[]; onOpen: (notification: CatalogNotification) => void }) {
@@ -2869,7 +2838,7 @@ function AdminLeads({ leads, products }: { leads: Lead[]; products: Produto[] })
   const openWhatsLead = (lead: Lead) => Linking.openURL("https://wa.me/" + (lead.telefone || "5521973636891") + "?text=" + encodeURIComponent("Olá " + lead.nome + ", recebemos seu contato pela Briland."));
   return (
     <>
-      <Text style={styles.adminTitle}>Leads e orçamentos</Text>
+      <Text style={styles.adminTitle}>Leads e contatos comerciais</Text>
       {leads.length === 0 ? <EmptyState text="Nenhum lead encontrado." /> : leads.map((lead) => <Pressable key={lead.id} style={styles.leadCard} onPress={() => setSelected(lead)}><View style={styles.leadTop}><Text style={styles.adminItemTitle}>{lead.nome}</Text><Text style={styles.leadStatus}>{leadDepartment(lead.mensagem, lead.origem)}</Text></View><Text style={styles.mutedSmall}>{lead.status || "NOVO"} • {lead.empresa || "Sem empresa"} • {lead.cidade || "Cidade"}/{lead.estado || "UF"} • {productById.get(lead.produtoId ?? "")?.codigoInterno || "Sem produto"}</Text><Text style={styles.detailText} numberOfLines={3}>{leadMessageBody(lead.mensagem) || "Sem mensagem"}</Text><Text style={styles.openLeadText}>Toque para ler completo</Text></Pressable>)}
       {selected && <Modal visible transparent animationType="slide" onRequestClose={() => setSelected(null)}><Pressable style={styles.sheetOverlay} onPress={() => setSelected(null)} /><ScrollView style={styles.editorSheet} contentContainerStyle={styles.editorContent}><View style={styles.sheetHeader}><Text style={styles.sheetTitle}>Lead recebido</Text><Pressable onPress={() => setSelected(null)}><Ionicons name="close" size={26} color={colors.navy} /></Pressable></View><DetailItem label="Nome" value={selected.nome || "Não informado"} /><DetailItem label="Área" value={leadDepartment(selected.mensagem, selected.origem)} /><DetailItem label="Empresa" value={selected.empresa || "Não informado"} /><DetailItem label="Telefone" value={selected.telefone || "Não informado"} /><DetailItem label="E-mail" value={selected.email || "Não informado"} /><DetailItem label="Produto" value={productById.get(selected.produtoId ?? "")?.nome || "Sem produto"} /><Text style={styles.sheetLabel}>Mensagem</Text><Text style={styles.leadMessageFull}>{leadMessageBody(selected.mensagem) || "Sem mensagem"}</Text><Pressable style={styles.whatsLead} onPress={() => openWhatsLead(selected)}><Ionicons name="logo-whatsapp" size={18} color={colors.green} /><Text style={styles.whatsLeadText}>Abrir WhatsApp</Text></Pressable></ScrollView></Modal>}
     </>
@@ -3019,6 +2988,7 @@ function SideMenu({ visible, onClose, go, onLogout, role, user, links, allowWhat
             </View>
           ))}
           {isAdminRole(role) && <View style={styles.sideSection}><Text style={styles.sideSectionTitle}>Gestão</Text><Pressable style={styles.sideItem} onPress={() => go("admin")}><Ionicons name="speedometer-outline" size={23} color={colors.navy} /><Text style={styles.sideLabel}>Painel admin</Text><Ionicons name="chevron-forward" size={20} color={colors.navy} /></Pressable></View>}
+          {role === "REPRESENTANTE" && <View style={styles.sideSection}><Text style={styles.sideSectionTitle}>Comercial</Text><Pressable style={styles.sideItem} onPress={() => go("representativeOrders")}><Ionicons name="receipt-outline" size={23} color={colors.navy} /><Text style={styles.sideLabel}>Meus pedidos</Text><Ionicons name="chevron-forward" size={20} color={colors.navy} /></Pressable></View>}
           <View style={styles.sideSocialDock}>
             <Pressable style={styles.sideSocialIcon} onPress={() => Linking.openURL(links.instagram)}><Ionicons name="logo-instagram" size={24} color={colors.navy} /></Pressable>
             <Pressable style={styles.sideSocialIcon} onPress={() => Linking.openURL(links.linkedin)}><Ionicons name="logo-linkedin" size={24} color={colors.navy} /></Pressable>
@@ -3303,16 +3273,9 @@ const styles = StyleSheet.create({
   outlineButtonText: { color: colors.navy, fontWeight: "900", textAlign: "center" },
   sectionTitle: { color: colors.navy, fontSize: 20, fontWeight: "900", marginBottom: 8 },
   whatsButton: { width: 58, height: 58, borderRadius: 14, backgroundColor: colors.white, alignItems: "center", justifyContent: "center", ...shadow },
-  quoteItem: { minHeight: 110, marginBottom: 12, padding: 12, borderRadius: 16, backgroundColor: colors.white, flexDirection: "row", alignItems: "center", gap: 12, ...shadow },
-  quoteImage: { width: 76, height: 76 },
-  quoteName: { color: colors.navy, fontSize: 14, lineHeight: 18, fontWeight: "800" },
   quantityControl: { flexDirection: "row", alignItems: "center", borderRadius: 12, borderWidth: 1, borderColor: colors.line, overflow: "hidden" },
   quantityButton: { width: 34, height: 38, alignItems: "center", justifyContent: "center", backgroundColor: colors.soft },
   quantityText: { minWidth: 30, textAlign: "center", color: colors.navy, fontWeight: "900" },
-  quoteSummary: { marginVertical: 14, padding: 18, borderRadius: 16, backgroundColor: colors.white, gap: 5 },
-  quoteSummaryTitle: { color: colors.navy, fontSize: 17, fontWeight: "900" },
-  quoteWhatsappButton: { minHeight: 58, marginTop: 12, borderRadius: 13, backgroundColor: colors.green, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
-  quoteWhatsappText: { color: colors.white, fontWeight: "900" },
   notificationItem: { minHeight: 92, marginBottom: 10, padding: 15, borderRadius: 16, backgroundColor: colors.white, flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, borderColor: colors.line },
   notificationUnread: { borderColor: colors.yellow, backgroundColor: "#FFFCF0" },
   notificationIcon: { width: 46, height: 46, borderRadius: 15, backgroundColor: colors.yellow, alignItems: "center", justifyContent: "center" },
@@ -3493,6 +3456,28 @@ const styles = StyleSheet.create({
   brandedMediaTitle: { color: colors.white, fontWeight: "900", fontSize: 18, textAlign: "center" },
   brandedMediaSub: { color: "#D9E2F2", fontSize: 12, marginTop: 4, textAlign: "center" },
   adminThumbPlaceholder: { width: 62, height: 62, borderRadius: 10, backgroundColor: colors.navy, alignItems: "center", justifyContent: "center" },
+  mobileOrderCard:{minHeight:105,marginTop:12,padding:16,borderRadius:18,backgroundColor:colors.white,flexDirection:"row",alignItems:"center",justifyContent:"space-between",gap:12,...shadow},
+  mobileOrderClient:{maxWidth:235,marginVertical:6,color:colors.navy,fontSize:15,fontWeight:"800"},
+  mobileOrderRight:{alignItems:"flex-end",gap:8},
+  mobileOrderStatus:{overflow:"hidden",borderRadius:10,backgroundColor:"#E8F1FB",paddingHorizontal:9,paddingVertical:5,color:colors.navy,fontSize:10,fontWeight:"900"},
+  mobileOrderTotal:{color:colors.navy,fontSize:16,fontWeight:"900"},
+  mobileChoiceRow:{flexGrow:0,marginBottom:12},
+  mobileChoice:{minHeight:42,marginRight:8,borderWidth:1,borderColor:colors.line,borderRadius:21,backgroundColor:colors.white,paddingHorizontal:15,alignItems:"center",justifyContent:"center"},
+  mobileChoiceActive:{borderColor:colors.navy,backgroundColor:colors.navy},
+  mobileChoiceText:{color:colors.navy,fontSize:12,fontWeight:"800"},
+  mobileChoiceTextActive:{color:colors.white},
+  mobileOrderOptions:{flexDirection:"row",gap:8,marginBottom:10},
+  mobileOrderInput:{minHeight:50,marginBottom:12,borderWidth:1,borderColor:colors.line,borderRadius:13,backgroundColor:colors.white,paddingHorizontal:14,color:colors.navy,fontWeight:"700"},
+  mobileProductSuggestion:{minHeight:58,marginBottom:7,borderWidth:1,borderColor:colors.line,borderRadius:13,backgroundColor:colors.white,paddingHorizontal:13,flexDirection:"row",alignItems:"center",gap:10},
+  mobileOrderItem:{minHeight:112,marginTop:10,borderRadius:16,backgroundColor:colors.white,padding:14,flexDirection:"row",alignItems:"center",gap:10,...shadow},
+  mobileOrderItemName:{maxWidth:210,marginVertical:4,color:colors.navy,fontWeight:"800"},
+  mobileOrderControls:{alignItems:"center",gap:7},
+  mobileNumberInput:{width:58,height:36,borderWidth:1,borderColor:colors.line,borderRadius:9,backgroundColor:colors.soft,textAlign:"center",color:colors.navy,fontWeight:"900"},
+  mobileOrderSummary:{marginTop:18,borderRadius:18,backgroundColor:colors.navy,padding:20,flexDirection:"row",alignItems:"center",justifyContent:"space-between"},
+  mobileOrderGrandTotal:{color:colors.yellow,fontSize:22,fontWeight:"900"},
+  mobileOrderActions:{marginTop:14,gap:10},
+  mobileDraftButton:{minHeight:54,borderWidth:1,borderColor:colors.navy,borderRadius:13,alignItems:"center",justifyContent:"center",backgroundColor:colors.white},
+  mobileDraftButtonText:{color:colors.navy,fontWeight:"900"},
   editorSwitch: { height: 48, borderBottomWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }
 });
 

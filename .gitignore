@@ -2,6 +2,7 @@ node_modules/
 .expo/
 dist/
 dist-check/
+dist-check-order/
 web-build/
 supabase-*.json
 npm-debug.log*

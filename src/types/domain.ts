@@ -9,7 +9,8 @@ export type Route =
   | "promotions"
   | "launches"
   | "contact"
-  | "quote"
+  | "representativeOrders"
+  | "newOrder"
   | "notifications"
   | "detail"
   | "login"
@@ -74,7 +75,11 @@ export type ModeloVeiculo = { id: string; nome: string; slug?: string | null; mo
 export type ProdutoModeloVeiculo = { id: string; produtoId: string; montadoraId: string; modeloId: string; anoInicial?: number | null; anoFinal?: number | null; observacaoComercial?: string | null; createdAt?: string | null; updatedAt?: string | null };
 export type CatalogRevision = { id: number; revision: number; changeKind: "CATALOGO" | "SEGURANCA"; updatedAt: string };
 export type ProdutoModeloVeiculoView = ProdutoModeloVeiculo & { montadoraNome?: string | null; montadoraSlug?: string | null; modeloNome?: string | null; modeloSlug?: string | null; modeloAnoInicial?: number | null; modeloAnoFinal?: number | null };
-export type Usuario = { id: string; name: string; company?: string | null; email: string; role: Role; status: "PENDING" | "ACTIVE" | "INACTIVE"; notes?: string | null; phone?: string | null; cnpj?: string | null; address?: string | null; city?: string | null; state?: string | null; registrationNotes?: string | null; approvedAt?: string | null; approvedBy?: string | null; lastLoginAt?: string | null; createdAt?: string | null; updatedAt?: string | null; authUserId?: string | null };
+export type Usuario = { id: string; name: string; company?: string | null; email: string; role: Role; status: "PENDING" | "ACTIVE" | "INACTIVE"; notes?: string | null; phone?: string | null; cnpj?: string | null; address?: string | null; zipCode?: string | null; neighborhood?: string | null; city?: string | null; state?: string | null; representanteId?: string | null; orderDiscountLimit?: number | null; registrationNotes?: string | null; approvedAt?: string | null; approvedBy?: string | null; lastLoginAt?: string | null; createdAt?: string | null; updatedAt?: string | null; authUserId?: string | null };
+export type OrderStatus = "DRAFT" | "SUBMITTED" | "RETURNED" | "APPROVED" | "REJECTED" | "CANCELLED";
+export type SalesOrderItem = { productId:string; productCode:string; productName:string; quantity:number; listPrice:number; manualDiscountPercent:number; paymentDiscountPercent:number; effectiveDiscountPercent:number; unitPrice:number; lineTotal:number; sortOrder:number };
+export type SalesOrder = { id:string; orderNumber:number; representativeId:string; clientId?:string|null; status:OrderStatus; freightType?:"CIF"|"FOB"|null; redispatchName?:string|null; redispatchPhone?:string|null; paymentType?:"UPFRONT"|"INSTALLMENTS"|null; paymentTerms?:string|null; notes?:string|null; subtotal:number; discount:number; total:number; clientSnapshot:Record<string,unknown>; expiresAt:string; createdAt:string; updatedAt:string; items?:SalesOrderItem[] };
+export type SalesStock = { productId:string; productCode:string; productName:string; availableBalance:number; listPrice?:number|null };
 export type PresenceLocation = { city?: string | null; state?: string | null; country?: string | null };
 export type PresenceSession = PresenceLocation & { sessionId: string; visitorId: string; userId?: string | null; userName?: string | null; userRole: string; route?: string | null; screen?: string | null; source: string; deviceType?: string | null; operatingSystem?: string | null; networkType?: string | null; startedAt: string; lastSeenAt: string; endedAt?: string | null };
 export type Lead = { id: string; nome: string; empresa?: string | null; telefone?: string | null; email?: string | null; cidade?: string | null; estado?: string | null; produtoId?: string | null; mensagem?: string | null; origem?: string | null; status?: string | null; createdAt?: string | null };

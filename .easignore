@@ -12,6 +12,7 @@ store-assets/
 tmp/
 dist/
 dist-check/
+dist-check-order/
 public/
 web-build/
 .env
