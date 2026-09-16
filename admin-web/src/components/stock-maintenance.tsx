@@ -81,6 +81,8 @@ type HistoryRow = {
 
 const normalizeCode = (value: string) =>
   value.trim().toLocaleUpperCase("pt-BR");
+const isMissingProductError = (error?: string) =>
+  Boolean(error?.startsWith("Não existe produto com o código "));
 const localName = (element: Element, name: string) =>
   Array.from(element.getElementsByTagName("*"))
     .find((node) => node.localName === name)
@@ -599,11 +601,17 @@ function XmlMaintenance({
   const [reason, setReason] = useState("");
   const [working, setWorking] = useState(false);
   const max = direction === "ENTRADA" ? 10 : 50;
-  const invalid = documents.some(
+  const blockingInvalid = documents.some(
     (d) =>
-      d.errors.length ||
-      d.items.some((i) => i.error) ||
+      d.errors.some((error) => !isMissingProductError(error)) ||
+      d.items.some((item) => item.error && !isMissingProductError(item.error)) ||
       (d.classifiedManually && !d.manualClassificationReason?.trim()),
+  );
+  const missingItems = documents.flatMap((document) =>
+    document.items.filter((item) => isMissingProductError(item.error)),
+  );
+  const importableItems = documents.flatMap((document) =>
+    document.items.filter((item) => !isMissingProductError(item.error)),
   );
   const selectFiles = async (files: FileList | null) => {
     if (!files) return;
@@ -648,15 +656,25 @@ function XmlMaintenance({
             },
       ),
     );
-  const apply = async () => {
+  const apply = async (partial = false) => {
     if (!documents.length) {
       notify("Selecione os XMLs do lote.");
       return;
     }
-    if (invalid) {
+    if (blockingInvalid) {
       notify(
         "O lote possui pendências. Corrija ou remova os documentos indicados.",
       );
+      return;
+    }
+    if (missingItems.length && !partial) {
+      notify(
+        "Existem produtos sem cadastro. Use a opção de importação parcial para continuar apenas com os itens encontrados.",
+      );
+      return;
+    }
+    if (partial && !importableItems.length) {
+      notify("Nenhum item cadastrado no catálogo pode ser importado neste lote.");
       return;
     }
     if (documents.some((d) => d.nature === "NAO_RECONHECIDA")) {
@@ -665,7 +683,9 @@ function XmlMaintenance({
     }
     if (
       !confirm(
-        `Aplicar ${documents.length} documento(s) como ${direction.toLowerCase()}?`,
+        partial
+          ? `Importar somente os ${importableItems.length} item(ns) encontrado(s) e ignorar ${missingItems.length} item(ns) sem cadastro?`
+          : `Aplicar ${documents.length} documento(s) como ${direction.toLowerCase()}?`,
       )
     )
       return;
@@ -673,7 +693,15 @@ function XmlMaintenance({
     const uploaded: string[] = [];
     try {
       const payload = [];
-      for (const doc of documents) {
+      const documentsToApply = documents
+        .map((doc) => ({
+          ...doc,
+          items: partial
+            ? doc.items.filter((item) => !isMissingProductError(item.error))
+            : doc.items,
+        }))
+        .filter((doc) => doc.nature === "CANCELAMENTO" || doc.items.length > 0);
+      for (const doc of documentsToApply) {
         const safe = doc.file.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
         const path = `${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}-${safe}`;
         const { error: uploadError } = await supabase.storage
@@ -704,7 +732,9 @@ function XmlMaintenance({
       });
       if (error) throw error;
       notify(
-        `Lote aplicado: ${(data as { documentsProcessed?: number })?.documentsProcessed || documents.length} documento(s).`,
+        partial
+          ? `Importação parcial concluída: ${importableItems.length} item(ns) importado(s) e ${missingItems.length} sem cadastro ignorado(s).`
+          : `Lote aplicado: ${(data as { documentsProcessed?: number })?.documentsProcessed || documents.length} documento(s).`,
       );
       setDocuments([]);
       setReason("");
@@ -889,12 +919,45 @@ function XmlMaintenance({
           </Card>
         ))}
       </div>
+      {missingItems.length > 0 && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-5 text-amber-950">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 shrink-0" size={21} />
+            <div>
+              <p className="font-black">
+                {missingItems.length} item(ns) não possuem cadastro no catálogo
+              </p>
+              <p className="mt-1 text-sm font-semibold">
+                Eles não serão importados. Você pode revisar o XML ou continuar
+                somente com os {importableItems.length} item(ns) reconhecido(s).
+              </p>
+              <p className="mt-2 text-sm">
+                Códigos ignorados: {Array.from(new Set(missingItems.map((item) => item.productCode))).join(", ")}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       {documents.length > 0 && (
-        <div className="flex justify-end">
+        <div className="flex flex-wrap justify-end gap-3">
+          {missingItems.length > 0 && (
+            <button
+              disabled={working || blockingInvalid || !importableItems.length}
+              className="btn-primary"
+              onClick={() => void apply(true)}
+            >
+              {working ? (
+                <Loader2 className="animate-spin" size={17} />
+              ) : (
+                <PackageCheck size={17} />
+              )}{" "}
+              Importar somente itens encontrados
+            </button>
+          )}
           <button
-            disabled={working || invalid}
+            disabled={working || blockingInvalid || missingItems.length > 0}
             className="btn-primary"
-            onClick={() => void apply()}
+            onClick={() => void apply(false)}
           >
             {working ? (
               <Loader2 className="animate-spin" size={17} />

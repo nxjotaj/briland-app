@@ -2178,7 +2178,7 @@ function ContactScreen({ onSubmit }: { onSubmit: (lead: Partial<Lead>) => void }
   );
 }
 function LoginScreen({ onLogin, onForgot, onSignup, onCatalog, onPrivacy, onDelete, links, error }: { onLogin: (email: string, password: string) => void | Promise<void>; onForgot: () => void; onSignup: () => void; onCatalog: () => void; onPrivacy: () => void; onDelete: () => void; links: SocialLinks; error?: string }) {
-  const [email, setEmail] = useState("faturamento@briland.com.br");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const supportUrl = links.whatsapp + (links.whatsapp.includes("?") ? "&" : "?") + "text=Preciso%20recuperar%20meu%20acesso%20Briland";
   return (
@@ -2188,7 +2188,7 @@ function LoginScreen({ onLogin, onForgot, onSignup, onCatalog, onPrivacy, onDele
           <Image source={logo} style={styles.loginLogo} resizeMode="contain" />
         </Pressable>
         <Text style={styles.loginLabel}>Insira seu e-mail</Text>
-        <DarkInput icon="mail-outline" value={email} onChangeText={setEmail} placeholder="seu@email.com" />
+        <DarkInput icon="mail-outline" value={email} onChangeText={setEmail} placeholder="seu@email.com" autoComplete="off" />
         <Text style={styles.loginLabel}>Insira sua senha</Text>
         <DarkInput icon="lock-closed-outline" value={password} onChangeText={setPassword} placeholder="Digite sua senha" secure />
         {error ? <View style={styles.loginErrorBox}><Ionicons name="alert-circle-outline" size={19} color={colors.red} /><Text style={styles.loginErrorText}>{error}</Text></View> : null}
@@ -3435,8 +3435,8 @@ function Input({ label, value, onChangeText, required = true, secure = false }: 
   return <View style={styles.inputGroup}><Text style={styles.label}>{label}{required ? <> <Text style={styles.required}>*</Text></> : null}</Text><View style={styles.input}><Ionicons name={secure ? "lock-closed-outline" : "document-text-outline"} size={21} color={colors.muted} /><TextInput value={value} onChangeText={onChangeText} secureTextEntry={secure} autoCapitalize={secure || isEmail ? "none" : "sentences"} keyboardType={isEmail ? "email-address" : "default"} placeholder={`Digite ${label.toLowerCase()}`} style={styles.inputText} placeholderTextColor="#9BA0AA" /></View></View>;
 }
 
-function DarkInput({ icon, value, onChangeText, placeholder, secure }: { icon: IconName; value?: string; onChangeText?: (text: string) => void; placeholder: string; secure?: boolean }) {
-  return <View style={styles.darkInput}><Ionicons name={icon} size={25} color={colors.white} /><TextInput value={value} onChangeText={onChangeText} placeholder={placeholder} secureTextEntry={secure} placeholderTextColor="#8EA0BB" style={styles.darkInputText} /></View>;
+function DarkInput({ icon, value, onChangeText, placeholder, secure, autoComplete }: { icon: IconName; value?: string; onChangeText?: (text: string) => void; placeholder: string; secure?: boolean; autoComplete?: "off" | "email" | "current-password" }) {
+  return <View style={styles.darkInput}><Ionicons name={icon} size={25} color={colors.white} /><TextInput value={value} onChangeText={onChangeText} placeholder={placeholder} secureTextEntry={secure} autoComplete={autoComplete} importantForAutofill={autoComplete === "off" ? "no" : "auto"} placeholderTextColor="#8EA0BB" style={styles.darkInputText} /></View>;
 }
 
 function Divider({ text, dark, compact }: { text: string; dark?: boolean; compact?: boolean }) {
