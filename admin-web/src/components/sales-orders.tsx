@@ -669,24 +669,28 @@ async function adminPdfFile(order: SalesOrder) {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const logoResponse = await fetch("/catalog-assets/briland-logo.png");
+  if (!logoResponse.ok) throw new Error("Não foi possível carregar a logo da Briland.");
+  const logo = await pdf.embedPng(await logoResponse.arrayBuffer());
   let page = pdf.addPage([595.28, 841.89]);
-  let y = 790;
+  let y = 745;
   const head = () => {
     page.drawRectangle({
       x: 0,
-      y: 795,
+      y: 762,
       width: 595.28,
-      height: 47,
+      height: 80,
       color: rgb(0.008, 0.067, 0.149),
     });
-    page.drawText(`BRILAND - PEDIDO ${number(order.orderNumber)}`, {
-      x: 35,
-      y: 812,
-      size: 15,
+    page.drawImage(logo, { x: 25, y: 756, width: 190, height: 86 });
+    page.drawText(`PEDIDO ${number(order.orderNumber)}`, {
+      x: 420,
+      y: 799,
+      size: 13,
       font: bold,
       color: rgb(1, 1, 1),
     });
-    y = 775;
+    y = 745;
   };
   head();
   page.drawText(

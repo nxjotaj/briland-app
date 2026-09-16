@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts, rgb, type PDFPage, type PDFFont } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, type PDFPage, type PDFFont, type PDFImage } from "pdf-lib";
 import type { SalesOrder, SalesStock } from "./types";
 
 const PAGE = { width: 595.28, height: 841.89 };
@@ -17,10 +17,10 @@ function wrap(value: string, font: PDFFont, size: number, max: number) {
   for (const word of words) { const next = row ? `${row} ${word}` : word; if (font.widthOfTextAtSize(next, size) > max && row) { rows.push(row); row = word; } else row = next; }
   if (row) rows.push(row); return rows;
 }
-function header(page: PDFPage, bold: PDFFont, regular: PDFFont, order: SalesOrder, pageNumber: number) {
+function header(page: PDFPage, logo: PDFImage, bold: PDFFont, regular: PDFFont, order: SalesOrder, pageNumber: number) {
   page.drawRectangle({ x: 0, y: PAGE.height - 98, width: PAGE.width, height: 98, color: navy });
   page.drawRectangle({ x: 0, y: PAGE.height - 103, width: PAGE.width, height: 5, color: yellow });
-  page.drawText("BRILAND", { x: 38, y: PAGE.height - 55, size: 24, font: bold, color: rgb(1,1,1) });
+  page.drawImage(logo, { x: 27, y: PAGE.height - 100, width: 220, height: 100 });
   page.drawText("PEDIDO COMERCIAL", { x: 38, y: PAGE.height - 78, size: 9, font: regular, color: yellow });
   page.drawText(`PEDIDO ${String(order.orderNumber).padStart(6,"0")}`, { x: 390, y: PAGE.height - 52, size: 13, font: bold, color: rgb(1,1,1) });
   page.drawText(`Pagina ${pageNumber}`, { x: 478, y: PAGE.height - 76, size: 8, font: regular, color: rgb(.75,.8,.88) });
@@ -34,10 +34,12 @@ function field(page: PDFPage, bold: PDFFont, regular: PDFFont, label: string, va
   wrap(text(value),regular,9,width).slice(0,2).forEach((row,index)=>page.drawText(row,{x,y:y-14-index*11,size:9,font:regular,color:ink}));
 }
 
-export async function buildOrderPdf(order: SalesOrder) {
+export async function buildOrderPdf(order: SalesOrder, logoBytes?: Uint8Array) {
   const pdf = await PDFDocument.create();
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const resolvedLogo = logoBytes || new Uint8Array(await (await fetch("/briland-logo.png")).arrayBuffer());
+  const logo = await pdf.embedPng(resolvedLogo);
   const items = order.items || [];
   let page = pdf.addPage([PAGE.width,PAGE.height]);
   let y=PAGE.height-132;
@@ -66,7 +68,7 @@ export async function buildOrderPdf(order: SalesOrder) {
   [["Subtotal",money(order.subtotal)],["Descontos",`- ${money(order.discount)}`],["TOTAL",money(order.total)]].forEach(([label,value],i)=>{const yy=y-20-i*27;page.drawText(label,{x:346,y:yy,size:i===2?10:8,font:i===2?bold:regular,color:i===2?navy:muted});page.drawText(value,{x:472,y:yy,size:i===2?12:9,font:bold,color:i===2?navy:ink});});
   field(page,bold,regular,"Observacoes",order.notes,38,y-12,270); y-=110;
   page.drawText(`Status: ${order.status}  |  Criado em: ${date(order.createdAt)}  |  Enviado em: ${date(order.submittedAt)}`,{x:38,y,size:7.5,font:regular,color:muted});
-  pdf.getPages().forEach((entry,index)=>{header(entry,bold,regular,order,index+1);footer(entry,regular);});
+  pdf.getPages().forEach((entry,index)=>{header(entry,logo,bold,regular,order,index+1);footer(entry,regular);});
   return pdf.save();
 }
 
