@@ -28,6 +28,11 @@ try {
     ensure(brand, "Não existe marca ativa para criar o produto transacional de teste.");
     product = (await client.query(`insert into public."Produto"(id,nome,"codigoInterno","categoriaId","marcaId",preco,estoque,ativo,destaque,ordem,"updatedAt") values($1,'Produto transacional de teste',$2,$3,$4,100,10,true,false,999999,now()) returning *`, [productId, productId, category.id, brand.id])).rows[0];
   }
+  await client.query("select set_config('request.jwt.claim.sub',$1,true)", [String(representative.authUserId)]);
+  await client.query("set local role authenticated");
+  const representativeStock = (await client.query(`select * from public.get_sales_stock() where "productId"=$1`, [product.id])).rows[0];
+  ensure(representativeStock && representativeStock.reservedBalance === 0 && representativeStock.physicalBalance === representativeStock.availableBalance, "A resposta de saldo revelou dados privados ao representante.");
+  await client.query("reset role");
   const clientId = `test_client_${Date.now()}`;
   await client.query(`insert into public."User"(id,name,company,email,"passwordHash",role,status,phone,cnpj,address,"zipCode",neighborhood,city,state,"representanteId","updatedAt") values($1,'Cliente Teste','Empresa Teste',$2,'FIRST_ACCESS_PENDING','CLIENTE','ACTIVE','11999999999','00000000000191','Rua Teste','00000000','Centro','Teste','SP',$3,now())`, [clientId, `${clientId}@example.invalid`, representative.id]);
   await client.query(`insert into public."SalesOrder"(id,"orderNumber","representativeId","representativeSnapshot") values('test_order_tx',-999,$1,'{}')`, [representative.id]);

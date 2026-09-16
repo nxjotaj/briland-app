@@ -7,6 +7,7 @@ import { BulkProductImages } from "@/components/bulk-product-images";
 import { StockMaintenance } from "@/components/stock-maintenance";
 import { SalesOrders } from "@/components/sales-orders";
 import { buildCatalogPdf, type CatalogImageWarning } from "@/lib/catalog-pdf";
+import { maskCep, maskCnpj, maskPhone } from "@/lib/input-masks";
 import {
   BarChart3,
   Boxes,
@@ -1038,35 +1039,44 @@ function LoginScreen({ onLogin, error, loading }: { onLogin: (email: string, pas
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   return (
-    <div className="grid min-h-screen bg-navy lg:grid-cols-[1fr_520px]">
-      <div className="hidden items-center justify-center p-12 lg:flex">
-        <div className="max-w-xl">
-          <div className="text-6xl font-black tracking-wide text-white">BRILAND</div>
-          <p className="mt-6 text-2xl font-bold text-white/76">Painel web para gerenciar catálogo, mídia, leads e permissões do app em tempo real pelo Supabase.</p>
-        </div>
-      </div>
+    <div className="admin-login-page">
+      <div className="admin-login-glow admin-login-glow-one" />
+      <div className="admin-login-glow admin-login-glow-two" />
+      <div className="admin-login-shell">
+        <section className="admin-login-brand">
+          <img src={brilandLogo.src} alt="Briland" />
+          <div className="admin-login-brand-copy">
+            <span><ShieldCheck size={16} /> AMBIENTE ADMINISTRATIVO</span>
+            <h1>Gestão comercial com clareza e controle.</h1>
+            <p>Catálogo, clientes, pedidos e operação reunidos em um ambiente seguro da Briland.</p>
+          </div>
+          <small>Uso exclusivo da equipe administrativa.</small>
+        </section>
       <form
         onSubmit={(event) => {
           event.preventDefault();
           onLogin(email, password);
         }}
-        className="flex min-h-screen flex-col justify-center bg-white px-8 py-12"
+        className="admin-login-form"
       >
-        <div className="mx-auto w-full max-w-sm">
+        <div className="admin-login-form-inner">
+          <div className="admin-login-mobile-logo"><img src={brilandLogo.src} alt="Briland" /></div>
           <div className="mb-8">
-            <div className="text-sm font-black uppercase tracking-[.24em] text-yellow">Admin Briland</div>
-            <h1 className="mt-3 text-3xl font-black text-navy">Entrar no painel</h1>
-            <p className="mt-2 text-sm text-muted">Acesso restrito a usuários ADMIN ativos.</p>
+            <div className="admin-login-eyebrow">ACESSO SEGURO</div>
+            <h2>Bem-vindo de volta</h2>
+            <p>Entre com sua conta administrativa para continuar.</p>
           </div>
-          <Field label="E-mail"><input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required className="input" /></Field>
-          <Field label="Senha"><input value={password} onChange={(event) => setPassword(event.target.value)} type="password" required className="input" /></Field>
-          {error && <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{error}</div>}
-          <button disabled={loading} className="btn-primary h-12 w-full">
+          <Field label="E-mail"><input value={email} onChange={(event) => setEmail(event.target.value)} type="email" autoComplete="email" placeholder="seuemail@empresa.com.br" required className="input" /></Field>
+          <Field label="Senha"><input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete="current-password" placeholder="Digite sua senha" required className="input" /></Field>
+          {error && <div className="admin-login-error">{error}</div>}
+          <button disabled={loading} className="btn-primary admin-login-submit">
             {loading && <Loader2 className="animate-spin" size={18} />}
-            Entrar
+            {loading ? "Validando acesso..." : "Entrar no painel"}
           </button>
+          <p className="admin-login-help">Esta área é exclusiva para administradores. Representantes devem acessar o catálogo comercial.</p>
         </div>
       </form>
+      </div>
     </div>
   );
 }
@@ -2743,16 +2753,16 @@ function UserModal({ user, users, reload, notify, adminUser, onClose }: { user?:
           <input className="input" type="email" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} />
         </Field>
         <Field label="Telefone / WhatsApp">
-          <input className="input" value={draft.phone || ""} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} />
+          <input className="input" inputMode="tel" maxLength={15} value={maskPhone(draft.phone || "")} onChange={(e) => setDraft({ ...draft, phone: maskPhone(e.target.value) })} />
         </Field>
         <Field label="CNPJ">
-          <input className="input" value={draft.cnpj || ""} onChange={(e) => setDraft({ ...draft, cnpj: e.target.value })} />
+          <input className="input" inputMode="numeric" maxLength={18} value={maskCnpj(draft.cnpj || "")} onChange={(e) => setDraft({ ...draft, cnpj: maskCnpj(e.target.value) })} />
         </Field>
         <Field label="Endereço">
           <input className="input" value={draft.address || ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} />
         </Field>
         <Field label="CEP">
-          <input className="input" value={draft.zipCode || ""} onChange={(e) => setDraft({ ...draft, zipCode: e.target.value })} />
+          <input className="input" inputMode="numeric" maxLength={9} value={maskCep(draft.zipCode || "")} onChange={(e) => setDraft({ ...draft, zipCode: maskCep(e.target.value) })} />
         </Field>
         <Field label="Bairro">
           <input className="input" value={draft.neighborhood || ""} onChange={(e) => setDraft({ ...draft, neighborhood: e.target.value })} />
