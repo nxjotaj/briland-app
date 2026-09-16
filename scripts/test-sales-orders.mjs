@@ -40,7 +40,10 @@ try {
   const saved = (await client.query(`select * from public.save_sales_order('test_order_tx',$1::text,'CIF',null,null,'UPFRONT',null,'Teste',jsonb_build_array(jsonb_build_object('productId',$2::text,'quantity',1,'manualDiscountPercent',15)),true)`, [clientId, product.id])).rows[0];
   ensure(saved.status === "SUBMITTED", "Envio não mudou o status.");
   const item = (await client.query(`select * from public."SalesOrderItem" where "orderId"='test_order_tx'`)).rows[0];
-  ensure(Number(item.effectiveDiscountPercent) === 20, "Desconto adicional à vista incorreto.");
+  ensure(Number(item.effectiveDiscountPercent) === 19.25, "Desconto adicional à vista não foi aplicado sequencialmente.");
+  const expectedUnitPrice = Math.round(Number(product.preco) * 0.85 * 0.95 * 100) / 100;
+  ensure(Number(item.unitPrice) === expectedUnitPrice, "Preço unitário com desconto sequencial incorreto.");
+  ensure(saved.notes === "Teste", "Observação do pedido não foi salva.");
   const reservation = (await client.query(`select * from public."StockReservation" where "orderId"='test_order_tx'`)).rows[0];
   ensure(reservation.status === "ACTIVE" && reservation.quantity === 1, "Reserva de estoque não criada.");
   await client.query("select set_config('request.jwt.claim.sub',$1,true)", [String(admin.authUserId)]);

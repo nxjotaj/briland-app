@@ -1,26 +1,744 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Download, Eye, Loader2, RefreshCw, RotateCcw, Save, Search, X, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  Download,
+  Eye,
+  Loader2,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Search,
+  X,
+  XCircle,
+} from "lucide-react";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { supabase } from "@/lib/supabase";
 import type { Produto, SalesOrder, SalesOrderItem, Usuario } from "@/lib/types";
 
-const statusLabel:Record<string,string>={DRAFT:"Rascunho",SUBMITTED:"Enviado",RETURNED:"Devolvido",APPROVED:"Aprovado",REJECTED:"Rejeitado",CANCELLED:"Cancelado"};
-const number=(value:number)=>String(value).padStart(6,"0");
-const money=(value:number)=>Number(value||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
-const date=(value?:string|null)=>value?new Date(value).toLocaleString("pt-BR"):"-";
+const statusLabel: Record<string, string> = {
+  DRAFT: "Rascunho",
+  SUBMITTED: "Enviado",
+  RETURNED: "Devolvido",
+  APPROVED: "Aprovado",
+  REJECTED: "Rejeitado",
+  CANCELLED: "Cancelado",
+};
+const number = (value: number) => String(value).padStart(6, "0");
+const money = (value: number) =>
+  Number(value || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+const date = (value?: string | null) =>
+  value ? new Date(value).toLocaleString("pt-BR") : "-";
 
-export function SalesOrders({products,users,notify}:{products:Produto[];users:Usuario[];notify:(message:string)=>void}){
-  const[orders,setOrders]=useState<SalesOrder[]>([]);const[stock,setStock]=useState<Array<{productId:string;availableBalance:number}>>([]);const[loading,setLoading]=useState(true);const[selected,setSelected]=useState<SalesOrder|null>(null);const[query,setQuery]=useState("");const[status,setStatus]=useState("SUBMITTED");
-  const load=async()=>{setLoading(true);const[o,s]=await Promise.all([supabase.from("SalesOrder").select("*,items:SalesOrderItem(*),history:SalesOrderHistory(*),reservations:StockReservation(*)").order("submittedAt",{ascending:true,nullsFirst:false}),supabase.rpc("get_sales_stock")]);if(o.error)notify(o.error.message);else{setOrders((o.data||[]) as SalesOrder[]);if(selected)setSelected((o.data||[]).find(item=>item.id===selected.id) as SalesOrder||null);}if(!s.error)setStock(s.data||[]);setLoading(false);};
-  useEffect(()=>{void load();const channel=supabase.channel("admin-sales-orders").on("postgres_changes",{event:"*",schema:"public",table:"SalesOrder"},()=>void load()).subscribe();return()=>{void supabase.removeChannel(channel);};},[]);
-  const filtered=useMemo(()=>orders.filter(o=>(status==="ALL"||o.status===status)&&`${number(o.orderNumber)} ${o.clientSnapshot?.company||""} ${o.representativeSnapshot?.name||""}`.toLowerCase().includes(query.toLowerCase())),[orders,status,query]);
-  return <><div className="mb-5 grid gap-4 md:grid-cols-4">{[["Aguardando análise",orders.filter(o=>o.status==="SUBMITTED").length],["Devolvidos",orders.filter(o=>o.status==="RETURNED").length],["Aprovados",orders.filter(o=>o.status==="APPROVED").length],["Valor aguardando",money(orders.filter(o=>o.status==="SUBMITTED").reduce((a,o)=>a+Number(o.total),0))]].map(([label,value])=><div className="panel p-5" key={label}><div className="text-xs font-black uppercase tracking-wider text-muted">{label}</div><div className="mt-2 text-2xl font-black">{value}</div></div>)}</div><div className="panel p-5"><div className="mb-5 flex flex-wrap gap-3"><label className="search-control flex min-w-[280px] flex-1 items-center gap-2 px-4"><Search size={17}/><input className="w-full bg-transparent py-3 outline-none" placeholder="Pedido, cliente ou representante" value={query} onChange={e=>setQuery(e.target.value)}/></label><select className="input max-w-[220px]" value={status} onChange={e=>setStatus(e.target.value)}><option value="ALL">Todos os status</option>{Object.entries(statusLabel).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select><button className="btn-white" onClick={()=>void load()}>{loading?<Loader2 className="animate-spin" size={17}/>:<RefreshCw size={17}/>}Atualizar</button></div><div className="overflow-auto"><table className="data-table w-full"><thead><tr><th>Pedido</th><th>Enviado em</th><th>Cliente</th><th>Representante</th><th>Status</th><th>Total</th><th/></tr></thead><tbody>{filtered.map(o=><tr key={o.id}><td className="font-black">{number(o.orderNumber)}</td><td>{date(o.submittedAt||o.createdAt)}</td><td><b>{String(o.clientSnapshot?.company||"Não definido")}</b><div className="text-xs text-muted">{String(o.clientSnapshot?.cnpj||"")}</div></td><td>{String(o.representativeSnapshot?.name||"-")}</td><td><span className="status-pill">{statusLabel[o.status]}</span></td><td className="font-black">{money(o.total)}</td><td><button className="icon-btn" title="Abrir pedido" onClick={()=>setSelected(o)}><Eye size={16}/></button></td></tr>)}</tbody></table></div>{!filtered.length&&<div className="py-12 text-center text-sm text-muted">Nenhum pedido encontrado.</div>}</div>{selected&&<OrderModal order={selected} products={products} clients={users.filter(u=>u.role==="CLIENTE"&&u.representanteId===selected.representativeId)} stock={stock} notify={notify} reload={load} onClose={()=>setSelected(null)}/>}</>;
+export function SalesOrders({
+  products,
+  users,
+  notify,
+}: {
+  products: Produto[];
+  users: Usuario[];
+  notify: (message: string) => void;
+}) {
+  const [orders, setOrders] = useState<SalesOrder[]>([]);
+  const [stock, setStock] = useState<
+    Array<{ productId: string; availableBalance: number }>
+  >([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<SalesOrder | null>(null);
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("SUBMITTED");
+  const load = async () => {
+    setLoading(true);
+    const [o, s] = await Promise.all([
+      supabase
+        .from("SalesOrder")
+        .select(
+          "*,items:SalesOrderItem(*),history:SalesOrderHistory(*),reservations:StockReservation(*)",
+        )
+        .order("submittedAt", { ascending: true, nullsFirst: false }),
+      supabase.rpc("get_sales_stock"),
+    ]);
+    if (o.error) notify(o.error.message);
+    else {
+      setOrders((o.data || []) as SalesOrder[]);
+      if (selected)
+        setSelected(
+          ((o.data || []).find(
+            (item) => item.id === selected.id,
+          ) as SalesOrder) || null,
+        );
+    }
+    if (!s.error) setStock(s.data || []);
+    setLoading(false);
+  };
+  useEffect(() => {
+    void load();
+    const channel = supabase
+      .channel("admin-sales-orders")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "SalesOrder" },
+        () => void load(),
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, []);
+  const filtered = useMemo(
+    () =>
+      orders.filter(
+        (o) =>
+          (status === "ALL" || o.status === status) &&
+          `${number(o.orderNumber)} ${o.clientSnapshot?.company || ""} ${o.representativeSnapshot?.name || ""}`
+            .toLowerCase()
+            .includes(query.toLowerCase()),
+      ),
+    [orders, status, query],
+  );
+  return (
+    <>
+      <div className="mb-5 grid gap-4 md:grid-cols-4">
+        {[
+          [
+            "Aguardando análise",
+            orders.filter((o) => o.status === "SUBMITTED").length,
+          ],
+          ["Devolvidos", orders.filter((o) => o.status === "RETURNED").length],
+          ["Aprovados", orders.filter((o) => o.status === "APPROVED").length],
+          [
+            "Valor aguardando",
+            money(
+              orders
+                .filter((o) => o.status === "SUBMITTED")
+                .reduce((a, o) => a + Number(o.total), 0),
+            ),
+          ],
+        ].map(([label, value]) => (
+          <div className="panel p-5" key={label}>
+            <div className="text-xs font-black uppercase tracking-wider text-muted">
+              {label}
+            </div>
+            <div className="mt-2 text-2xl font-black">{value}</div>
+          </div>
+        ))}
+      </div>
+      <div className="panel p-5">
+        <div className="mb-5 flex flex-wrap gap-3">
+          <label className="search-control flex min-w-[280px] flex-1 items-center gap-2 px-4">
+            <Search size={17} />
+            <input
+              className="w-full bg-transparent py-3 outline-none"
+              placeholder="Pedido, cliente ou representante"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </label>
+          <select
+            className="input max-w-[220px]"
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+          >
+            <option value="ALL">Todos os status</option>
+            {Object.entries(statusLabel).map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <button className="btn-white" onClick={() => void load()}>
+            {loading ? (
+              <Loader2 className="animate-spin" size={17} />
+            ) : (
+              <RefreshCw size={17} />
+            )}
+            Atualizar
+          </button>
+        </div>
+        <div className="overflow-auto">
+          <table className="data-table w-full">
+            <thead>
+              <tr>
+                <th>Pedido</th>
+                <th>Enviado em</th>
+                <th>Cliente</th>
+                <th>Representante</th>
+                <th>Status</th>
+                <th>Total</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((o) => (
+                <tr key={o.id}>
+                  <td className="font-black">{number(o.orderNumber)}</td>
+                  <td>{date(o.submittedAt || o.createdAt)}</td>
+                  <td>
+                    <b>{String(o.clientSnapshot?.company || "Não definido")}</b>
+                    <div className="text-xs text-muted">
+                      {String(o.clientSnapshot?.cnpj || "")}
+                    </div>
+                  </td>
+                  <td>{String(o.representativeSnapshot?.name || "-")}</td>
+                  <td>
+                    <span className="status-pill">{statusLabel[o.status]}</span>
+                  </td>
+                  <td className="font-black">{money(o.total)}</td>
+                  <td>
+                    <button
+                      className="icon-btn"
+                      title="Abrir pedido"
+                      onClick={() => setSelected(o)}
+                    >
+                      <Eye size={16} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {!filtered.length && (
+          <div className="py-12 text-center text-sm text-muted">
+            Nenhum pedido encontrado.
+          </div>
+        )}
+      </div>
+      {selected && (
+        <OrderModal
+          order={selected}
+          products={products}
+          clients={users.filter(
+            (u) =>
+              u.role === "CLIENTE" &&
+              u.representanteId === selected.representativeId,
+          )}
+          stock={stock}
+          notify={notify}
+          reload={load}
+          onClose={() => setSelected(null)}
+        />
+      )}
+    </>
+  );
 }
 
-function OrderModal({order,products,clients,stock,notify,reload,onClose}:{order:SalesOrder;products:Produto[];clients:Usuario[];stock:Array<{productId:string;availableBalance:number}>;notify:(m:string)=>void;reload:()=>Promise<void>;onClose:()=>void}){const editable=order.status==="SUBMITTED";const[clientId,setClientId]=useState(order.clientId||"");const[freight,setFreight]=useState(order.freightType||"CIF");const[redispatchName,setRedispatchName]=useState(order.redispatchName||"");const[redispatchPhone,setRedispatchPhone]=useState(order.redispatchPhone||"");const[payment,setPayment]=useState(order.paymentType||"INSTALLMENTS");const[terms,setTerms]=useState(order.paymentTerms||"");const[notes,setNotes]=useState(order.notes||"");const[items,setItems]=useState<SalesOrderItem[]>((order.items||[]).sort((a,b)=>a.sortOrder-b.sortOrder));const[busy,setBusy]=useState(false);const[pq,setPq]=useState("");const calculate=(item:SalesOrderItem)=>{const extra=payment==="UPFRONT"?5:0;const effective=Math.min(100,Number(item.manualDiscountPercent)+extra);return{...item,paymentDiscountPercent:extra,effectiveDiscountPercent:effective,unitPrice:item.listPrice*(1-effective/100),lineTotal:item.listPrice*(1-effective/100)*item.quantity};};const calculated=items.map(calculate);const totals=calculated.reduce((a,i)=>({sub:a.sub+i.listPrice*i.quantity,total:a.total+i.lineTotal}),{sub:0,total:0});const suggestions=products.filter(p=>p.preco!=null&&!items.some(i=>i.productId===p.id)&&`${p.codigoInterno} ${p.nome}`.toLowerCase().includes(pq.toLowerCase())).slice(0,6);const save=async()=>{setBusy(true);const{data,error}=await supabase.rpc("save_sales_order",{p_order_id:order.id,p_client_id:clientId,p_freight_type:freight,p_redispatch_name:redispatchName,p_redispatch_phone:redispatchPhone,p_payment_type:payment,p_payment_terms:terms,p_notes:notes,p_items:calculated.map(i=>({productId:i.productId,quantity:i.quantity,manualDiscountPercent:i.manualDiscountPercent})),p_submit:false});if(error)notify(error.message);else{await uploadAdminPdf({...data,items:calculated} as SalesOrder);notify("Pedido atualizado e alteração registrada no histórico.");await reload();}setBusy(false);};const transition=async(action:string)=>{const verb=action==="APPROVE"?"aprovar":action==="RETURN"?"devolver":"rejeitar";const comment=window.prompt(`Informe a observação para ${verb} o pedido:`);if(comment===null)return;if(action!=="APPROVE"&&!comment.trim()){notify("Informe uma justificativa.");return;}setBusy(true);const{error}=await supabase.rpc("transition_sales_order",{p_order_id:order.id,p_action:action,p_comment:comment});if(error)notify(error.message);else{notify(`Pedido ${verb} concluído.`);await reload();if(action!=="RETURN")onClose();}setBusy(false);};return <div className="fixed inset-0 z-50 overflow-y-auto bg-navy/70 p-4 backdrop-blur-sm"><div className="mx-auto my-5 max-w-6xl rounded-3xl bg-white p-6 shadow-2xl"><div className="mb-5 flex items-start justify-between"><div><div className="text-xs font-black uppercase tracking-widest text-blue-700">Pedido recebido</div><h2 className="text-3xl font-black">{number(order.orderNumber)}</h2><span className="status-pill">{statusLabel[order.status]}</span></div><button className="icon-btn" onClick={onClose}><X/></button></div><div className="grid gap-4 md:grid-cols-3"><label className="field-label">Cliente<select className="input" disabled={!editable} value={clientId} onChange={e=>setClientId(e.target.value)}>{clients.map(c=><option key={c.id} value={c.id}>{c.company}</option>)}</select></label><label className="field-label">Frete<select className="input" disabled={!editable} value={freight} onChange={e=>setFreight(e.target.value as "CIF"|"FOB")}><option>CIF</option><option>FOB</option></select></label><label className="field-label">Pagamento<select className="input" disabled={!editable} value={payment} onChange={e=>setPayment(e.target.value as "UPFRONT"|"INSTALLMENTS")}><option value="INSTALLMENTS">Parcelado</option><option value="UPFRONT">À vista antecipado</option></select></label><label className="field-label">Redespacho<input className="input" disabled={!editable} value={redispatchName} onChange={e=>setRedispatchName(e.target.value)}/></label><label className="field-label">Telefone redespacho<input className="input" disabled={!editable} value={redispatchPhone} onChange={e=>setRedispatchPhone(e.target.value)}/></label>{payment==="INSTALLMENTS"&&<label className="field-label">Prazo<input className="input" disabled={!editable} value={terms} onChange={e=>setTerms(e.target.value)}/></label>}</div>{editable&&<div className="relative my-5"><input className="input" placeholder="Adicionar produto por código ou nome" value={pq} onChange={e=>setPq(e.target.value)}/>{pq&&<div className="absolute z-10 w-full rounded-xl border bg-white shadow-xl">{suggestions.map(p=><button className="block w-full border-b p-3 text-left" key={p.id} onClick={()=>{setItems([...items,{productId:p.id,productCode:p.codigoInterno||p.id,productName:p.nome,quantity:1,listPrice:Number(p.preco),manualDiscountPercent:0,paymentDiscountPercent:0,effectiveDiscountPercent:0,unitPrice:Number(p.preco),lineTotal:Number(p.preco),sortOrder:items.length}]);setPq("");}}>{p.codigoInterno} - {p.nome}</button>)}</div>}</div>}<div className="overflow-auto"><table className="data-table w-full"><thead><tr><th>Produto</th><th>Disponível</th><th>Qtd.</th><th>Tabela</th><th>Desc.</th><th>Unitário</th><th>Total</th><th/></tr></thead><tbody>{calculated.map((i,index)=><tr key={i.productId}><td><b>{i.productCode}</b><div>{i.productName}</div></td><td>{stock.find(s=>s.productId===i.productId)?.availableBalance??0}</td><td><input className="input w-20" type="number" min="1" disabled={!editable} value={i.quantity} onChange={e=>setItems(items.map((v,n)=>n===index?{...v,quantity:Number(e.target.value)}:v))}/></td><td>{money(i.listPrice)}</td><td><input className="input w-24" type="number" min="0" max="100" step=".01" disabled={!editable} value={i.manualDiscountPercent} onChange={e=>setItems(items.map((v,n)=>n===index?{...v,manualDiscountPercent:Number(e.target.value)}:v))}/></td><td>{money(i.unitPrice)}</td><td className="font-black">{money(i.lineTotal)}</td><td>{editable&&<button className="icon-btn" onClick={()=>setItems(items.filter((_,n)=>n!==index))}><X size={15}/></button>}</td></tr>)}</tbody></table></div><label className="field-label mt-5">Observações<textarea className="input min-h-20" disabled={!editable} value={notes} onChange={e=>setNotes(e.target.value)}/></label><div className="ml-auto mt-5 max-w-sm rounded-2xl bg-soft p-5"><div className="flex justify-between">Subtotal <b>{money(totals.sub)}</b></div><div className="mt-2 flex justify-between">Desconto <b>- {money(totals.sub-totals.total)}</b></div><div className="mt-3 flex justify-between border-t pt-3 text-xl font-black">Total <span>{money(totals.total)}</span></div></div><div className="mt-6 flex flex-wrap justify-end gap-3"><button className="btn-white" onClick={()=>void downloadPdf({...order,items:calculated})}><Download size={17}/>PDF</button>{editable&&<><button className="btn-white" disabled={busy} onClick={()=>void save()}><Save size={17}/>Salvar alterações</button><button className="btn-white" disabled={busy} onClick={()=>void transition("RETURN")}><RotateCcw size={17}/>Devolver</button><button className="btn-white text-red-700" disabled={busy} onClick={()=>void transition("REJECT")}><XCircle size={17}/>Rejeitar</button><button className="btn-primary" disabled={busy} onClick={()=>void transition("APPROVE")}><CheckCircle2 size={17}/>Aprovar e baixar saldo</button></>}</div><div className="mt-7 border-t pt-5"><h3 className="font-black">Histórico</h3>{(order.history||[]).slice().sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).map(h=><div key={h.id} className="border-b py-3 text-sm"><b>{statusLabel[h.action]||h.action}</b> - {h.actorName||"Sistema"} - {date(h.createdAt)}{h.comment&&<p className="mt-1 text-muted">{h.comment}</p>}</div>)}</div></div></div>}
+function OrderModal({
+  order,
+  products,
+  clients,
+  stock,
+  notify,
+  reload,
+  onClose,
+}: {
+  order: SalesOrder;
+  products: Produto[];
+  clients: Usuario[];
+  stock: Array<{ productId: string; availableBalance: number }>;
+  notify: (m: string) => void;
+  reload: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const editable = order.status === "SUBMITTED";
+  const [clientId, setClientId] = useState(order.clientId || "");
+  const [freight, setFreight] = useState(order.freightType || "CIF");
+  const [redispatchName, setRedispatchName] = useState(
+    order.redispatchName || "",
+  );
+  const [redispatchPhone, setRedispatchPhone] = useState(
+    order.redispatchPhone || "",
+  );
+  const [payment, setPayment] = useState(order.paymentType || "INSTALLMENTS");
+  const [terms, setTerms] = useState(order.paymentTerms || "");
+  const [notes, setNotes] = useState(order.notes || "");
+  const [items, setItems] = useState<SalesOrderItem[]>(
+    (order.items || []).sort((a, b) => a.sortOrder - b.sortOrder),
+  );
+  const [busy, setBusy] = useState(false);
+  const [pq, setPq] = useState("");
+  const calculate = (item: SalesOrderItem) => {
+    const extra = payment === "UPFRONT" ? 5 : 0;
+    const manual = Number(item.manualDiscountPercent || 0);
+    const effective =
+      Math.round(
+        (100 - (1 - manual / 100) * (1 - extra / 100) * 100) * 100,
+      ) / 100;
+    const unit =
+      Math.round(
+        item.listPrice * (1 - manual / 100) * (1 - extra / 100) * 100,
+      ) / 100;
+    return {
+      ...item,
+      paymentDiscountPercent: extra,
+      effectiveDiscountPercent: effective,
+      unitPrice: unit,
+      lineTotal: unit * item.quantity,
+    };
+  };
+  const calculated = items.map(calculate);
+  const totals = calculated.reduce(
+    (a, i) => ({
+      sub: a.sub + i.listPrice * i.quantity,
+      total: a.total + i.lineTotal,
+    }),
+    { sub: 0, total: 0 },
+  );
+  const suggestions = products
+    .filter(
+      (p) =>
+        p.preco != null &&
+        !items.some((i) => i.productId === p.id) &&
+        `${p.codigoInterno} ${p.nome}`.toLowerCase().includes(pq.toLowerCase()),
+    )
+    .slice(0, 6);
+  const save = async () => {
+    setBusy(true);
+    const { data, error } = await supabase.rpc("save_sales_order", {
+      p_order_id: order.id,
+      p_client_id: clientId,
+      p_freight_type: freight,
+      p_redispatch_name: redispatchName,
+      p_redispatch_phone: redispatchPhone,
+      p_payment_type: payment,
+      p_payment_terms: terms,
+      p_notes: notes,
+      p_items: calculated.map((i) => ({
+        productId: i.productId,
+        quantity: i.quantity,
+        manualDiscountPercent: i.manualDiscountPercent,
+      })),
+      p_submit: false,
+    });
+    if (error) notify(error.message);
+    else {
+      await uploadAdminPdf({ ...data, items: calculated } as SalesOrder);
+      notify("Pedido atualizado e alteração registrada no histórico.");
+      await reload();
+    }
+    setBusy(false);
+  };
+  const transition = async (action: string) => {
+    const verb =
+      action === "APPROVE"
+        ? "aprovar"
+        : action === "RETURN"
+          ? "devolver"
+          : "rejeitar";
+    const comment = window.prompt(
+      `Informe a observação para ${verb} o pedido:`,
+    );
+    if (comment === null) return;
+    if (action !== "APPROVE" && !comment.trim()) {
+      notify("Informe uma justificativa.");
+      return;
+    }
+    setBusy(true);
+    const { error } = await supabase.rpc("transition_sales_order", {
+      p_order_id: order.id,
+      p_action: action,
+      p_comment: comment,
+    });
+    if (error) notify(error.message);
+    else {
+      notify(`Pedido ${verb} concluído.`);
+      await reload();
+      if (action !== "RETURN") onClose();
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-navy/70 p-4 backdrop-blur-sm">
+      <div className="mx-auto my-5 max-w-6xl rounded-3xl bg-white p-6 shadow-2xl">
+        <div className="mb-5 flex items-start justify-between">
+          <div>
+            <div className="text-xs font-black uppercase tracking-widest text-blue-700">
+              Pedido recebido
+            </div>
+            <h2 className="text-3xl font-black">{number(order.orderNumber)}</h2>
+            <span className="status-pill">{statusLabel[order.status]}</span>
+          </div>
+          <button className="icon-btn" onClick={onClose}>
+            <X />
+          </button>
+        </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          <label className="field-label">
+            Cliente
+            <select
+              className="input"
+              disabled={!editable}
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+            >
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.company}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field-label">
+            Frete
+            <select
+              className="input"
+              disabled={!editable}
+              value={freight}
+              onChange={(e) => setFreight(e.target.value as "CIF" | "FOB")}
+            >
+              <option>CIF</option>
+              <option>FOB</option>
+            </select>
+          </label>
+          <label className="field-label">
+            Pagamento
+            <select
+              className="input"
+              disabled={!editable}
+              value={payment}
+              onChange={(e) =>
+                setPayment(e.target.value as "UPFRONT" | "INSTALLMENTS")
+              }
+            >
+              <option value="INSTALLMENTS">Parcelado</option>
+              <option value="UPFRONT">À vista antecipado</option>
+            </select>
+          </label>
+          <label className="field-label">
+            Redespacho
+            <input
+              className="input"
+              disabled={!editable}
+              value={redispatchName}
+              onChange={(e) => setRedispatchName(e.target.value)}
+            />
+          </label>
+          <label className="field-label">
+            Telefone redespacho
+            <input
+              className="input"
+              disabled={!editable}
+              value={redispatchPhone}
+              onChange={(e) => setRedispatchPhone(e.target.value)}
+            />
+          </label>
+          {payment === "INSTALLMENTS" && (
+            <label className="field-label">
+              Prazo
+              <input
+                className="input"
+                disabled={!editable}
+                value={terms}
+                onChange={(e) => setTerms(e.target.value)}
+              />
+            </label>
+          )}
+        </div>
+        {editable && (
+          <div className="relative my-5">
+            <input
+              className="input"
+              placeholder="Adicionar produto por código ou nome"
+              value={pq}
+              onChange={(e) => setPq(e.target.value)}
+            />
+            {pq && (
+              <div className="absolute z-10 w-full rounded-xl border bg-white shadow-xl">
+                {suggestions.map((p) => (
+                  <button
+                    className="block w-full border-b p-3 text-left"
+                    key={p.id}
+                    onClick={() => {
+                      setItems([
+                        ...items,
+                        {
+                          productId: p.id,
+                          productCode: p.codigoInterno || p.id,
+                          productName: p.nome,
+                          quantity: 1,
+                          listPrice: Number(p.preco),
+                          manualDiscountPercent: 0,
+                          paymentDiscountPercent: 0,
+                          effectiveDiscountPercent: 0,
+                          unitPrice: Number(p.preco),
+                          lineTotal: Number(p.preco),
+                          sortOrder: items.length,
+                        },
+                      ]);
+                      setPq("");
+                    }}
+                  >
+                    {p.codigoInterno} - {p.nome}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        <div className="overflow-auto">
+          <table className="data-table w-full">
+            <thead>
+              <tr>
+                <th>Produto</th>
+                <th>Disponível</th>
+                <th>Qtd.</th>
+                <th>Tabela</th>
+                <th>Desc.</th>
+                <th>Unitário</th>
+                <th>Total</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {calculated.map((i, index) => (
+                <tr key={i.productId}>
+                  <td>
+                    <b>{i.productCode}</b>
+                    <div>{i.productName}</div>
+                  </td>
+                  <td>
+                    {stock.find((s) => s.productId === i.productId)
+                      ?.availableBalance ?? 0}
+                  </td>
+                  <td>
+                    <input
+                      className="input w-20"
+                      type="number"
+                      min="1"
+                      disabled={!editable}
+                      value={i.quantity}
+                      onChange={(e) =>
+                        setItems(
+                          items.map((v, n) =>
+                            n === index
+                              ? { ...v, quantity: Number(e.target.value) }
+                              : v,
+                          ),
+                        )
+                      }
+                    />
+                  </td>
+                  <td>{money(i.listPrice)}</td>
+                  <td>
+                    <input
+                      className="input w-24"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step=".01"
+                      disabled={!editable}
+                      value={i.manualDiscountPercent}
+                      onChange={(e) =>
+                        setItems(
+                          items.map((v, n) =>
+                            n === index
+                              ? {
+                                  ...v,
+                                  manualDiscountPercent: Number(e.target.value),
+                                }
+                              : v,
+                          ),
+                        )
+                      }
+                    />
+                  </td>
+                  <td>{money(i.unitPrice)}</td>
+                  <td className="font-black">{money(i.lineTotal)}</td>
+                  <td>
+                    {editable && (
+                      <button
+                        className="icon-btn"
+                        onClick={() =>
+                          setItems(items.filter((_, n) => n !== index))
+                        }
+                      >
+                        <X size={15} />
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <label className="field-label mt-5">
+          Observações
+          <textarea
+            className="input min-h-20"
+            disabled={!editable}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
+        </label>
+        <div className="ml-auto mt-5 max-w-sm rounded-2xl bg-soft p-5">
+          <div className="flex justify-between">
+            Subtotal <b>{money(totals.sub)}</b>
+          </div>
+          <div className="mt-2 flex justify-between">
+            Desconto <b>- {money(totals.sub - totals.total)}</b>
+          </div>
+          <div className="mt-3 flex justify-between border-t pt-3 text-xl font-black">
+            Total <span>{money(totals.total)}</span>
+          </div>
+        </div>
+        <div className="mt-6 flex flex-wrap justify-end gap-3">
+          <button
+            className="btn-white"
+            onClick={() => void downloadPdf({ ...order, items: calculated })}
+          >
+            <Download size={17} />
+            PDF
+          </button>
+          {editable && (
+            <>
+              <button
+                className="btn-white"
+                disabled={busy}
+                onClick={() => void save()}
+              >
+                <Save size={17} />
+                Salvar alterações
+              </button>
+              <button
+                className="btn-white"
+                disabled={busy}
+                onClick={() => void transition("RETURN")}
+              >
+                <RotateCcw size={17} />
+                Devolver
+              </button>
+              <button
+                className="btn-white text-red-700"
+                disabled={busy}
+                onClick={() => void transition("REJECT")}
+              >
+                <XCircle size={17} />
+                Rejeitar
+              </button>
+              <button
+                className="btn-primary"
+                disabled={busy}
+                onClick={() => void transition("APPROVE")}
+              >
+                <CheckCircle2 size={17} />
+                Aprovar e baixar saldo
+              </button>
+            </>
+          )}
+        </div>
+        <div className="mt-7 border-t pt-5">
+          <h3 className="font-black">Histórico</h3>
+          {(order.history || [])
+            .slice()
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+            .map((h) => (
+              <div key={h.id} className="border-b py-3 text-sm">
+                <b>{statusLabel[h.action] || h.action}</b> -{" "}
+                {h.actorName || "Sistema"} - {date(h.createdAt)}
+                {h.comment && <p className="mt-1 text-muted">{h.comment}</p>}
+              </div>
+            ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
-async function adminPdfFile(order:SalesOrder){const pdf=await PDFDocument.create();const font=await pdf.embedFont(StandardFonts.Helvetica);const bold=await pdf.embedFont(StandardFonts.HelveticaBold);let page=pdf.addPage([595.28,841.89]);let y=790;const head=()=>{page.drawRectangle({x:0,y:795,width:595.28,height:47,color:rgb(.008,.067,.149)});page.drawText(`BRILAND - PEDIDO ${number(order.orderNumber)}`,{x:35,y:812,size:15,font:bold,color:rgb(1,1,1)});y=775;};head();page.drawText(`Cliente: ${String(order.clientSnapshot?.company||order.clientSnapshot?.name||"-")}`,{x:35,y,size:10,font:bold});y-=17;page.drawText(`Representante: ${String(order.representativeSnapshot?.name||"-")}  |  Frete: ${order.freightType||"-"}  |  Pagamento: ${order.paymentType==="UPFRONT"?"A vista antecipado":order.paymentTerms||"Parcelado"}`,{x:35,y,size:8,font});y-=30;for(const item of order.items||[]){if(y<65){page=pdf.addPage([595.28,841.89]);head();}page.drawText(`${item.productCode}  ${item.productName.slice(0,42)}`,{x:35,y,size:8,font:bold});page.drawText(`${item.quantity} x ${money(item.unitPrice)}  Desc. ${item.effectiveDiscountPercent}%`,{x:355,y,size:8,font});page.drawText(money(item.lineTotal),{x:505,y,size:8,font:bold});y-=20;}y-=10;page.drawText(`TOTAL: ${money(order.total)}`,{x:400,y,size:14,font:bold,color:rgb(.008,.067,.149)});const bytes=await pdf.save();return new File([new Blob([bytes as BlobPart],{type:"application/pdf"})],`pedido-${number(order.orderNumber)}.pdf`,{type:"application/pdf"});}
-async function uploadAdminPdf(order:SalesOrder){const file=await adminPdfFile(order);await supabase.storage.from("sales-orders").upload(`${order.id}/${file.name}`,file,{contentType:"application/pdf",upsert:true});}
-async function downloadPdf(order:SalesOrder){const file=await adminPdfFile(order);const url=URL.createObjectURL(file);const a=document.createElement("a");a.href=url;a.download=file.name;a.click();URL.revokeObjectURL(url);}
+async function adminPdfFile(order: SalesOrder) {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  let page = pdf.addPage([595.28, 841.89]);
+  let y = 790;
+  const head = () => {
+    page.drawRectangle({
+      x: 0,
+      y: 795,
+      width: 595.28,
+      height: 47,
+      color: rgb(0.008, 0.067, 0.149),
+    });
+    page.drawText(`BRILAND - PEDIDO ${number(order.orderNumber)}`, {
+      x: 35,
+      y: 812,
+      size: 15,
+      font: bold,
+      color: rgb(1, 1, 1),
+    });
+    y = 775;
+  };
+  head();
+  page.drawText(
+    `Cliente: ${String(order.clientSnapshot?.company || order.clientSnapshot?.name || "-")}`,
+    { x: 35, y, size: 10, font: bold },
+  );
+  y -= 17;
+  page.drawText(
+    `Representante: ${String(order.representativeSnapshot?.name || "-")}  |  Frete: ${order.freightType || "-"}  |  Pagamento: ${order.paymentType === "UPFRONT" ? "A vista antecipado" : order.paymentTerms || "Parcelado"}`,
+    { x: 35, y, size: 8, font },
+  );
+  y -= 30;
+  for (const item of order.items || []) {
+    if (y < 65) {
+      page = pdf.addPage([595.28, 841.89]);
+      head();
+    }
+    page.drawText(`${item.productCode}  ${item.productName.slice(0, 42)}`, {
+      x: 35,
+      y,
+      size: 8,
+      font: bold,
+    });
+    page.drawText(
+      `${item.quantity} x ${money(item.unitPrice)}  Desc. ${item.effectiveDiscountPercent}%`,
+      { x: 355, y, size: 8, font },
+    );
+    page.drawText(money(item.lineTotal), { x: 505, y, size: 8, font: bold });
+    y -= 20;
+  }
+  y -= 10;
+  if (order.notes) {
+    page.drawText(`Observacoes: ${order.notes.slice(0, 100)}`, {
+      x: 35,
+      y,
+      size: 8,
+      font,
+    });
+    y -= 22;
+  }
+  page.drawText(`TOTAL: ${money(order.total)}`, {
+    x: 400,
+    y,
+    size: 14,
+    font: bold,
+    color: rgb(0.008, 0.067, 0.149),
+  });
+  const bytes = await pdf.save();
+  return new File(
+    [new Blob([bytes as BlobPart], { type: "application/pdf" })],
+    `pedido-${number(order.orderNumber)}.pdf`,
+    { type: "application/pdf" },
+  );
+}
+async function uploadAdminPdf(order: SalesOrder) {
+  const file = await adminPdfFile(order);
+  await supabase.storage
+    .from("sales-orders")
+    .upload(`${order.id}/${file.name}`, file, {
+      contentType: "application/pdf",
+      upsert: true,
+    });
+}
+async function downloadPdf(order: SalesOrder) {
+  const file = await adminPdfFile(order);
+  const url = URL.createObjectURL(file);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = file.name;
+  a.click();
+  URL.revokeObjectURL(url);
+}

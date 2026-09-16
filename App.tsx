@@ -2428,6 +2428,7 @@ function MobileOrderScreen({
     order.paymentType || "INSTALLMENTS",
   );
   const [terms, setTerms] = useState(order.paymentTerms || "");
+  const [notes, setNotes] = useState(order.notes || "");
   const [items, setItems] = useState<SalesOrderItem[]>(order.items || []);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2460,11 +2461,9 @@ function MobileOrderScreen({
   );
   const calculated = items.map((item) => {
     const extra = payment === "UPFRONT" ? 5 : 0;
-    const effective = Math.min(
-      100,
-      Number(item.manualDiscountPercent || 0) + extra,
-    );
-    const unit = Number(item.listPrice) * (1 - effective / 100);
+    const manual = Number(item.manualDiscountPercent || 0);
+    const effective = Math.round((100 - (1 - manual / 100) * (1 - extra / 100) * 100) * 100) / 100;
+    const unit = Math.round(Number(item.listPrice) * (1 - manual / 100) * (1 - extra / 100) * 100) / 100;
     return {
       ...item,
       paymentDiscountPercent: extra,
@@ -2534,7 +2533,7 @@ function MobileOrderScreen({
           p_redispatch_phone: null,
           p_payment_type: payment,
           p_payment_terms: terms,
-          p_notes: null,
+          p_notes: notes.trim() || null,
           p_items: calculated.map((item) => ({
             productId: item.productId,
             quantity: item.quantity,
@@ -2765,6 +2764,17 @@ function MobileOrderScreen({
           </View>
         </View>
       ))}
+      <Text style={styles.sheetLabel}>Observações do pedido</Text>
+      <TextInput
+        editable={editable}
+        style={styles.mobileOrderInput}
+        placeholder="Informe detalhes importantes para este pedido"
+        value={notes}
+        onChangeText={setNotes}
+        multiline
+        numberOfLines={4}
+        textAlignVertical="top"
+      />
       <View style={styles.mobileOrderSummary}>
         <Text>Total do pedido</Text>
         <Text style={styles.mobileOrderGrandTotal}>{money(total)}</Text>
