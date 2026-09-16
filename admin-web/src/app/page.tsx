@@ -78,6 +78,7 @@ import type {
   ProdutoAplicacao,
   ProdutoModeloVeiculo,
   Role,
+  SalesOrder,
   SocialLinks,
   AuditLog,
   CatalogPdfEditorialSettings,
@@ -592,6 +593,9 @@ export default function Page() {
   const [query, setQuery] = useState("");
   const [toast, setToast] = useState("");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [unseenOrders, setUnseenOrders] = useState<SalesOrder[]>([]);
+  const [newOrderAlertOpen, setNewOrderAlertOpen] = useState(false);
+  const unseenOrderIdsRef = useRef<Set<string>>(new Set());
   const adminPresenceSession = useRef(`admin_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`);
   const adminVisitorId = useRef(`admin_visitor_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`);
   const adminLocation = useRef<{ city: string | null; state: string | null; country: string | null; fetchedAt: number }>({ city: null, state: null, country: null, fetchedAt: 0 });
@@ -599,6 +603,49 @@ export default function Page() {
   const notify = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 3500);
+  };
+
+  useEffect(() => {
+    if (!sessionToken || !isMaster(adminUser?.role)) {
+      setUnseenOrders([]);
+      unseenOrderIdsRef.current = new Set();
+      return;
+    }
+    let mounted = true;
+    const refreshUnseenOrders = async () => {
+      const { data: incoming, error } = await supabase
+        .from("SalesOrder")
+        .select("*")
+        .eq("status", "SUBMITTED")
+        .is("adminSeenAt", null)
+        .order("submittedAt", { ascending: true, nullsFirst: false })
+        .returns<SalesOrder[]>();
+      if (!mounted) return;
+      if (error) {
+        setToast(`Não foi possível consultar os novos pedidos: ${error.message}`);
+        return;
+      }
+      const next = incoming || [];
+      const hasUnannounced = next.some((order) => !unseenOrderIdsRef.current.has(order.id));
+      unseenOrderIdsRef.current = new Set(next.map((order) => order.id));
+      setUnseenOrders(next);
+      if (next.length > 0 && hasUnannounced) setNewOrderAlertOpen(true);
+    };
+    void refreshUnseenOrders();
+    const channel = supabase
+      .channel("admin-master-new-orders")
+      .on("postgres_changes", { event: "*", schema: "public", table: "SalesOrder" }, () => void refreshUnseenOrders())
+      .subscribe();
+    return () => {
+      mounted = false;
+      void supabase.removeChannel(channel);
+    };
+  }, [sessionToken, adminUser?.role]);
+
+  const handleOrderSeen = (orderId: string) => {
+    unseenOrderIdsRef.current.delete(orderId);
+    setUnseenOrders((current) => current.filter((order) => order.id !== orderId));
+    if (unseenOrderIdsRef.current.size === 0) setNewOrderAlertOpen(false);
   };
 
   const refreshAnalyticsData = async (roleOverride = adminUser?.role) => {
@@ -970,7 +1017,9 @@ export default function Page() {
         <nav className="admin-nav min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
           {visibleTabs.map(({ id, icon: Icon }) => (
             <button key={id} onClick={() => { setActive(id); setMobileNavOpen(false); }} className={`nav-item ${active === id ? "nav-item-active" : ""}`}>
-              <span className="nav-icon"><Icon size={17} /></span><span className="flex-1">{id}</span>{active === id && <ChevronRight size={15} />}
+              <span className="nav-icon"><Icon size={17} /></span><span className="flex-1">{id}</span>
+              {id === "Pedidos" && unseenOrders.length > 0 && <span className="rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-black text-white">{unseenOrders.length}</span>}
+              {active === id && <ChevronRight size={15} />}
             </button>
           ))}
         </nav>
@@ -991,14 +1040,14 @@ export default function Page() {
                 <Search size={17} className="text-muted" />
                 <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar no painel..." className="w-full bg-transparent outline-none" />
               </label>
-              <button aria-label="Notificações" className="icon-btn relative"><Bell size={17} /><span className="notification-dot" /></button>
+              <button aria-label="Notificações" onClick={() => setActive("Pedidos")} className="icon-btn relative"><Bell size={17} />{unseenOrders.length > 0 && <span className="absolute -right-2 -top-2 flex min-h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-black text-white">{unseenOrders.length}</span>}</button>
               <button onClick={() => void reloadAll()} className="btn-primary h-11 px-4">{loading ? <Loader2 className="animate-spin" size={17} /> : <RefreshCw size={17} />}<span className="hidden sm:inline">Atualizar</span></button>
             </div>
           </div>
         </header>
 
         <section className="mx-auto max-w-[1600px] p-4 lg:p-8">
-          {activeTab === "Dashboard" && <Dashboard data={data} setActive={setActive} role={adminUser.role} />}
+          {activeTab === "Dashboard" && <Dashboard data={data} setActive={setActive} role={adminUser.role} newOrders={unseenOrders} />}
           {activeTab === "Análises" && <AnalyticsSection data={data} />}
           {activeTab === "Produtos" && <Products data={data} query={query} reload={reloadSection} notify={notify} adminUser={adminUser} />}
           {activeTab === "Manutenção de saldo" && <StockMaintenance products={data.produtos} categories={data.categorias} notify={notify} reloadProducts={reloadSection} />}
@@ -1007,7 +1056,7 @@ export default function Page() {
           {activeTab === "Montadoras" && <VehicleSection data={data} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Aplicações" && <Applications items={data.aplicacoes} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Leads" && <Leads leads={data.leads} products={data.produtos} query={query} reload={reloadSection} notify={notify} canCompleteDeletion={isMaster(adminUser.role)} />}
-          {activeTab === "Pedidos" && <SalesOrders products={data.produtos} users={data.usuarios} notify={notify} />}
+          {activeTab === "Pedidos" && <SalesOrders products={data.produtos} users={data.usuarios} notify={notify} newOrderIds={unseenOrders.map((order) => order.id)} canMarkSeen={isMaster(adminUser.role)} onOrderSeen={handleOrderSeen} />}
           {activeTab === "Usuários" && <UsersSection users={data.usuarios} presence={data.presence} telemetry={data.telemetry} products={data.produtos} query={query} reload={reloadSection} notify={notify} adminUser={adminUser} />}
           {activeTab === "Permissões" && <PermissionsSectionV2 permissions={data.permissoes} query={query} reload={reloadSection} notify={notify} />}
           {activeTab === "Diagnóstico" && <Diagnostics data={data} />}
@@ -1020,6 +1069,18 @@ export default function Page() {
       </main>
 
       {toast && <div className="toast fixed bottom-5 right-5 z-50 px-5 py-4 text-sm font-bold text-white">{toast}</div>}
+      {newOrderAlertOpen && unseenOrders.length > 0 && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-navy/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-[28px] bg-white p-6 shadow-2xl lg:p-8">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-red-100 text-red-700"><Bell size={30} /></div>
+            <div className="mt-5 text-center"><div className="text-xs font-black uppercase tracking-[.2em] text-red-600">Atenção imediata</div><h2 className="mt-2 text-2xl font-black">{unseenOrders.length === 1 ? "Novo pedido recebido" : `${unseenOrders.length} novos pedidos recebidos`}</h2><p className="mt-3 text-sm font-semibold text-slate-600">Existem pedidos enviados por representantes aguardando sua visualização e análise.</p></div>
+            <div className="mt-6 rounded-2xl border border-red-100 bg-red-50 p-4">
+              {unseenOrders.slice(0, 3).map((order) => <div key={order.id} className="flex items-center justify-between gap-3 border-b border-red-100 py-2 last:border-0"><div><div className="font-black">Pedido {String(order.orderNumber).padStart(6, "0")}</div><div className="text-xs font-semibold text-slate-600">{String(order.clientSnapshot?.company || order.clientSnapshot?.name || "Cliente")}</div></div><div className="text-sm font-black">{money(order.total)}</div></div>)}
+            </div>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2"><button className="btn-white justify-center" onClick={() => setNewOrderAlertOpen(false)}>Ver depois</button><button className="btn-primary justify-center" onClick={() => { setNewOrderAlertOpen(false); setActive("Pedidos"); }}>Analisar pedidos</button></div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1081,7 +1142,7 @@ function LoginScreen({ onLogin, error, loading }: { onLogin: (email: string, pas
   );
 }
 
-function Dashboard({ data, setActive, role }: { data: AppData; setActive: (tab: Tab) => void; role: Role }) {
+function Dashboard({ data, setActive, role, newOrders }: { data: AppData; setActive: (tab: Tab) => void; role: Role; newOrders: SalesOrder[] }) {
   const activeProducts = data.produtos.filter((item) => item.ativo !== false).length;
   const pendingUsers = data.usuarios.filter((item) => item.status === "PENDING").length;
   const newLeads = data.leads.filter((item) => item.status === "NOVO").length;
@@ -1122,6 +1183,7 @@ function Dashboard({ data, setActive, role }: { data: AppData; setActive: (tab: 
   ].filter((item) => !item.masterOnly || isMaster(role));
   return (
     <div className="space-y-6">
+      {isMaster(role) && newOrders.length > 0 && <button onClick={() => setActive("Pedidos")} className="flex w-full items-center justify-between gap-4 rounded-[24px] border border-red-200 bg-red-50 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-red-600 text-white"><Bell size={22} /></div><div><div className="text-xs font-black uppercase tracking-[.18em] text-red-600">Pedidos aguardando visualização</div><div className="mt-1 text-xl font-black">{newOrders.length === 1 ? "1 novo pedido recebido" : `${newOrders.length} novos pedidos recebidos`}</div><div className="mt-1 text-xs font-semibold text-slate-600">Clique para abrir a fila prioritária e iniciar a análise.</div></div></div><ArrowUpRight className="shrink-0 text-red-600" size={22} /></button>}
       <section className="hero-dashboard relative overflow-hidden p-6 lg:p-8">
         <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between"><div><div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white/75 px-3 py-1.5 text-xs font-black text-navy"><Sparkles size={14} className="text-blue-800" /> Visão geral em tempo real</div><h2 className="max-w-2xl text-3xl font-black leading-tight lg:text-4xl">Tudo que importa para o catálogo, em um só lugar.</h2><p className="mt-3 max-w-xl text-sm font-semibold text-slate-600 lg:text-base">Acompanhe produtos, oportunidades e a saúde operacional da plataforma Briland.</p></div><div className="flex flex-wrap gap-3"><button onClick={() => setActive("Produtos")} className="btn-primary"><Plus size={17} /> Novo produto</button><button onClick={() => setActive("Leads")} className="btn-glass">Ver oportunidades <ArrowUpRight size={16} /></button></div></div>
       </section>

@@ -38,10 +38,16 @@ export function SalesOrders({
   products,
   users,
   notify,
+  newOrderIds = [],
+  canMarkSeen = false,
+  onOrderSeen,
 }: {
   products: Produto[];
   users: Usuario[];
   notify: (message: string) => void;
+  newOrderIds?: string[];
+  canMarkSeen?: boolean;
+  onOrderSeen?: (orderId: string) => void;
 }) {
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [stock, setStock] = useState<
@@ -100,10 +106,71 @@ export function SalesOrders({
       ),
     [orders, status, query],
   );
+  const newOrderIdSet = useMemo(() => new Set(newOrderIds), [newOrderIds]);
+  const newFiltered = filtered.filter(
+    (order) => order.status === "SUBMITTED" && newOrderIdSet.has(order.id),
+  );
+  const reviewedFiltered = filtered.filter(
+    (order) => !newOrderIdSet.has(order.id),
+  );
+  const openOrder = async (order: SalesOrder) => {
+    setSelected(order);
+    if (!canMarkSeen || order.status !== "SUBMITTED" || !newOrderIdSet.has(order.id)) return;
+    const { data, error } = await supabase.rpc("mark_sales_order_admin_seen", {
+      p_order_id: order.id,
+    });
+    if (error) {
+      notify(error.message);
+      return;
+    }
+    const seenAt = (data as SalesOrder | null)?.adminSeenAt || new Date().toISOString();
+    setOrders((current) =>
+      current.map((item) =>
+        item.id === order.id ? { ...item, adminSeenAt: seenAt } : item,
+      ),
+    );
+    setSelected((current) =>
+      current?.id === order.id ? { ...current, adminSeenAt: seenAt } : current,
+    );
+    onOrderSeen?.(order.id);
+  };
+  const orderRow = (o: SalesOrder, isNewOrder: boolean) => (
+    <tr key={o.id} className={isNewOrder ? "bg-amber-50/80" : ""}>
+      <td className="font-black">
+        <div className="flex items-center gap-2">
+          {number(o.orderNumber)}
+          {isNewOrder && (
+            <span className="rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-black text-white">
+              NOVO
+            </span>
+          )}
+        </div>
+      </td>
+      <td>{date(o.submittedAt || o.createdAt)}</td>
+      <td>
+        <b>{String(o.clientSnapshot?.company || "Não definido")}</b>
+        <div className="text-xs text-muted">
+          {String(o.clientSnapshot?.cnpj || "")}
+          {o.clientSnapshot?.stateRegistration
+            ? ` | IE ${String(o.clientSnapshot.stateRegistration)}`
+            : " | IE não informada"}
+        </div>
+      </td>
+      <td>{String(o.representativeSnapshot?.name || "-")}</td>
+      <td><span className="status-pill">{statusLabel[o.status]}</span></td>
+      <td className="font-black">{money(o.total)}</td>
+      <td>
+        <button className="icon-btn" title="Abrir pedido" onClick={() => void openOrder(o)}>
+          <Eye size={16} />
+        </button>
+      </td>
+    </tr>
+  );
   return (
     <>
-      <div className="mb-5 grid gap-4 md:grid-cols-4">
+      <div className="mb-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         {[
+          ["Novos pedidos", newOrderIds.length],
           [
             "Aguardando análise",
             orders.filter((o) => o.status === "SUBMITTED").length,
@@ -173,35 +240,22 @@ export function SalesOrders({
               </tr>
             </thead>
             <tbody>
-              {filtered.map((o) => (
-                <tr key={o.id}>
-                  <td className="font-black">{number(o.orderNumber)}</td>
-                  <td>{date(o.submittedAt || o.createdAt)}</td>
-                  <td>
-                    <b>{String(o.clientSnapshot?.company || "Não definido")}</b>
-                    <div className="text-xs text-muted">
-                      {String(o.clientSnapshot?.cnpj || "")}
-                      {o.clientSnapshot?.stateRegistration
-                        ? ` | IE ${String(o.clientSnapshot.stateRegistration)}`
-                        : " | IE não informada"}
-                    </div>
-                  </td>
-                  <td>{String(o.representativeSnapshot?.name || "-")}</td>
-                  <td>
-                    <span className="status-pill">{statusLabel[o.status]}</span>
-                  </td>
-                  <td className="font-black">{money(o.total)}</td>
-                  <td>
-                    <button
-                      className="icon-btn"
-                      title="Abrir pedido"
-                      onClick={() => setSelected(o)}
-                    >
-                      <Eye size={16} />
-                    </button>
+              {newFiltered.length > 0 && (
+                <tr className="bg-red-50">
+                  <td colSpan={7} className="border-b border-red-200 px-4 py-3 text-xs font-black uppercase tracking-wider text-red-700">
+                    Novos pedidos - prioridade ({newFiltered.length})
                   </td>
                 </tr>
-              ))}
+              )}
+              {newFiltered.map((order) => orderRow(order, true))}
+              {reviewedFiltered.length > 0 && newFiltered.length > 0 && (
+                <tr className="bg-slate-50">
+                  <td colSpan={7} className="border-b px-4 py-3 text-xs font-black uppercase tracking-wider text-slate-500">
+                    Pedidos já visualizados
+                  </td>
+                </tr>
+              )}
+              {reviewedFiltered.map((order) => orderRow(order, false))}
             </tbody>
           </table>
         </div>
