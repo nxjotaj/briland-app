@@ -984,28 +984,53 @@ function OrderEditor({
       );
     }
   };
+  const currentOrderPdf = () =>
+    orderPdfFile({
+      ...order,
+      ...payloadToOrder(payload),
+      items: calculated,
+      subtotal: totals.subtotal,
+      discount: totals.subtotal - totals.total,
+      total: totals.total,
+    });
+  const download = async () => {
+    try {
+      const file = await currentOrderPdf();
+      const url = URL.createObjectURL(file);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = file.name;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setMsg("PDF baixado no dispositivo.");
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Não foi possível baixar o PDF.");
+    }
+  };
   const share = async () => {
     try {
-      const file = await orderPdfFile({
-        ...order,
-        ...payloadToOrder(payload),
-        items: calculated,
-        subtotal: totals.subtotal,
-        discount: totals.subtotal - totals.total,
-        total: totals.total,
-      });
-      const signed = await uploadPdfFile(order.id, file);
+      const file = await currentOrderPdf();
       if (navigator.canShare?.({ files: [file] })) {
         await navigator.share({
           title: `Pedido ${orderNo(order.orderNumber)}`,
           text: "Pedido comercial Briland",
           files: [file],
         });
-      } else
-        window.open(
-          `https://wa.me/?text=${encodeURIComponent(`Pedido ${orderNo(order.orderNumber)} - ${signed}`)}`,
-          "_blank",
+      } else {
+        const url = URL.createObjectURL(file);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = file.name;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+        setMsg(
+          "O PDF foi baixado. Este navegador não permite anexar arquivos diretamente ao WhatsApp; anexe o arquivo baixado na conversa desejada.",
         );
+      }
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "Não foi possível compartilhar.");
     }
@@ -1030,7 +1055,11 @@ function OrderEditor({
           )}
           <button onClick={() => void share()}>
             <Share2 />
-            WhatsApp / PDF
+            Compartilhar PDF
+          </button>
+          <button onClick={() => void download()}>
+            <Download />
+            Baixar PDF
           </button>
         </div>
       </div>
