@@ -58,4 +58,3 @@ revoke all on function public.update_representative_client(text,jsonb) from publ
 revoke all on function public.create_representative_client(jsonb) from public;
 grant execute on function public.update_representative_client(text,jsonb) to authenticated;
 grant execute on function public.create_representative_client(jsonb) to authenticated;
-
