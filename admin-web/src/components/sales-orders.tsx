@@ -3,9 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
+  ChevronDown,
   Download,
   Eye,
+  Filter,
   Loader2,
+  PackageCheck,
   RefreshCw,
   RotateCcw,
   Save,
@@ -24,6 +27,14 @@ const statusLabel: Record<string, string> = {
   APPROVED: "Aprovado",
   REJECTED: "Rejeitado",
   CANCELLED: "Cancelado",
+};
+const statusStyle: Record<string, string> = {
+  DRAFT: "border-slate-200 bg-slate-100 text-slate-700",
+  SUBMITTED: "border-blue-200 bg-blue-100 text-blue-800",
+  RETURNED: "border-amber-200 bg-amber-100 text-amber-800",
+  APPROVED: "border-emerald-200 bg-emerald-100 text-emerald-800",
+  REJECTED: "border-red-200 bg-red-100 text-red-800",
+  CANCELLED: "border-slate-300 bg-slate-200 text-slate-600",
 };
 const number = (value: number) => String(value).padStart(6, "0");
 const money = (value: number) =>
@@ -57,6 +68,11 @@ export function SalesOrders({
   const [selected, setSelected] = useState<SalesOrder | null>(null);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("SUBMITTED");
+  const [clientFilter, setClientFilter] = useState("ALL");
+  const [representativeFilter, setRepresentativeFilter] = useState("ALL");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [sort, setSort] = useState("OLDEST");
   const load = async () => {
     setLoading(true);
     const [o, s] = await Promise.all([
@@ -95,17 +111,28 @@ export function SalesOrders({
       void supabase.removeChannel(channel);
     };
   }, []);
-  const filtered = useMemo(
-    () =>
-      orders.filter(
+  const clientOptions = useMemo(() => Array.from(new Map(orders.map((order) => [order.clientId || String(order.clientSnapshot?.company || ""), { id: order.clientId || String(order.clientSnapshot?.company || ""), name: String(order.clientSnapshot?.company || order.clientSnapshot?.name || "Cliente") }])).values()).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")), [orders]);
+  const representativeOptions = useMemo(() => Array.from(new Map(orders.map((order) => [order.representativeId, { id: order.representativeId, name: String(order.representativeSnapshot?.name || "Representante") }])).values()).sort((a, b) => a.name.localeCompare(b.name, "pt-BR")), [orders]);
+  const filtered = useMemo(() => {
+    const result = orders.filter(
         (o) =>
           (status === "ALL" || o.status === status) &&
+          (clientFilter === "ALL" || (o.clientId || String(o.clientSnapshot?.company || "")) === clientFilter) &&
+          (representativeFilter === "ALL" || o.representativeId === representativeFilter) &&
+          (!dateFrom || new Date(o.submittedAt || o.createdAt).getTime() >= new Date(`${dateFrom}T00:00:00`).getTime()) &&
+          (!dateTo || new Date(o.submittedAt || o.createdAt).getTime() <= new Date(`${dateTo}T23:59:59`).getTime()) &&
           `${number(o.orderNumber)} ${o.clientSnapshot?.company || ""} ${o.representativeSnapshot?.name || ""}`
             .toLowerCase()
             .includes(query.toLowerCase()),
-      ),
-    [orders, status, query],
-  );
+      );
+    return result.sort((a, b) => {
+      if (sort === "HIGHEST") return Number(b.total) - Number(a.total);
+      if (sort === "LOWEST") return Number(a.total) - Number(b.total);
+      const left = new Date(a.submittedAt || a.createdAt).getTime();
+      const right = new Date(b.submittedAt || b.createdAt).getTime();
+      return sort === "NEWEST" ? right - left : left - right;
+    });
+  }, [orders, status, clientFilter, representativeFilter, dateFrom, dateTo, query, sort]);
   const newOrderIdSet = useMemo(() => new Set(newOrderIds), [newOrderIds]);
   const newFiltered = filtered.filter(
     (order) => order.status === "SUBMITTED" && newOrderIdSet.has(order.id),
@@ -135,8 +162,8 @@ export function SalesOrders({
     onOrderSeen?.(order.id);
   };
   const orderRow = (o: SalesOrder, isNewOrder: boolean) => (
-    <tr key={o.id} className={isNewOrder ? "bg-amber-50/80" : ""}>
-      <td className="font-black">
+    <tr key={o.id} className={`border-b border-slate-100 transition hover:bg-blue-50/50 ${isNewOrder ? "bg-amber-50/70" : "bg-white"}`}>
+      <td className="px-5 py-4 align-middle font-black">
         <div className="flex items-center gap-2">
           {number(o.orderNumber)}
           {isNewOrder && (
@@ -146,8 +173,8 @@ export function SalesOrders({
           )}
         </div>
       </td>
-      <td>{date(o.submittedAt || o.createdAt)}</td>
-      <td>
+      <td className="px-4 py-4 align-middle text-sm font-semibold text-slate-600">{date(o.submittedAt || o.createdAt)}</td>
+      <td className="px-4 py-4 align-middle">
         <b>{String(o.clientSnapshot?.company || "Não definido")}</b>
         <div className="text-xs text-muted">
           {String(o.clientSnapshot?.cnpj || "")}
@@ -156,68 +183,53 @@ export function SalesOrders({
             : " | IE não informada"}
         </div>
       </td>
-      <td>{String(o.representativeSnapshot?.name || "-")}</td>
-      <td><span className="status-pill">{statusLabel[o.status]}</span></td>
-      <td className="font-black">{money(o.total)}</td>
-      <td>
+      <td className="px-4 py-4 align-middle text-sm font-bold">{String(o.representativeSnapshot?.name || "-")}</td>
+      <td className="px-4 py-4 align-middle"><span className={`inline-flex rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-wider ${statusStyle[o.status]}`}>{statusLabel[o.status]}</span></td>
+      <td className="px-4 py-4 text-right align-middle font-black tabular-nums">{money(o.total)}</td>
+      <td className="px-4 py-4 text-center align-middle">
         <button className="icon-btn" title="Abrir pedido" onClick={() => void openOrder(o)}>
           <Eye size={16} />
         </button>
       </td>
     </tr>
   );
+  const activeFilterCount = [query, clientFilter !== "ALL", representativeFilter !== "ALL", dateFrom, dateTo, status !== "ALL", sort !== "OLDEST"].filter(Boolean).length;
+  const clearFilters = () => {
+    setQuery("");
+    setStatus("ALL");
+    setClientFilter("ALL");
+    setRepresentativeFilter("ALL");
+    setDateFrom("");
+    setDateTo("");
+    setSort("OLDEST");
+  };
   return (
     <>
-      <div className="mb-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        {[
-          ["Novos pedidos", newOrderIds.length],
-          [
-            "Aguardando análise",
-            orders.filter((o) => o.status === "SUBMITTED").length,
-          ],
-          ["Devolvidos", orders.filter((o) => o.status === "RETURNED").length],
-          ["Aprovados", orders.filter((o) => o.status === "APPROVED").length],
-          [
-            "Valor aguardando",
-            money(
-              orders
-                .filter((o) => o.status === "SUBMITTED")
-                .reduce((a, o) => a + Number(o.total), 0),
-            ),
-          ],
-        ].map(([label, value]) => (
-          <div className="panel p-5" key={label}>
-            <div className="text-xs font-black uppercase tracking-wider text-muted">
-              {label}
-            </div>
-            <div className="mt-2 text-2xl font-black">{value}</div>
-          </div>
-        ))}
+      <div className="mb-6 overflow-hidden rounded-[28px] bg-gradient-to-br from-[#03162f] via-[#06264b] to-[#0b4a7d] p-6 text-white shadow-xl lg:p-8">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between"><div><div className="text-xs font-black uppercase tracking-[.2em] text-yellow">Central comercial</div><h2 className="mt-2 text-3xl font-black tracking-tight">Gestão de pedidos</h2><p className="mt-2 max-w-2xl text-sm font-semibold text-white/65">Acompanhe os pedidos recebidos, priorize os novos e tome decisões comerciais com todas as informações organizadas.</p></div><div className="rounded-2xl border border-white/10 bg-white/10 px-5 py-4 backdrop-blur"><div className="text-xs font-bold text-white/60">Volume aguardando decisão</div><div className="mt-1 text-2xl font-black text-yellow">{money(orders.filter((o) => o.status === "SUBMITTED").reduce((a, o) => a + Number(o.total), 0))}</div></div></div>
       </div>
-      <div className="panel p-5">
-        <div className="mb-5 flex flex-wrap gap-3">
-          <label className="search-control flex min-w-[280px] flex-1 items-center gap-2 px-4">
-            <Search size={17} />
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <button onClick={() => setStatus("SUBMITTED")} className="rounded-[22px] border border-red-100 bg-gradient-to-br from-white to-red-50 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex items-center justify-between"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-100 text-red-700"><Eye size={19} /></div><span className="rounded-full bg-red-600 px-2.5 py-1 text-[10px] font-black text-white">URGENTE</span></div><div className="mt-5 text-3xl font-black">{newOrderIds.length}</div><div className="mt-1 text-sm font-black">Novos pedidos</div><div className="mt-1 text-xs font-semibold text-slate-500">Ainda não visualizados</div></button>
+        <button onClick={() => setStatus("SUBMITTED")} className="rounded-[22px] border border-blue-100 bg-gradient-to-br from-white to-blue-50 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100 text-blue-700"><RefreshCw size={19} /></div><div className="mt-5 text-3xl font-black">{orders.filter((o) => o.status === "SUBMITTED").length}</div><div className="mt-1 text-sm font-black">Aguardando análise</div><div className="mt-1 text-xs font-semibold text-slate-500">Fila comercial ativa</div></button>
+        <button onClick={() => setStatus("APPROVED")} className="rounded-[22px] border border-emerald-100 bg-gradient-to-br from-white to-emerald-50 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700"><CheckCircle2 size={19} /></div><div className="mt-5 text-3xl font-black">{orders.filter((o) => o.status === "APPROVED").length}</div><div className="mt-1 text-sm font-black">Aprovados</div><div className="mt-1 text-xs font-semibold text-slate-500">Pedidos concluídos</div></button>
+        <button onClick={() => setStatus("REJECTED")} className="rounded-[22px] border border-rose-100 bg-gradient-to-br from-white to-rose-50 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-100 text-rose-700"><XCircle size={19} /></div><div className="mt-5 text-3xl font-black">{orders.filter((o) => o.status === "REJECTED").length}</div><div className="mt-1 text-sm font-black">Rejeitados</div><div className="mt-1 text-xs font-semibold text-slate-500">Decisões negativas</div></button>
+      </div>
+      <div className="mb-6 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><div className="flex items-center gap-2 text-base font-black"><Filter size={18} className="text-blue-700" /> Filtros comerciais</div><div className="mt-1 text-xs font-semibold text-slate-500">Refine a fila por cliente, representante, período, status ou valor.</div></div>{activeFilterCount > 0 && <button className="text-xs font-black text-blue-700 hover:underline" onClick={clearFilters}>Limpar {activeFilterCount} filtro(s)</button>}</div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+          <label className="xl:col-span-2"><span className="mb-1 block text-[10px] font-black uppercase text-slate-500">Buscar pedido</span><div className="search-control flex h-12 items-center gap-2 px-4"><Search size={17} />
             <input
-              className="w-full bg-transparent py-3 outline-none"
+              className="w-full bg-transparent outline-none"
               placeholder="Pedido, cliente ou representante"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-            />
-          </label>
-          <select
-            className="input max-w-[220px]"
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-          >
-            <option value="ALL">Todos os status</option>
-            {Object.entries(statusLabel).map(([key, label]) => (
-              <option key={key} value={key}>
-                {label}
-              </option>
-            ))}
-          </select>
-          <button className="btn-white" onClick={() => void load()}>
+            /></div></label>
+          <label className="relative"><span className="mb-1 block text-[10px] font-black uppercase text-slate-500">Cliente</span><select className="input appearance-none pr-10" value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}><option value="ALL">Todos os clientes</option>{clientOptions.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select><ChevronDown className="pointer-events-none absolute bottom-4 right-3 text-slate-400" size={16} /></label>
+          <label className="relative"><span className="mb-1 block text-[10px] font-black uppercase text-slate-500">Representante</span><select className="input appearance-none pr-10" value={representativeFilter} onChange={(e) => setRepresentativeFilter(e.target.value)}><option value="ALL">Todos os representantes</option>{representativeOptions.map((representative) => <option key={representative.id} value={representative.id}>{representative.name}</option>)}</select><ChevronDown className="pointer-events-none absolute bottom-4 right-3 text-slate-400" size={16} /></label>
+          <label><span className="mb-1 block text-[10px] font-black uppercase text-slate-500">De</span><input className="input" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
+          <label><span className="mb-1 block text-[10px] font-black uppercase text-slate-500">Até</span><input className="input" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
+          <label className="relative"><span className="mb-1 block text-[10px] font-black uppercase text-slate-500">Ordenação</span><select className="input appearance-none pr-10" value={sort} onChange={(e) => setSort(e.target.value)}><option value="OLDEST">Mais antigos primeiro</option><option value="NEWEST">Mais recentes primeiro</option><option value="HIGHEST">Maior valor primeiro</option><option value="LOWEST">Menor valor primeiro</option></select><ChevronDown className="pointer-events-none absolute bottom-4 right-3 text-slate-400" size={16} /></label>
+          <button className="btn-white mt-[15px]" onClick={() => void load()}>
             {loading ? (
               <Loader2 className="animate-spin" size={17} />
             ) : (
@@ -226,17 +238,22 @@ export function SalesOrders({
             Atualizar
           </button>
         </div>
+        <div className="mt-4 flex flex-wrap gap-2"><button onClick={() => setStatus("ALL")} className={`rounded-full border px-3 py-2 text-xs font-black transition ${status === "ALL" ? "border-navy bg-navy text-white" : "border-slate-200 bg-slate-50 text-slate-600"}`}>Todos ({orders.length})</button>{Object.entries(statusLabel).map(([key, label]) => <button key={key} onClick={() => setStatus(key)} className={`rounded-full border px-3 py-2 text-xs font-black transition ${status === key ? statusStyle[key] : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"}`}>{label} ({orders.filter((order) => order.status === key).length})</button>)}</div>
+      </div>
+      <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4"><div><h3 className="font-black">Fila de pedidos</h3><p className="mt-1 text-xs font-semibold text-slate-500">{filtered.length} pedido(s) encontrado(s)</p></div><PackageCheck className="text-blue-700" size={22} /></div>
         <div className="overflow-auto">
-          <table className="data-table w-full">
-            <thead>
-              <tr>
-                <th>Pedido</th>
-                <th>Enviado em</th>
-                <th>Cliente</th>
-                <th>Representante</th>
-                <th>Status</th>
-                <th>Total</th>
-                <th />
+          <table className="w-full min-w-[1080px] table-fixed border-collapse">
+            <colgroup><col className="w-[13%]" /><col className="w-[16%]" /><col className="w-[24%]" /><col className="w-[17%]" /><col className="w-[13%]" /><col className="w-[12%]" /><col className="w-[5%]" /></colgroup>
+            <thead className="bg-[#061a34] text-white">
+              <tr className="text-left text-[10px] font-black uppercase tracking-[.13em]">
+                <th className="px-5 py-4">Pedido</th>
+                <th className="px-4 py-4">Enviado em</th>
+                <th className="px-4 py-4">Cliente</th>
+                <th className="px-4 py-4">Representante</th>
+                <th className="px-4 py-4">Status</th>
+                <th className="px-4 py-4 text-right">Total</th>
+                <th className="px-4 py-4 text-center">Abrir</th>
               </tr>
             </thead>
             <tbody>
@@ -260,8 +277,7 @@ export function SalesOrders({
           </table>
         </div>
         {!filtered.length && (
-          <div className="py-12 text-center text-sm text-muted">
-            Nenhum pedido encontrado.
+          <div className="px-5 py-16 text-center"><div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-400"><Search size={24} /></div><div className="mt-4 font-black">Nenhum pedido encontrado</div><div className="mt-1 text-sm font-semibold text-slate-500">Ajuste os filtros para ampliar o resultado da consulta.</div>
           </div>
         )}
       </div>
@@ -410,20 +426,21 @@ function OrderModal({
   };
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-navy/70 p-4 backdrop-blur-sm">
-      <div className="mx-auto my-5 max-w-6xl rounded-3xl bg-white p-6 shadow-2xl">
-        <div className="mb-5 flex items-start justify-between">
+      <div className="mx-auto my-5 max-w-6xl overflow-hidden rounded-[28px] bg-white shadow-2xl">
+        <div className="flex items-start justify-between bg-gradient-to-r from-[#03162f] to-[#0b4a7d] p-6 text-white">
           <div>
-            <div className="text-xs font-black uppercase tracking-widest text-blue-700">
+            <div className="text-xs font-black uppercase tracking-widest text-yellow">
               Pedido recebido
             </div>
             <h2 className="text-3xl font-black">{number(order.orderNumber)}</h2>
-            <span className="status-pill">{statusLabel[order.status]}</span>
+            <span className={`mt-2 inline-flex rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-wider ${statusStyle[order.status]}`}>{statusLabel[order.status]}</span>
           </div>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20" onClick={onClose}>
             <X />
           </button>
         </div>
-        <div className="mb-5 grid gap-3 rounded-2xl bg-soft p-4 text-sm md:grid-cols-3">
+        <div className="p-6">
+        <div className="mb-5 grid gap-3 rounded-2xl border border-blue-100 bg-blue-50/60 p-4 text-sm md:grid-cols-3">
           <div>
             <small className="font-bold text-muted">Razão social</small>
             <div className="font-black">{String(order.clientSnapshot?.company || order.clientSnapshot?.name || "-")}</div>
@@ -675,7 +692,7 @@ function OrderModal({
                 Salvar alterações
               </button>
               <button
-                className="btn-white"
+                className="btn-white border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
                 disabled={busy}
                 onClick={() => void transition("RETURN")}
               >
@@ -683,7 +700,7 @@ function OrderModal({
                 Devolver
               </button>
               <button
-                className="btn-white text-red-700"
+                className="btn-white border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
                 disabled={busy}
                 onClick={() => void transition("REJECT")}
               >
@@ -691,7 +708,7 @@ function OrderModal({
                 Rejeitar
               </button>
               <button
-                className="btn-primary"
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-emerald-600 px-5 text-sm font-black text-white transition hover:-translate-y-0.5 hover:bg-emerald-700"
                 disabled={busy}
                 onClick={() => void transition("APPROVE")}
               >
@@ -713,6 +730,7 @@ function OrderModal({
                 {h.comment && <p className="mt-1 text-muted">{h.comment}</p>}
               </div>
             ))}
+        </div>
         </div>
       </div>
     </div>
