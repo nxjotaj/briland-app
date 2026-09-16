@@ -173,7 +173,7 @@ async function loadCapacityHealth() {
   };
 }
 
-const userSelectFields = "id,name,company,email,role,status,notes,phone,cnpj,address,zipCode,neighborhood,city,state,registrationNotes,approvedAt,approvedBy,representanteId,orderDiscountLimit,lastLoginAt,createdAt,updatedAt,authUserId";
+const userSelectFields = "id,name,company,email,role,status,notes,phone,cnpj,stateRegistration,address,zipCode,neighborhood,city,state,registrationNotes,approvedAt,approvedBy,representanteId,orderDiscountLimit,lastLoginAt,createdAt,updatedAt,authUserId";
 
 const isMaster = (role?: Role | null) => role === "ADMIN_MASTER" || role === "ADMIN";
 const isCollaborator = (role?: Role | null) => role === "ADMIN_COLABORADOR";
@@ -2629,6 +2629,7 @@ function UserModal({ user, users, reload, notify, adminUser, onClose }: { user?:
       status: "PENDING",
       phone: "",
       cnpj: "",
+      stateRegistration: "",
       address: "",
       zipCode: "",
       neighborhood: "",
@@ -2662,6 +2663,10 @@ function UserModal({ user, users, reload, notify, adminUser, onClose }: { user?:
       notify("Preencha nome e e-mail.");
       return;
     }
+    if (draft.role === "CLIENTE" && (!draft.cnpj?.trim() || !draft.stateRegistration?.trim())) {
+      notify("CNPJ e inscrição estadual são obrigatórios para clientes.");
+      return;
+    }
     if (!user && (password.length < 8 || password !== passwordConfirmation)) {
       notify(password.length < 8 ? "A senha inicial precisa ter no mínimo 8 caracteres." : "A senha e a confirmação não coincidem.");
       return;
@@ -2681,6 +2686,7 @@ function UserModal({ user, users, reload, notify, adminUser, onClose }: { user?:
       status: draft.status,
       phone: draft.phone?.trim() || null,
       cnpj: draft.cnpj?.trim() || null,
+      stateRegistration: draft.stateRegistration?.trim() || null,
       address: draft.address?.trim() || null,
       zipCode: draft.zipCode?.trim() || null,
       neighborhood: draft.neighborhood?.trim() || null,
@@ -2757,6 +2763,9 @@ function UserModal({ user, users, reload, notify, adminUser, onClose }: { user?:
         </Field>
         <Field label="CNPJ">
           <input className="input" inputMode="numeric" maxLength={18} value={maskCnpj(draft.cnpj || "")} onChange={(e) => setDraft({ ...draft, cnpj: maskCnpj(e.target.value) })} />
+        </Field>
+        <Field label="Inscrição estadual">
+          <input className="input" value={draft.stateRegistration || ""} onChange={(e) => setDraft({ ...draft, stateRegistration: e.target.value.toUpperCase() })} />
         </Field>
         <Field label="Endereço">
           <input className="input" value={draft.address || ""} onChange={(e) => setDraft({ ...draft, address: e.target.value })} />

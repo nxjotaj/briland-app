@@ -43,10 +43,10 @@ export async function buildOrderPdf(order: SalesOrder) {
   let y=PAGE.height-132;
   const client=order.clientSnapshot||{}; const representative=order.representativeSnapshot||{};
   page.drawText("DADOS DO PEDIDO",{x:38,y,size:10,font:bold,color:navy}); y-=20;
-  page.drawRectangle({x:38,y:y-68,width:519,height:72,color:soft,borderColor:line,borderWidth:.6});
-  field(page,bold,regular,"Cliente",client.company||client.name,50,y-15,230); field(page,bold,regular,"CNPJ",client.cnpj,300,y-15,120); field(page,bold,regular,"Responsavel",client.name,430,y-15,110);
-  field(page,bold,regular,"Endereco",`${text(client.address)}, ${text(client.neighborhood)} - ${text(client.city)}/${text(client.state)} - CEP ${text(client.zipCode)}`,50,y-48,335);
-  field(page,bold,regular,"Representante",representative.name,405,y-48,140); y-=92;
+  page.drawRectangle({x:38,y:y-98,width:519,height:102,color:soft,borderColor:line,borderWidth:.6});
+  field(page,bold,regular,"Cliente",client.company||client.name,50,y-15,230); field(page,bold,regular,"CNPJ",client.cnpj,300,y-15,120); field(page,bold,regular,"Inscricao estadual",client.stateRegistration,430,y-15,110);
+  field(page,bold,regular,"Responsavel",client.name,50,y-48,230); field(page,bold,regular,"Representante",representative.name,300,y-48,240);
+  field(page,bold,regular,"Endereco",`${text(client.address)}, ${text(client.neighborhood)} - ${text(client.city)}/${text(client.state)} - CEP ${text(client.zipCode)}`,50,y-81,490); y-=122;
   page.drawRectangle({x:38,y:y-52,width:519,height:56,borderColor:line,borderWidth:.6});
   field(page,bold,regular,"Frete",order.freightType,50,y-13,70); field(page,bold,regular,"Redespacho",order.redispatchName,130,y-13,160); field(page,bold,regular,"Telefone",order.redispatchPhone,305,y-13,100); field(page,bold,regular,"Pagamento",order.paymentType==="UPFRONT"?"A vista antecipado (+5% apos desconto comercial)":`Parcelado - ${text(order.paymentTerms)}`,420,y-13,125); y-=80;
 

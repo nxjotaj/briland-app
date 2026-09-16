@@ -190,7 +190,7 @@ function productImageUrl(product: Produto, variant: "card" | "detail" | "thumb",
 
 type UpdateControllerState = "atual" | "disponivel" | "baixando" | "aplicando" | "falhou";
 
-const userSelect = "id,name,company,email,role,status,notes,phone,cnpj,address,city,state,registrationNotes,approvedAt,approvedBy,lastLoginAt,createdAt,updatedAt,authUserId";
+const userSelect = "id,name,company,email,role,status,notes,phone,cnpj,stateRegistration,address,city,state,registrationNotes,approvedAt,approvedBy,lastLoginAt,createdAt,updatedAt,authUserId";
 function notify(title: string, message: string) {
   Alert.alert(title, message);
 }
@@ -3180,6 +3180,7 @@ function UserEditor({ user, reload, authToken, onClose, onAction }: { user: Usua
         status: draft.status,
         phone: draft.phone || null,
         cnpj: draft.cnpj || null,
+        stateRegistration: draft.stateRegistration || null,
         address: draft.address || null,
         city: draft.city || null,
         state: draft.state || null,

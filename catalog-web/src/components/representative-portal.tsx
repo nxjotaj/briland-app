@@ -498,6 +498,7 @@ const blankClient = {
   name: "",
   company: "",
   cnpj: "",
+  stateRegistration: "",
   address: "",
   zipCode: "",
   neighborhood: "",
@@ -517,7 +518,7 @@ function ClientsPage({
   const [editing, setEditing] = useState<UserProfile | null>(null);
   const [creating, setCreating] = useState(false);
   const filtered = clients.filter((c) =>
-    `${c.company} ${c.name} ${c.cnpj} ${c.email}`
+    `${c.company} ${c.name} ${c.cnpj} ${c.stateRegistration} ${c.email}`
       .toLowerCase()
       .includes(q.toLowerCase()),
   );
@@ -543,6 +544,7 @@ function ClientsPage({
             <tr>
               <th>Razão social</th>
               <th>CNPJ</th>
+              <th>Inscrição estadual</th>
               <th>Responsável</th>
               <th>Cidade/UF</th>
               <th>Contato</th>
@@ -556,6 +558,7 @@ function ClientsPage({
                   <b>{c.company}</b>
                 </td>
                 <td>{maskCnpj(c.cnpj || "")}</td>
+                <td>{c.stateRegistration || "-"}</td>
                 <td>{c.name}</td>
                 <td>
                   {c.city}/{c.state}
@@ -631,6 +634,7 @@ function ClientModal({
   const list = [
     ["company", "Razão social"],
     ["cnpj", "CNPJ"],
+    ["stateRegistration", "Inscrição estadual"],
     ["name", "Responsável"],
     ["email", "E-mail"],
     ["phone", "Telefone"],

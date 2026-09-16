@@ -34,7 +34,7 @@ try {
   ensure(representativeStock && representativeStock.reservedBalance === 0 && representativeStock.physicalBalance === representativeStock.availableBalance, "A resposta de saldo revelou dados privados ao representante.");
   await client.query("reset role");
   const clientId = `test_client_${Date.now()}`;
-  await client.query(`insert into public."User"(id,name,company,email,"passwordHash",role,status,phone,cnpj,address,"zipCode",neighborhood,city,state,"representanteId","updatedAt") values($1,'Cliente Teste','Empresa Teste',$2,'FIRST_ACCESS_PENDING','CLIENTE','ACTIVE','11999999999','00000000000191','Rua Teste','00000000','Centro','Teste','SP',$3,now())`, [clientId, `${clientId}@example.invalid`, representative.id]);
+  await client.query(`insert into public."User"(id,name,company,email,"passwordHash",role,status,phone,cnpj,"stateRegistration",address,"zipCode",neighborhood,city,state,"representanteId","updatedAt") values($1,'Cliente Teste','Empresa Teste',$2,'FIRST_ACCESS_PENDING','CLIENTE','ACTIVE','11999999999','00000000000191','110042490114','Rua Teste','00000000','Centro','Teste','SP',$3,now())`, [clientId, `${clientId}@example.invalid`, representative.id]);
   await client.query(`insert into public."SalesOrder"(id,"orderNumber","representativeId","representativeSnapshot") values('test_order_tx',-999,$1,'{}')`, [representative.id]);
   await client.query("select set_config('request.jwt.claim.sub',$1,true)", [String(representative.authUserId)]);
   const saved = (await client.query(`select * from public.save_sales_order('test_order_tx',$1::text,'CIF',null,null,'UPFRONT',null,'Teste',jsonb_build_array(jsonb_build_object('productId',$2::text,'quantity',1,'manualDiscountPercent',15)),true)`, [clientId, product.id])).rows[0];
@@ -44,6 +44,7 @@ try {
   const expectedUnitPrice = Math.round(Number(product.preco) * 0.85 * 0.95 * 100) / 100;
   ensure(Number(item.unitPrice) === expectedUnitPrice, "Preço unitário com desconto sequencial incorreto.");
   ensure(saved.notes === "Teste", "Observação do pedido não foi salva.");
+  ensure(saved.clientSnapshot.stateRegistration === "110042490114", "Inscrição estadual ausente do snapshot do pedido.");
   const reservation = (await client.query(`select * from public."StockReservation" where "orderId"='test_order_tx'`)).rows[0];
   ensure(reservation.status === "ACTIVE" && reservation.quantity === 1, "Reserva de estoque não criada.");
   await client.query("select set_config('request.jwt.claim.sub',$1,true)", [String(admin.authUserId)]);

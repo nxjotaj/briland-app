@@ -181,6 +181,9 @@ export function SalesOrders({
                     <b>{String(o.clientSnapshot?.company || "Não definido")}</b>
                     <div className="text-xs text-muted">
                       {String(o.clientSnapshot?.cnpj || "")}
+                      {o.clientSnapshot?.stateRegistration
+                        ? ` | IE ${String(o.clientSnapshot.stateRegistration)}`
+                        : " | IE não informada"}
                     </div>
                   </td>
                   <td>{String(o.representativeSnapshot?.name || "-")}</td>
@@ -365,6 +368,20 @@ function OrderModal({
           <button className="icon-btn" onClick={onClose}>
             <X />
           </button>
+        </div>
+        <div className="mb-5 grid gap-3 rounded-2xl bg-soft p-4 text-sm md:grid-cols-3">
+          <div>
+            <small className="font-bold text-muted">Razão social</small>
+            <div className="font-black">{String(order.clientSnapshot?.company || order.clientSnapshot?.name || "-")}</div>
+          </div>
+          <div>
+            <small className="font-bold text-muted">CNPJ</small>
+            <div className="font-black">{String(order.clientSnapshot?.cnpj || "-")}</div>
+          </div>
+          <div>
+            <small className="font-bold text-muted">Inscrição estadual</small>
+            <div className="font-black">{String(order.clientSnapshot?.stateRegistration || "Não informada")}</div>
+          </div>
         </div>
         <div className="grid gap-4 md:grid-cols-3">
           <label className="field-label">
@@ -675,6 +692,11 @@ async function adminPdfFile(order: SalesOrder) {
   page.drawText(
     `Cliente: ${String(order.clientSnapshot?.company || order.clientSnapshot?.name || "-")}`,
     { x: 35, y, size: 10, font: bold },
+  );
+  y -= 17;
+  page.drawText(
+    `CNPJ: ${String(order.clientSnapshot?.cnpj || "-")}  |  Inscricao estadual: ${String(order.clientSnapshot?.stateRegistration || "-")}`,
+    { x: 35, y, size: 8, font },
   );
   y -= 17;
   page.drawText(
