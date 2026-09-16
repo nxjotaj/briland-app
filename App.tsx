@@ -2405,13 +2405,391 @@ function RepresentativeOrdersScreen({token,onNew,onOpen}:{token:string;onNew:()=
   return <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}><PageTitle title="Meus pedidos" subtitle="Consulte rapidamente rascunhos e pedidos já enviados."/><Pressable style={styles.yellowButton} onPress={onNew}><Ionicons name="add-circle-outline" size={21} color={colors.navy}/><Text style={styles.yellowButtonText}>Criar novo pedido</Text></Pressable>{loading?<ActivityIndicator style={{marginTop:30}} color={colors.navy}/>:orders.map(order=><Pressable key={order.id} style={styles.mobileOrderCard} onPress={()=>onOpen(order)}><View><Text style={styles.productCode}>PEDIDO {mobileOrderNumber(order.orderNumber)}</Text><Text style={styles.mobileOrderClient}>{String(order.clientSnapshot?.company||"Cliente ainda não selecionado")}</Text><Text style={styles.mutedSmall}>{new Date(order.updatedAt).toLocaleString("pt-BR")}</Text></View><View style={styles.mobileOrderRight}><Text style={styles.mobileOrderStatus}>{mobileOrderStatus[order.status]}</Text><Text style={styles.mobileOrderTotal}>{money(order.total)}</Text></View></Pressable>)}{!loading&&!orders.length&&<View style={styles.emptySearchCard}><Ionicons name="receipt-outline" size={42} color={colors.yellow}/><Text style={styles.emptySearchTitle}>Nenhum pedido</Text><Text style={styles.muted}>Crie o primeiro pedido pelo botão acima.</Text></View>}</ScrollView>;
 }
 
-function MobileOrderScreen({order,token,representative,products,onSaved}:{order:SalesOrder;token:string;representative:Usuario|null;products:Produto[];onSaved:(order:SalesOrder)=>void}){
-  const[clients,setClients]=useState<Usuario[]>([]);const[stock,setStock]=useState<SalesStock[]>([]);const[clientId,setClientId]=useState(order.clientId||"");const[freight,setFreight]=useState<"CIF"|"FOB">(order.freightType||"CIF");const[payment,setPayment]=useState<"UPFRONT"|"INSTALLMENTS">(order.paymentType||"INSTALLMENTS");const[terms,setTerms]=useState(order.paymentTerms||"");const[items,setItems]=useState<SalesOrderItem[]>(order.items||[]);const[query,setQuery]=useState("");const[busy,setBusy]=useState(false);const editable=["DRAFT","RETURNED"].includes(order.status);const limit=representative?.orderDiscountLimit??15;
-  useEffect(()=>{void Promise.all([supabaseGet<Usuario>("User",`select=*&role=eq.CLIENTE&representanteId=eq.${representative?.id||""}&order=company.asc`,token),supabaseRpc<SalesStock[]>("get_sales_stock",{},token)]).then(([c,s])=>{setClients(c);setStock(s);}).catch(err=>Alert.alert("Pedido",err instanceof Error?err.message:"Não foi possível carregar os dados."));},[token,representative?.id]);
-  const available=new Map(stock.map(row=>[row.productId,row.availableBalance]));const calculated=items.map(item=>{const extra=payment==="UPFRONT"?5:0;const effective=Math.min(100,Number(item.manualDiscountPercent||0)+extra);const unit=Number(item.listPrice)*(1-effective/100);return{...item,paymentDiscountPercent:extra,effectiveDiscountPercent:effective,unitPrice:unit,lineTotal:unit*Number(item.quantity)}});const total=calculated.reduce((sum,item)=>sum+item.lineTotal,0);const suggestions=query.trim().length>1?products.filter(product=>product.preco!=null&&!items.some(item=>item.productId===product.id)&&`${product.codigoInterno} ${product.nome}`.toLowerCase().includes(query.toLowerCase())).slice(0,6):[];
-  const add=(product:Produto)=>{setItems([...items,{productId:product.id,productCode:product.codigoInterno||product.id,productName:product.nome,quantity:1,listPrice:Number(product.preco),manualDiscountPercent:0,paymentDiscountPercent:0,effectiveDiscountPercent:0,unitPrice:Number(product.preco),lineTotal:Number(product.preco),sortOrder:items.length}]);setQuery("");};
-  const save=async(submit:boolean)=>{if(!clientId){Alert.alert("Cliente obrigatório","Selecione o cliente do pedido.");return;}if(!calculated.length){Alert.alert("Pedido vazio","Adicione pelo menos um produto.");return;}if(payment==="INSTALLMENTS"&&!terms.trim()){Alert.alert("Prazo obrigatório","Informe o prazo do pagamento parcelado.");return;}setBusy(true);try{const saved=await supabaseRpc<SalesOrder>("save_sales_order",{p_order_id:order.id,p_client_id:clientId,p_freight_type:freight,p_redispatch_name:null,p_redispatch_phone:null,p_payment_type:payment,p_payment_terms:terms,p_notes:null,p_items:calculated.map(item=>({productId:item.productId,quantity:item.quantity,manualDiscountPercent:item.manualDiscountPercent})),p_submit:submit},token);Alert.alert(submit?"Pedido enviado":"Rascunho salvo",submit?"O estoque foi reservado e o pedido seguiu para análise.":"Você pode continuar este pedido depois.");onSaved({...saved,items:calculated});}catch(err){Alert.alert("Não foi possível salvar",err instanceof Error?err.message:"Tente novamente.");}finally{setBusy(false);}};
-  return <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}><PageTitle title={`Pedido ${mobileOrderNumber(order.orderNumber)}`} subtitle={editable?"Preencha e envie sem sair do catálogo.":`Status: ${mobileOrderStatus[order.status]}`}/><Text style={styles.sheetLabel}>Cliente</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.mobileChoiceRow}>{clients.map(client=><Pressable key={client.id} style={[styles.mobileChoice,clientId===client.id&&styles.mobileChoiceActive]} onPress={()=>editable&&setClientId(client.id)}><Text style={[styles.mobileChoiceText,clientId===client.id&&styles.mobileChoiceTextActive]}>{client.company||client.name}</Text></Pressable>)}</ScrollView><View style={styles.mobileOrderOptions}><Pressable style={[styles.mobileChoice,freight==="CIF"&&styles.mobileChoiceActive]} onPress={()=>editable&&setFreight("CIF")}><Text style={[styles.mobileChoiceText,freight==="CIF"&&styles.mobileChoiceTextActive]}>Frete CIF</Text></Pressable><Pressable style={[styles.mobileChoice,freight==="FOB"&&styles.mobileChoiceActive]} onPress={()=>editable&&setFreight("FOB")}><Text style={[styles.mobileChoiceText,freight==="FOB"&&styles.mobileChoiceTextActive]}>Frete FOB</Text></Pressable></View><Text style={styles.sheetLabel}>Pagamento</Text><View style={styles.mobileOrderOptions}><Pressable style={[styles.mobileChoice,payment==="INSTALLMENTS"&&styles.mobileChoiceActive]} onPress={()=>editable&&setPayment("INSTALLMENTS")}><Text style={[styles.mobileChoiceText,payment==="INSTALLMENTS"&&styles.mobileChoiceTextActive]}>Parcelado</Text></Pressable><Pressable style={[styles.mobileChoice,payment==="UPFRONT"&&styles.mobileChoiceActive]} onPress={()=>editable&&setPayment("UPFRONT")}><Text style={[styles.mobileChoiceText,payment==="UPFRONT"&&styles.mobileChoiceTextActive]}>À vista +5%</Text></Pressable></View>{payment==="INSTALLMENTS"&&<TextInput editable={editable} style={styles.mobileOrderInput} placeholder="Prazo: ex. 30/45/60" value={terms} onChangeText={setTerms}/>} {editable&&<><Text style={styles.sheetLabel}>Adicionar produtos</Text><TextInput style={styles.mobileOrderInput} placeholder="Buscar por código ou descrição" value={query} onChangeText={setQuery}/>{suggestions.map(product=><Pressable key={product.id} style={styles.mobileProductSuggestion} onPress={()=>add(product)}><Text style={styles.productCode}>{product.codigoInterno}</Text><Text style={styles.flex}>{product.nome}</Text><Ionicons name="add-circle" size={24} color={colors.navy}/></Pressable>)}</>}{calculated.map((item,index)=><View key={item.productId} style={styles.mobileOrderItem}><View style={styles.flex}><Text style={styles.productCode}>{item.productCode}</Text><Text style={styles.mobileOrderItemName}>{item.productName}</Text><Text style={styles.mutedSmall}>Disponível: {available.get(item.productId)??0} • {money(item.unitPrice)}</Text></View><View style={styles.mobileOrderControls}><TextInput editable={editable} keyboardType="number-pad" style={styles.mobileNumberInput} value={String(item.quantity)} onChangeText={value=>setItems(items.map((row,i)=>i===index?{...row,quantity:Math.max(1,Number(value)||1)}:row))}/><TextInput editable={editable} keyboardType="decimal-pad" style={styles.mobileNumberInput} value={String(item.manualDiscountPercent)} onChangeText={value=>setItems(items.map((row,i)=>i===index?{...row,manualDiscountPercent:Math.min(limit,Math.max(0,Number(value.replace(",","."))||0))}:row))}/>{editable&&<Pressable onPress={()=>setItems(items.filter((_,i)=>i!==index))}><Ionicons name="trash-outline" size={21} color={colors.red}/></Pressable>}</View></View>)}<View style={styles.mobileOrderSummary}><Text>Total do pedido</Text><Text style={styles.mobileOrderGrandTotal}>{money(total)}</Text></View>{editable&&<View style={styles.mobileOrderActions}><Pressable disabled={busy} style={styles.mobileDraftButton} onPress={()=>void save(false)}><Text style={styles.mobileDraftButtonText}>Salvar</Text></Pressable><Pressable disabled={busy} style={styles.yellowButton} onPress={()=>void save(true)}><Ionicons name="send-outline" size={20} color={colors.navy}/><Text style={styles.yellowButtonText}>Salvar e enviar</Text></Pressable></View>}</ScrollView>;
+function MobileOrderScreen({
+  order,
+  token,
+  representative,
+  products,
+  onSaved,
+}: {
+  order: SalesOrder;
+  token: string;
+  representative: Usuario | null;
+  products: Produto[];
+  onSaved: (order: SalesOrder) => void;
+}) {
+  const [clients, setClients] = useState<Usuario[]>([]);
+  const [stock, setStock] = useState<SalesStock[]>([]);
+  const [clientId, setClientId] = useState(order.clientId || "");
+  const [freight, setFreight] = useState<"CIF" | "FOB">(
+    order.freightType || "CIF",
+  );
+  const [payment, setPayment] = useState<"UPFRONT" | "INSTALLMENTS">(
+    order.paymentType || "INSTALLMENTS",
+  );
+  const [terms, setTerms] = useState(order.paymentTerms || "");
+  const [items, setItems] = useState<SalesOrderItem[]>(order.items || []);
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+  const editable = ["DRAFT", "RETURNED"].includes(order.status);
+  const limit = representative?.orderDiscountLimit ?? 15;
+  useEffect(() => {
+    void Promise.all([
+      supabaseGet<Usuario>(
+        "User",
+        `select=*&role=eq.CLIENTE&representanteId=eq.${representative?.id || ""}&order=company.asc`,
+        token,
+      ),
+      supabaseRpc<SalesStock[]>("get_sales_stock", {}, token),
+    ])
+      .then(([c, s]) => {
+        setClients(c);
+        setStock(s);
+      })
+      .catch((err) =>
+        Alert.alert(
+          "Pedido",
+          err instanceof Error
+            ? err.message
+            : "Não foi possível carregar os dados.",
+        ),
+      );
+  }, [token, representative?.id]);
+  const available = new Map(
+    stock.map((row) => [row.productId, row.availableBalance]),
+  );
+  const calculated = items.map((item) => {
+    const extra = payment === "UPFRONT" ? 5 : 0;
+    const effective = Math.min(
+      100,
+      Number(item.manualDiscountPercent || 0) + extra,
+    );
+    const unit = Number(item.listPrice) * (1 - effective / 100);
+    return {
+      ...item,
+      paymentDiscountPercent: extra,
+      effectiveDiscountPercent: effective,
+      unitPrice: unit,
+      lineTotal: unit * Number(item.quantity),
+    };
+  });
+  const total = calculated.reduce((sum, item) => sum + item.lineTotal, 0);
+  const suggestions =
+    query.trim().length > 1
+      ? products
+          .filter(
+            (product) =>
+              product.preco != null &&
+              !items.some((item) => item.productId === product.id) &&
+              `${product.codigoInterno} ${product.nome}`
+                .toLowerCase()
+                .includes(query.toLowerCase()),
+          )
+          .slice(0, 6)
+      : [];
+  const add = (product: Produto) => {
+    setItems([
+      ...items,
+      {
+        productId: product.id,
+        productCode: product.codigoInterno || product.id,
+        productName: product.nome,
+        quantity: 1,
+        listPrice: Number(product.preco),
+        manualDiscountPercent: 0,
+        paymentDiscountPercent: 0,
+        effectiveDiscountPercent: 0,
+        unitPrice: Number(product.preco),
+        lineTotal: Number(product.preco),
+        sortOrder: items.length,
+      },
+    ]);
+    setQuery("");
+  };
+  const save = async (submit: boolean) => {
+    if (!clientId) {
+      Alert.alert("Cliente obrigatório", "Selecione o cliente do pedido.");
+      return;
+    }
+    if (!calculated.length) {
+      Alert.alert("Pedido vazio", "Adicione pelo menos um produto.");
+      return;
+    }
+    if (payment === "INSTALLMENTS" && !terms.trim()) {
+      Alert.alert(
+        "Prazo obrigatório",
+        "Informe o prazo do pagamento parcelado.",
+      );
+      return;
+    }
+    setBusy(true);
+    try {
+      const saved = await supabaseRpc<SalesOrder>(
+        "save_sales_order",
+        {
+          p_order_id: order.id,
+          p_client_id: clientId,
+          p_freight_type: freight,
+          p_redispatch_name: null,
+          p_redispatch_phone: null,
+          p_payment_type: payment,
+          p_payment_terms: terms,
+          p_notes: null,
+          p_items: calculated.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+            manualDiscountPercent: item.manualDiscountPercent,
+          })),
+          p_submit: submit,
+        },
+        token,
+      );
+      Alert.alert(
+        submit ? "Pedido enviado" : "Rascunho salvo",
+        submit
+          ? "O estoque foi reservado e o pedido seguiu para análise."
+          : "Você pode continuar este pedido depois.",
+      );
+      onSaved({ ...saved, items: calculated });
+    } catch (err) {
+      Alert.alert(
+        "Não foi possível salvar",
+        err instanceof Error ? err.message : "Tente novamente.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.contentWithDock}
+    >
+      <PageTitle
+        title={`Pedido ${mobileOrderNumber(order.orderNumber)}`}
+        subtitle={
+          editable
+            ? "Preencha e envie sem sair do catálogo."
+            : `Status: ${mobileOrderStatus[order.status]}`
+        }
+      />
+      <Text style={styles.sheetLabel}>Cliente</Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.mobileChoiceRow}
+      >
+        {clients.map((client) => (
+          <Pressable
+            key={client.id}
+            style={[
+              styles.mobileChoice,
+              clientId === client.id && styles.mobileChoiceActive,
+            ]}
+            onPress={() => editable && setClientId(client.id)}
+          >
+            <Text
+              style={[
+                styles.mobileChoiceText,
+                clientId === client.id && styles.mobileChoiceTextActive,
+              ]}
+            >
+              {client.company || client.name}
+            </Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      <View style={styles.mobileOrderOptions}>
+        <Pressable
+          style={[
+            styles.mobileChoice,
+            freight === "CIF" && styles.mobileChoiceActive,
+          ]}
+          onPress={() => editable && setFreight("CIF")}
+        >
+          <Text
+            style={[
+              styles.mobileChoiceText,
+              freight === "CIF" && styles.mobileChoiceTextActive,
+            ]}
+          >
+            Frete CIF
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[
+            styles.mobileChoice,
+            freight === "FOB" && styles.mobileChoiceActive,
+          ]}
+          onPress={() => editable && setFreight("FOB")}
+        >
+          <Text
+            style={[
+              styles.mobileChoiceText,
+              freight === "FOB" && styles.mobileChoiceTextActive,
+            ]}
+          >
+            Frete FOB
+          </Text>
+        </Pressable>
+      </View>
+      <Text style={styles.sheetLabel}>Pagamento</Text>
+      <View style={styles.mobileOrderOptions}>
+        <Pressable
+          style={[
+            styles.mobileChoice,
+            payment === "INSTALLMENTS" && styles.mobileChoiceActive,
+          ]}
+          onPress={() => editable && setPayment("INSTALLMENTS")}
+        >
+          <Text
+            style={[
+              styles.mobileChoiceText,
+              payment === "INSTALLMENTS" && styles.mobileChoiceTextActive,
+            ]}
+          >
+            Parcelado
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[
+            styles.mobileChoice,
+            payment === "UPFRONT" && styles.mobileChoiceActive,
+          ]}
+          onPress={() => editable && setPayment("UPFRONT")}
+        >
+          <Text
+            style={[
+              styles.mobileChoiceText,
+              payment === "UPFRONT" && styles.mobileChoiceTextActive,
+            ]}
+          >
+            À vista +5%
+          </Text>
+        </Pressable>
+      </View>
+      {payment === "INSTALLMENTS" && (
+        <TextInput
+          editable={editable}
+          style={styles.mobileOrderInput}
+          placeholder="Prazo: ex. 30/45/60"
+          value={terms}
+          onChangeText={setTerms}
+        />
+      )}{" "}
+      {editable && (
+        <>
+          <Text style={styles.sheetLabel}>Adicionar produtos</Text>
+          <TextInput
+            style={styles.mobileOrderInput}
+            placeholder="Buscar por código ou descrição"
+            value={query}
+            onChangeText={setQuery}
+          />
+          {suggestions.map((product) => (
+            <Pressable
+              key={product.id}
+              style={styles.mobileProductSuggestion}
+              onPress={() => add(product)}
+            >
+              <Text style={styles.productCode}>{product.codigoInterno}</Text>
+              <Text style={styles.flex}>{product.nome}</Text>
+              <Ionicons name="add-circle" size={24} color={colors.navy} />
+            </Pressable>
+          ))}
+        </>
+      )}
+      {calculated.map((item, index) => (
+        <View key={item.productId} style={styles.mobileOrderItem}>
+          <View style={styles.flex}>
+            <Text style={styles.productCode}>{item.productCode}</Text>
+            <Text style={styles.mobileOrderItemName}>{item.productName}</Text>
+            <Text style={styles.mutedSmall}>
+              Disponível: {available.get(item.productId) ?? 0} •{" "}
+              {money(item.unitPrice)}
+            </Text>
+          </View>
+          <View style={styles.mobileOrderControls}>
+            <View style={styles.mobileOrderField}>
+              <Text style={styles.mobileOrderFieldLabel}>Quantidade</Text>
+              <TextInput
+                accessibilityLabel="Quantidade do produto"
+                editable={editable}
+                keyboardType="number-pad"
+                style={styles.mobileNumberInput}
+                value={String(item.quantity)}
+                onChangeText={(value) =>
+                  setItems(
+                    items.map((row, i) =>
+                      i === index
+                        ? { ...row, quantity: Math.max(1, Number(value) || 1) }
+                        : row,
+                    ),
+                  )
+                }
+              />
+            </View>
+            <View style={styles.mobileOrderField}>
+              <Text style={styles.mobileOrderFieldLabel}>Desconto (%)</Text>
+              <TextInput
+                accessibilityLabel="Percentual de desconto do produto"
+                editable={editable}
+                keyboardType="decimal-pad"
+                style={styles.mobileNumberInput}
+                value={String(item.manualDiscountPercent)}
+                onChangeText={(value) =>
+                  setItems(
+                    items.map((row, i) =>
+                      i === index
+                        ? {
+                            ...row,
+                            manualDiscountPercent: Math.min(
+                              limit,
+                              Math.max(0, Number(value.replace(",", ".")) || 0),
+                            ),
+                          }
+                        : row,
+                    ),
+                  )
+                }
+              />
+              <Text style={styles.mobileOrderFieldHint}>Máx. {limit}%</Text>
+            </View>
+            {editable && (
+              <Pressable
+                onPress={() => setItems(items.filter((_, i) => i !== index))}
+              >
+                <Ionicons name="trash-outline" size={21} color={colors.red} />
+              </Pressable>
+            )}
+          </View>
+        </View>
+      ))}
+      <View style={styles.mobileOrderSummary}>
+        <Text>Total do pedido</Text>
+        <Text style={styles.mobileOrderGrandTotal}>{money(total)}</Text>
+      </View>
+      {editable && (
+        <View style={styles.mobileOrderActions}>
+          <Pressable
+            disabled={busy}
+            style={styles.mobileDraftButton}
+            onPress={() => void save(false)}
+          >
+            <Text style={styles.mobileDraftButtonText}>Salvar</Text>
+          </Pressable>
+          <Pressable
+            disabled={busy}
+            style={styles.yellowButton}
+            onPress={() => void save(true)}
+          >
+            <Ionicons name="send-outline" size={20} color={colors.navy} />
+            <Text style={styles.yellowButtonText}>Salvar e enviar</Text>
+          </Pressable>
+        </View>
+      )}
+    </ScrollView>
+  );
 }
 
 function NotificationsScreen({ notifications, products, onOpen }: { notifications: CatalogNotification[]; products: Produto[]; onOpen: (notification: CatalogNotification) => void }) {
@@ -3471,8 +3849,11 @@ const styles = StyleSheet.create({
   mobileProductSuggestion:{minHeight:58,marginBottom:7,borderWidth:1,borderColor:colors.line,borderRadius:13,backgroundColor:colors.white,paddingHorizontal:13,flexDirection:"row",alignItems:"center",gap:10},
   mobileOrderItem:{minHeight:112,marginTop:10,borderRadius:16,backgroundColor:colors.white,padding:14,flexDirection:"row",alignItems:"center",gap:10,...shadow},
   mobileOrderItemName:{maxWidth:210,marginVertical:4,color:colors.navy,fontWeight:"800"},
-  mobileOrderControls:{alignItems:"center",gap:7},
-  mobileNumberInput:{width:58,height:36,borderWidth:1,borderColor:colors.line,borderRadius:9,backgroundColor:colors.soft,textAlign:"center",color:colors.navy,fontWeight:"900"},
+  mobileOrderControls:{width:104,alignItems:"center",gap:9},
+  mobileOrderField:{width:"100%",alignItems:"stretch",gap:4},
+  mobileOrderFieldLabel:{color:colors.navy,fontSize:10,fontWeight:"900",textAlign:"center"},
+  mobileOrderFieldHint:{color:colors.muted,fontSize:9,fontWeight:"700",textAlign:"center"},
+  mobileNumberInput:{width:"100%",height:42,borderWidth:1,borderColor:colors.line,borderRadius:10,backgroundColor:colors.soft,textAlign:"center",color:colors.navy,fontWeight:"900"},
   mobileOrderSummary:{marginTop:18,borderRadius:18,backgroundColor:colors.navy,padding:20,flexDirection:"row",alignItems:"center",justifyContent:"space-between"},
   mobileOrderGrandTotal:{color:colors.yellow,fontSize:22,fontWeight:"900"},
   mobileOrderActions:{marginTop:14,gap:10},
@@ -3480,4 +3861,3 @@ const styles = StyleSheet.create({
   mobileDraftButtonText:{color:colors.navy,fontWeight:"900"},
   editorSwitch: { height: 48, borderBottomWidth: 1, borderColor: colors.line, flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }
 });
-
