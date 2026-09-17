@@ -737,7 +737,18 @@ function OrdersPage({
             : String(b.createdAt).localeCompare(String(a.createdAt)),
     );
   return (
-    <section className="rep-panel">
+    <section className="rep-panel rep-orders-page">
+      <div className="rep-page-intro">
+        <div>
+          <small>CENTRAL DE NEGÓCIOS</small>
+          <h2>Seus pedidos, sem perder o ritmo.</h2>
+          <p>Acompanhe cada negociação e encontre rapidamente o que precisa de atenção.</p>
+        </div>
+        <button className="primary" onClick={() => void openOrder()}>
+          <Plus />
+          Novo pedido
+        </button>
+      </div>
       <div className="rep-toolbar rep-order-filters">
         <label>
           <Search />
@@ -781,10 +792,6 @@ function OrdersPage({
           <option value="high">Maior valor</option>
           <option value="low">Menor valor</option>
         </select>
-        <button className="primary" onClick={() => void openOrder()}>
-          <Plus />
-          Novo pedido
-        </button>
       </div>
       <div className="rep-table-wrap">
         <table>
@@ -807,18 +814,18 @@ function OrdersPage({
                   navigate(`/representante/pedidos/${orderNo(o.orderNumber)}`)
                 }
               >
-                <td>
+                <td data-label="Pedido">
                   <b>{orderNo(o.orderNumber)}</b>
                 </td>
-                <td>{String(o.clientSnapshot?.company || "Não definido")}</td>
-                <td>
+                <td data-label="Cliente">{String(o.clientSnapshot?.company || "Não definido")}</td>
+                <td data-label="Status">
                   <span className={`order-status ${o.status.toLowerCase()}`}>
                     {labels[o.status]}
                   </span>
                 </td>
-                <td>{cash(o.total)}</td>
-                <td>{date(o.updatedAt)}</td>
-                <td>{o.status === "DRAFT" ? countdown(o.expiresAt) : "-"}</td>
+                <td data-label="Total">{cash(o.total)}</td>
+                <td data-label="Atualização">{date(o.updatedAt)}</td>
+                <td data-label="Expiração">{o.status === "DRAFT" ? countdown(o.expiresAt) : "-"}</td>
               </tr>
             ))}
           </tbody>
