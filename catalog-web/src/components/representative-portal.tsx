@@ -3,13 +3,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  ArrowUpRight,
   BarChart3,
+  Bell,
+  CalendarDays,
+  CircleDollarSign,
   Clock3,
   Download,
   FileSpreadsheet,
   LayoutDashboard,
   LogOut,
   PackageCheck,
+  PackageOpen,
   Plus,
   Save,
   Search,
@@ -72,11 +77,14 @@ export function RepresentativePortal({
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [stock, setStock] = useState<SalesStock[]>([]);
   const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
   const [error, setError] = useState("");
   const openingDraft = useRef(false);
+  const realtimeRefresh = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [, setClock] = useState(0);
-  const load = async () => {
-    setLoading(true);
+  const load = async (silent = false) => {
+    if (!silent) setLoading(true);
     await supabase.rpc("expire_abandoned_sales_order_drafts");
     const [c, o, s] = await Promise.all([
       supabase
@@ -98,11 +106,16 @@ export function RepresentativePortal({
       setOrders((o.data || []) as SalesOrder[]);
       setStock((s.data || []) as SalesStock[]);
       setError("");
+      setLastUpdated(new Date());
     }
-    setLoading(false);
+    if (!silent) setLoading(false);
   };
   useEffect(() => {
     void load();
+    const scheduleLoad = () => {
+      if (realtimeRefresh.current) clearTimeout(realtimeRefresh.current);
+      realtimeRefresh.current = setTimeout(() => void load(true), 450);
+    };
     const channel = supabase
       .channel(`rep-orders-${profile.id}`)
       .on(
@@ -113,10 +126,16 @@ export function RepresentativePortal({
           table: "SalesOrder",
           filter: `representativeId=eq.${profile.id}`,
         },
-        () => void load(),
+        scheduleLoad,
       )
-      .subscribe();
+      .on("postgres_changes", { event: "*", schema: "public", table: "SalesOrderItem" }, scheduleLoad)
+      .on("postgres_changes", { event: "*", schema: "public", table: "StockReservation" }, scheduleLoad)
+      .on("postgres_changes", { event: "*", schema: "public", table: "Produto" }, scheduleLoad)
+      .on("postgres_changes", { event: "*", schema: "public", table: "User", filter: `representanteId=eq.${profile.id}` }, scheduleLoad)
+      .subscribe((status) => setRealtimeConnected(status === "SUBSCRIBED"));
     return () => {
+      if (realtimeRefresh.current) clearTimeout(realtimeRefresh.current);
+      setRealtimeConnected(false);
       void supabase.removeChannel(channel);
     };
   }, [profile.id]);
@@ -185,14 +204,16 @@ export function RepresentativePortal({
       <main className="rep-main">
         <header>
           <div>
-            <span>REPRESENTANTE</span>
+            <span>PAINEL COMERCIAL · REPRESENTANTE</span>
             <h1>{nav.find(([id]) => id === section)?.[1] || "Painel"}</h1>
           </div>
-          <div className="rep-user">
-            <b>{profile.name}</b>
-            <small>
-              Limite de desconto: {profile.orderDiscountLimit ?? 15}%
-            </small>
+          <div className="rep-header-actions">
+            <div className={`rep-live ${realtimeConnected ? "online" : ""}`}><i />{realtimeConnected ? "Dados ao vivo" : "Reconectando"}</div>
+            <button className="rep-notification" aria-label="Abrir pedidos" onClick={() => navigate("/representante/pedidos")}><Bell /></button>
+            <div className="rep-user">
+              <b>{profile.name}</b>
+              <small>Limite comercial: {profile.orderDiscountLimit ?? 15}%</small>
+            </div>
           </div>
         </header>
         {error && <div className="rep-error">{error}</div>}
@@ -205,6 +226,10 @@ export function RepresentativePortal({
                 clients={clients}
                 orders={orders}
                 stock={stock}
+                profile={profile}
+                lastUpdated={lastUpdated}
+                realtimeConnected={realtimeConnected}
+                openOrder={openOrder}
                 navigate={navigate}
               />
             )}
@@ -246,11 +271,19 @@ function Dashboard({
   clients,
   orders,
   stock,
+  profile,
+  lastUpdated,
+  realtimeConnected,
+  openOrder,
   navigate,
 }: {
   clients: UserProfile[];
   orders: SalesOrder[];
   stock: SalesStock[];
+  profile: UserProfile;
+  lastUpdated: Date | null;
+  realtimeConnected: boolean;
+  openOrder: () => Promise<void>;
   navigate: (p: string) => void;
 }) {
   const [client, setClient] = useState("ALL");
@@ -276,52 +309,32 @@ function Dashboard({
       o.status === "DRAFT" &&
       new Date(o.expiresAt).getTime() - Date.now() < 86400000,
   );
-  const cards = [
-    ["Clientes", clients.length, Users, "/representante/clientes"],
-    [
-      "Rascunhos",
-      filtered.filter((o) => o.status === "DRAFT").length,
-      Clock3,
-      "/representante/pedidos",
-    ],
-    [
-      "Enviados",
-      filtered.filter((o) => o.status === "SUBMITTED").length,
-      Send,
-      "/representante/pedidos",
-    ],
-    [
-      "Aprovados",
-      filtered.filter((o) => o.status === "APPROVED").length,
-      PackageCheck,
-      "/representante/pedidos",
-    ],
-    [
-      "Faturados",
-      filtered.filter((o) => o.status === "INVOICED").length,
-      PackageCheck,
-      "/representante/pedidos",
-    ],
-    [
-      "Itens sem saldo",
-      stock.filter((s) => s.availableBalance <= 0).length,
-      Warehouse,
-      "/representante/saldo",
-    ],
-    [
-      "Valor dos pedidos",
-      cash(
-        filtered
-          .filter((o) => o.status !== "CANCELLED")
-          .reduce((a, o) => a + Number(o.total), 0),
-      ),
-      BarChart3,
-      "/representante/pedidos",
-    ],
-  ] as const;
+  const activeOrders = filtered.filter((o) => !["CANCELLED", "REJECTED"].includes(o.status));
+  const totalValue = activeOrders.reduce((sum, order) => sum + Number(order.total), 0);
+  const approvedValue = filtered.filter((o) => ["APPROVED", "PARTIALLY_INVOICED", "INVOICED"].includes(o.status)).reduce((sum, order) => sum + Number(order.total), 0);
+  const draftCount = filtered.filter((o) => o.status === "DRAFT").length;
+  const submittedCount = filtered.filter((o) => o.status === "SUBMITTED").length;
+  const approvedCount = filtered.filter((o) => o.status === "APPROVED").length;
+  const invoicedCount = filtered.filter((o) => ["PARTIALLY_INVOICED", "INVOICED"].includes(o.status)).length;
+  const zeroStock = stock.filter((s) => s.availableBalance <= 0);
+  const firstName = profile.name.trim().split(/\s+/)[0] || "Representante";
+  const greeting = new Date().getHours() < 12 ? "Bom dia" : new Date().getHours() < 18 ? "Boa tarde" : "Boa noite";
+  const months = Array.from({ length: 6 }, (_, index) => {
+    const point = new Date(); point.setDate(1); point.setMonth(point.getMonth() - (5 - index));
+    const value = activeOrders.filter((order) => { const d = new Date(order.createdAt); return d.getMonth() === point.getMonth() && d.getFullYear() === point.getFullYear(); }).reduce((sum, order) => sum + Number(order.total), 0);
+    return { label: point.toLocaleDateString("pt-BR", { month: "short" }).replace(".", ""), value };
+  });
+  const maxMonth = Math.max(1, ...months.map((month) => month.value));
+  const clientRanking = clients.map((clientItem) => ({ client: clientItem, value: activeOrders.filter((order) => order.clientId === clientItem.id).reduce((sum, order) => sum + Number(order.total), 0) })).filter((item) => item.value > 0).sort((a, b) => b.value - a.value).slice(0, 4);
   return (
-    <>
-      <div className="rep-dashboard-filters">
+    <div className="rep-dashboard">
+      <section className="rep-welcome">
+        <div className="rep-welcome-copy"><div className="rep-eyebrow"><span>BRILAND PERFORMANCE</span><i className={realtimeConnected ? "online" : ""}>{realtimeConnected ? "Tempo real" : "Sincronizando"}</i></div><h2>{greeting}, {firstName}.</h2><p>Sua operação comercial inteira, clara e pronta para a próxima decisão.</p><div className="rep-welcome-actions"><button className="primary" onClick={() => void openOrder()}><Plus /> Novo pedido</button><button onClick={() => navigate("/representante/clientes")}><Users /> Novo cliente</button></div></div>
+        <div className="rep-performance"><small>Volume comercial filtrado</small><strong>{cash(totalValue)}</strong><span><ArrowUpRight /> {activeOrders.length} pedido(s) no período</span><div className="rep-performance-line"><i style={{ width: `${Math.min(100, totalValue ? approvedValue / totalValue * 100 : 0)}%` }} /></div><em>{totalValue ? Math.round(approvedValue / totalValue * 100) : 0}% convertido em aprovado/faturado</em></div>
+      </section>
+
+      <div className="rep-dashboard-filters rep-smart-filters">
+        <div className="rep-filter-title"><CalendarDays /><span>Visão do período<small>{lastUpdated ? `Atualizado às ${lastUpdated.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : "Carregando dados"}</small></span></div>
         <select value={client} onChange={(e) => setClient(e.target.value)}>
           <option value="ALL">Todos os clientes</option>
           {clients.map((c) => (
@@ -352,55 +365,27 @@ function Dashboard({
           <option value="low">Menor valor</option>
         </select>
       </div>
-      <div className="rep-cards">
-        {cards.map(([label, value, Icon, path]) => (
-          <button key={label} onClick={() => navigate(path)}>
-            <Icon />
-            <small>{label}</small>
-            <strong>{value}</strong>
-          </button>
-        ))}
+      <div className="rep-kpis">
+        <button className="rep-kpi kpi-blue" onClick={() => navigate("/representante/clientes")}><span><Users /></span><small>Carteira de clientes</small><strong>{clients.length}</strong><em>clientes vinculados <ArrowUpRight /></em></button>
+        <button className="rep-kpi kpi-yellow" onClick={() => navigate("/representante/pedidos")}><span><ShoppingBag /></span><small>Pedidos ativos</small><strong>{activeOrders.length}</strong><em>{submittedCount} aguardando análise <ArrowUpRight /></em></button>
+        <button className="rep-kpi kpi-green" onClick={() => navigate("/representante/pedidos")}><span><CircleDollarSign /></span><small>Valor aprovado</small><strong>{cash(approvedValue)}</strong><em>{approvedCount + invoicedCount} convertido(s) <ArrowUpRight /></em></button>
+        <button className="rep-kpi kpi-red" onClick={() => navigate("/representante/saldo")}><span><PackageOpen /></span><small>Alertas de saldo</small><strong>{zeroStock.length}</strong><em>itens indisponíveis <ArrowUpRight /></em></button>
       </div>
-      <section className="rep-panel">
-        <h2>Pedidos do período</h2>
-        {filtered.slice(0, 6).map((o) => (
-          <button
-            className="rep-order-row"
-            key={o.id}
-            onClick={() =>
-              navigate(`/representante/pedidos/${orderNo(o.orderNumber)}`)
-            }
-          >
-            <b>{orderNo(o.orderNumber)}</b>
-            <span>{String(o.clientSnapshot?.company || "Sem cliente")}</span>
-            <em className={`order-status ${o.status.toLowerCase()}`}>
-              {labels[o.status]}
-            </em>
-            <strong>{cash(o.total)}</strong>
-          </button>
-        ))}
-        {!filtered.length && <p>Nenhum pedido encontrado com esses filtros.</p>}
+
+      <section className="rep-flow">
+        <div className="rep-section-heading"><div><small>PIPELINE COMERCIAL</small><h2>Do rascunho ao faturamento</h2></div><button onClick={() => navigate("/representante/pedidos")}>Ver todos <ArrowUpRight /></button></div>
+        <div className="rep-flow-grid"><div className="flow-draft"><Clock3 /><span><b>{draftCount}</b>Rascunhos</span></div><div className="flow-submitted"><Send /><span><b>{submittedCount}</b>Em análise</span></div><div className="flow-approved"><PackageCheck /><span><b>{approvedCount}</b>Aprovados</span></div><div className="flow-invoiced"><CircleDollarSign /><span><b>{invoicedCount}</b>Faturados</span></div></div>
       </section>
-      {(expiring.length > 0 || stock.some((s) => s.availableBalance <= 0)) && (
-        <section className="rep-panel">
-          <h2>Alertas</h2>
-          {expiring.map((o) => (
-            <p key={o.id}>
-              Pedido {orderNo(o.orderNumber)} expira em {countdown(o.expiresAt)}
-              .
-            </p>
-          ))}
-          {stock
-            .filter((s) => s.availableBalance <= 0)
-            .slice(0, 10)
-            .map((s) => (
-              <p key={s.productId}>
-                {s.productCode} - {s.productName}: sem saldo disponível.
-              </p>
-            ))}
-        </section>
-      )}
-    </>
+
+      <div className="rep-insights-grid">
+        <section className="rep-panel rep-chart-panel"><div className="rep-section-heading"><div><small>EVOLUÇÃO</small><h2>Volume dos últimos 6 meses</h2></div><BarChart3 /></div><div className="rep-chart">{months.map((month) => <div key={month.label}><span>{month.value ? cash(month.value) : ""}</span><i style={{ height: `${Math.max(8, month.value / maxMonth * 100)}%` }} /><small>{month.label}</small></div>)}</div></section>
+        <section className="rep-panel rep-ranking"><div className="rep-section-heading"><div><small>CARTEIRA</small><h2>Clientes em destaque</h2></div><Users /></div>{clientRanking.map((item, index) => <button key={item.client.id} onClick={() => { setClient(item.client.id); }}><i>{index + 1}</i><span><b>{item.client.company || item.client.name}</b><small>{cash(item.value)} no período</small></span><em style={{ width: `${item.value / Math.max(1, clientRanking[0]?.value || 1) * 100}%` }} /></button>)}{!clientRanking.length && <p className="rep-muted">Os clientes aparecerão aqui conforme os pedidos forem criados.</p>}</section>
+      </div>
+
+      <section className="rep-panel rep-recent-orders"><div className="rep-section-heading"><div><small>MOVIMENTAÇÃO RECENTE</small><h2>Últimos pedidos</h2></div><button onClick={() => navigate("/representante/pedidos")}>Abrir pedidos <ArrowUpRight /></button></div><div className="rep-orders-table"><div className="rep-orders-head"><span>Pedido</span><span>Cliente</span><span>Data</span><span>Status</span><span>Valor</span><span /></div>{filtered.slice(0, 7).map((o) => <button key={o.id} onClick={() => navigate(`/representante/pedidos/${orderNo(o.orderNumber)}`)}><b>#{orderNo(o.orderNumber)}</b><span>{String(o.clientSnapshot?.company || "Sem cliente")}</span><span>{new Date(o.createdAt).toLocaleDateString("pt-BR")}</span><em className={`order-status ${o.status.toLowerCase()}`}>{labels[o.status]}</em><strong>{cash(o.total)}</strong><ArrowUpRight /></button>)}{!filtered.length && <p className="rep-muted">Nenhum pedido encontrado com esses filtros.</p>}</div></section>
+
+      {(expiring.length > 0 || zeroStock.length > 0) && <section className="rep-alerts"><div><Bell /><span><b>Atenção comercial</b><small>{expiring.length} rascunho(s) próximo(s) da expiração · {zeroStock.length} produto(s) sem saldo</small></span></div><button onClick={() => navigate(expiring.length ? "/representante/pedidos" : "/representante/saldo")}>Revisar agora <ArrowUpRight /></button></section>}
+    </div>
   );
 }
 function countdown(value: string) {
