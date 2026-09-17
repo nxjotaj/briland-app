@@ -3,147 +3,2948 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
-import { Bell, ChevronLeft, ChevronRight, Download, Filter, Heart, LogIn, LogOut, Menu, Minus, Package, Plus, Search, Share2, ShoppingCart, SlidersHorizontal, UserRound, X } from "lucide-react";
-import { cardImage, detailImage, largeProductImage, matchesYear, money, productImage, thumbnailImage, vehicleYearLabel, whatsappLink, YEARS } from "@/lib/catalog-core";
+import {
+  Bell,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Filter,
+  Heart,
+  LogIn,
+  LogOut,
+  Menu,
+  Minus,
+  Package,
+  Plus,
+  Search,
+  Share2,
+  ShoppingCart,
+  SlidersHorizontal,
+  UserRound,
+  X,
+} from "lucide-react";
+import {
+  cardImage,
+  detailImage,
+  largeProductImage,
+  matchesYear,
+  money,
+  productImage,
+  thumbnailImage,
+  vehicleYearLabel,
+  whatsappLink,
+  YEARS,
+} from "@/lib/catalog-core";
 import { maskCnpj, maskPhone } from "@/lib/input-masks";
-import { currentProfile, loadCatalog, loadPopularProductIds, supabase, telemetry } from "@/lib/supabase";
-import type { CatalogData, CatalogRevision, Product, Role, SocialLinks, UserProfile } from "@/lib/types";
+import {
+  currentProfile,
+  loadCatalog,
+  loadPopularProductIds,
+  supabase,
+  telemetry,
+} from "@/lib/supabase";
+import type {
+  CatalogData,
+  CatalogRevision,
+  Product,
+  Role,
+  SocialLinks,
+  UserProfile,
+} from "@/lib/types";
 import { RepresentativePortal } from "@/components/representative-portal";
+import {
+  AnimatedPdfDownload,
+  remotePdf,
+} from "@/components/animated-pdf-download";
 
-const emptyData:CatalogData={products:[],categories:[],subcategories:[],productGroups:[],brands:[],automakers:[],models:[],applications:[],settings:{}};
-const defaults:SocialLinks={instagram:"",linkedin:"",whatsapp:"https://wa.me/5521973636891",site:"https://briland.com.br"};
-const roleLabel:Record<Role,string>={VISITANTE:"Visitante",NAO_CLIENTE:"Não cliente",CLIENTE:"Cliente",REPRESENTANTE:"Representante",ADMIN:"Administrador",ADMIN_MASTER:"Administrador master",ADMIN_COLABORADOR:"Colaborador"};
-let catalogMemoryCache:{data:CatalogData;profile:UserProfile|null}|null=null;
-const officialLogo="/briland-logo.png";
+const emptyData: CatalogData = {
+  products: [],
+  categories: [],
+  subcategories: [],
+  productGroups: [],
+  brands: [],
+  automakers: [],
+  models: [],
+  applications: [],
+  settings: {},
+};
+const defaults: SocialLinks = {
+  instagram: "",
+  linkedin: "",
+  whatsapp: "https://wa.me/5521973636891",
+  site: "https://briland.com.br",
+};
+const roleLabel: Record<Role, string> = {
+  VISITANTE: "Visitante",
+  NAO_CLIENTE: "Não cliente",
+  CLIENTE: "Cliente",
+  REPRESENTANTE: "Representante",
+  ADMIN: "Administrador",
+  ADMIN_MASTER: "Administrador master",
+  ADMIN_COLABORADOR: "Colaborador",
+};
+let catalogMemoryCache: {
+  data: CatalogData;
+  profile: UserProfile | null;
+} | null = null;
+const officialLogo = "/briland-logo.png";
 
-function pathFor(segments:string[]) { return `/${segments.map(encodeURIComponent).join("/")}`; }
-function safeProductRoute(value:string) { return value.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,""); }
-function permission(settings:CatalogData["settings"],key:string) { return settings.permissions?.[key] === true; }
-function productPermission(product:Product,settings:CatalogData["settings"],key:string) {
-  if(product.permissoesProduto&&key in product.permissoesProduto)return product.permissoesProduto[key]===true;
-  return permission(settings,key);
+function pathFor(segments: string[]) {
+  return `/${segments.map(encodeURIComponent).join("/")}`;
+}
+function safeProductRoute(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+function permission(settings: CatalogData["settings"], key: string) {
+  return settings.permissions?.[key] === true;
+}
+function productPermission(
+  product: Product,
+  settings: CatalogData["settings"],
+  key: string,
+) {
+  if (product.permissoesProduto && key in product.permissoesProduto)
+    return product.permissoesProduto[key] === true;
+  return permission(settings, key);
 }
 
-export default function CatalogWeb({initialSegments}:{initialSegments:string[]}) {
-  const router=useRouter();
-  const [data,setData]=useState(catalogMemoryCache?.data||emptyData); const [profile,setProfile]=useState<UserProfile|null>(catalogMemoryCache?.profile||null); const [loading,setLoading]=useState(!catalogMemoryCache); const [error,setError]=useState("");
-  const [query,setQuery]=useState(""); const [category,setCategory]=useState(""); const [subcategory,setSubcategory]=useState(""); const [productGroup,setProductGroup]=useState(""); const [brand,setBrand]=useState(""); const [automaker,setAutomaker]=useState(""); const [model,setModel]=useState(""); const [year,setYear]=useState<number|null>(null); const [sort,setSort]=useState("order");
-  const [filtersOpen,setFiltersOpen]=useState(false); const [menuOpen,setMenuOpen]=useState(false); const [profileMenuOpen,setProfileMenuOpen]=useState(false); const [favorites,setFavorites]=useState<string[]>([]); const [quote,setQuote]=useState<Record<string,number>>({}); const [galleryIndex,setGalleryIndex]=useState(0); const [recentProducts,setRecentProducts]=useState<string[]>([]); const [popularProducts,setPopularProducts]=useState<string[]>([]);
-  const realtimeRefreshTimer=useRef<ReturnType<typeof setTimeout>|null>(null); const frontendVersion=useRef("");
-  const route=initialSegments[0]||"home"; const detailRef=route==="produto"?initialSegments.slice(1).join("/"):"";
-  const role=(profile?.role||"VISITANTE") as Role;
+export default function CatalogWeb({
+  initialSegments,
+}: {
+  initialSegments: string[];
+}) {
+  const router = useRouter();
+  const [data, setData] = useState(catalogMemoryCache?.data || emptyData);
+  const [profile, setProfile] = useState<UserProfile | null>(
+    catalogMemoryCache?.profile || null,
+  );
+  const [loading, setLoading] = useState(!catalogMemoryCache);
+  const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("");
+  const [subcategory, setSubcategory] = useState("");
+  const [productGroup, setProductGroup] = useState("");
+  const [brand, setBrand] = useState("");
+  const [automaker, setAutomaker] = useState("");
+  const [model, setModel] = useState("");
+  const [year, setYear] = useState<number | null>(null);
+  const [sort, setSort] = useState("order");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [quote, setQuote] = useState<Record<string, number>>({});
+  const [galleryIndex, setGalleryIndex] = useState(0);
+  const [recentProducts, setRecentProducts] = useState<string[]>([]);
+  const [popularProducts, setPopularProducts] = useState<string[]>([]);
+  const realtimeRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const frontendVersion = useRef("");
+  const route = initialSegments[0] || "home";
+  const detailRef =
+    route === "produto" ? initialSegments.slice(1).join("/") : "";
+  const role = (profile?.role || "VISITANTE") as Role;
 
-  const refresh=async(silent=false)=>{if(!silent&&!catalogMemoryCache)setLoading(true);try{const next=await loadCatalog(role);setData(next);catalogMemoryCache={data:next,profile};setError("");}catch(err){setError(err instanceof Error?err.message:"Não foi possível carregar o catálogo.");}finally{setLoading(false);}};
-  useEffect(()=>{try{setFavorites(JSON.parse(localStorage.getItem("briland-web-favorites")||"[]"));setQuote(JSON.parse(localStorage.getItem("briland-web-quote")||"{}"));setRecentProducts(JSON.parse(localStorage.getItem("briland-web-recent-products")||"[]"));const ui=JSON.parse(localStorage.getItem("briland-web-ui-state")||"{}");setQuery(ui.query||"");setCategory(ui.category||"");setSubcategory(ui.subcategory||"");setProductGroup(ui.productGroup||"");setBrand(ui.brand||"");setAutomaker(ui.automaker||"");setModel(ui.model||"");setYear(ui.year||null);setSort(ui.sort||"order");}catch{} void loadPopularProductIds().then(setPopularProducts);void currentProfile().then(async user=>{setProfile(user);const next=await loadCatalog(user?.role||"VISITANTE");setData(next);catalogMemoryCache={data:next,profile:user};}).catch(()=>setError("Não foi possível carregar o catálogo.")).finally(()=>setLoading(false));},[]);
-  useEffect(()=>{const timer=setTimeout(()=>{localStorage.setItem("briland-web-ui-state",JSON.stringify({query,category,subcategory,productGroup,brand,automaker,model,year,sort}));},250);return()=>clearTimeout(timer);},[query,category,subcategory,productGroup,brand,automaker,model,year,sort]);
-  useEffect(()=>{void telemetry("screen_view",pathFor(initialSegments),profile);},[initialSegments.join("/"),profile?.id]);
-  useEffect(()=>{const schedule=(_revision?:CatalogRevision)=>{if(realtimeRefreshTimer.current)clearTimeout(realtimeRefreshTimer.current);realtimeRefreshTimer.current=setTimeout(()=>void refresh(true),800);};const channel=supabase.channel(`catalog-web-revision-${role}`).on("postgres_changes",{event:"UPDATE",schema:"public",table:"CatalogRevision"},payload=>schedule(payload.new as CatalogRevision)).subscribe();return()=>{if(realtimeRefreshTimer.current)clearTimeout(realtimeRefreshTimer.current);void supabase.removeChannel(channel);};},[role]);
-  useEffect(()=>{let active=true;const check=async()=>{try{const response=await fetch("/api/version",{cache:"no-store"});const result=await response.json() as {version?:string};if(!active||!result.version)return;if(!frontendVersion.current){frontendVersion.current=result.version;return;}if(frontendVersion.current!==result.version)location.reload();}catch{}};void check();const timer=setInterval(()=>void check(),120000);return()=>{active=false;clearInterval(timer);};},[]);
-  useEffect(()=>{let active=true;const visitor=localStorage.getItem("briland-web-visitor")||`web_${Date.now()}_${Math.random().toString(36).slice(2)}`;localStorage.setItem("briland-web-visitor",visitor);const session=`web_presence_${Date.now()}_${Math.random().toString(36).slice(2)}`;const connection=(navigator as Navigator&{connection?:{effectiveType?:string;type?:string}}).connection;const network=connection?.type||connection?.effectiveType||"Não informado";let location={city:null as string|null,state:null as string|null,country:null as string|null};const beat=()=>void supabase.rpc("heartbeat_app_presence",{p_session_id:session,p_visitor_id:visitor,p_route:pathFor(initialSegments),p_screen:route,p_source:"WEB_CATALOG",p_device_type:/Mobi|Android/i.test(navigator.userAgent)?"Celular":"Computador",p_operating_system:navigator.platform||"web",p_network_type:network,p_city:location.city,p_state:location.state,p_country:location.country});const start=async()=>{try{const response=await fetch("https://ipwho.is/");const result=await response.json() as {success?:boolean;city?:string;region?:string;country?:string};if(active&&result.success!==false)location={city:result.city||null,state:result.region||null,country:result.country||null};}catch{}if(active)beat();};beat();void start();const timer=setInterval(beat,30000);return()=>{active=false;clearInterval(timer);void supabase.rpc("end_app_presence",{p_session_id:session});};},[route,profile?.id]);
+  const refresh = async (silent = false) => {
+    if (!silent && !catalogMemoryCache) setLoading(true);
+    try {
+      const next = await loadCatalog(role);
+      setData(next);
+      catalogMemoryCache = { data: next, profile };
+      setError("");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível carregar o catálogo.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    try {
+      setFavorites(
+        JSON.parse(localStorage.getItem("briland-web-favorites") || "[]"),
+      );
+      setQuote(JSON.parse(localStorage.getItem("briland-web-quote") || "{}"));
+      setRecentProducts(
+        JSON.parse(localStorage.getItem("briland-web-recent-products") || "[]"),
+      );
+      const ui = JSON.parse(
+        localStorage.getItem("briland-web-ui-state") || "{}",
+      );
+      setQuery(ui.query || "");
+      setCategory(ui.category || "");
+      setSubcategory(ui.subcategory || "");
+      setProductGroup(ui.productGroup || "");
+      setBrand(ui.brand || "");
+      setAutomaker(ui.automaker || "");
+      setModel(ui.model || "");
+      setYear(ui.year || null);
+      setSort(ui.sort || "order");
+    } catch {}
+    void loadPopularProductIds().then(setPopularProducts);
+    void currentProfile()
+      .then(async (user) => {
+        setProfile(user);
+        const next = await loadCatalog(user?.role || "VISITANTE");
+        setData(next);
+        catalogMemoryCache = { data: next, profile: user };
+      })
+      .catch(() => setError("Não foi possível carregar o catálogo."))
+      .finally(() => setLoading(false));
+  }, []);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      localStorage.setItem(
+        "briland-web-ui-state",
+        JSON.stringify({
+          query,
+          category,
+          subcategory,
+          productGroup,
+          brand,
+          automaker,
+          model,
+          year,
+          sort,
+        }),
+      );
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [
+    query,
+    category,
+    subcategory,
+    productGroup,
+    brand,
+    automaker,
+    model,
+    year,
+    sort,
+  ]);
+  useEffect(() => {
+    void telemetry("screen_view", pathFor(initialSegments), profile);
+  }, [initialSegments.join("/"), profile?.id]);
+  useEffect(() => {
+    const schedule = (_revision?: CatalogRevision) => {
+      if (realtimeRefreshTimer.current)
+        clearTimeout(realtimeRefreshTimer.current);
+      realtimeRefreshTimer.current = setTimeout(() => void refresh(true), 800);
+    };
+    const channel = supabase
+      .channel(`catalog-web-revision-${role}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "CatalogRevision" },
+        (payload) => schedule(payload.new as CatalogRevision),
+      )
+      .subscribe();
+    return () => {
+      if (realtimeRefreshTimer.current)
+        clearTimeout(realtimeRefreshTimer.current);
+      void supabase.removeChannel(channel);
+    };
+  }, [role]);
+  useEffect(() => {
+    let active = true;
+    const check = async () => {
+      try {
+        const response = await fetch("/api/version", { cache: "no-store" });
+        const result = (await response.json()) as { version?: string };
+        if (!active || !result.version) return;
+        if (!frontendVersion.current) {
+          frontendVersion.current = result.version;
+          return;
+        }
+        if (frontendVersion.current !== result.version) location.reload();
+      } catch {}
+    };
+    void check();
+    const timer = setInterval(() => void check(), 120000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    const visitor =
+      localStorage.getItem("briland-web-visitor") ||
+      `web_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem("briland-web-visitor", visitor);
+    const session = `web_presence_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const connection = (
+      navigator as Navigator & {
+        connection?: { effectiveType?: string; type?: string };
+      }
+    ).connection;
+    const network =
+      connection?.type || connection?.effectiveType || "Não informado";
+    let location = {
+      city: null as string | null,
+      state: null as string | null,
+      country: null as string | null,
+    };
+    const beat = () =>
+      void supabase.rpc("heartbeat_app_presence", {
+        p_session_id: session,
+        p_visitor_id: visitor,
+        p_route: pathFor(initialSegments),
+        p_screen: route,
+        p_source: "WEB_CATALOG",
+        p_device_type: /Mobi|Android/i.test(navigator.userAgent)
+          ? "Celular"
+          : "Computador",
+        p_operating_system: navigator.platform || "web",
+        p_network_type: network,
+        p_city: location.city,
+        p_state: location.state,
+        p_country: location.country,
+      });
+    const start = async () => {
+      try {
+        const response = await fetch("https://ipwho.is/");
+        const result = (await response.json()) as {
+          success?: boolean;
+          city?: string;
+          region?: string;
+          country?: string;
+        };
+        if (active && result.success !== false)
+          location = {
+            city: result.city || null,
+            state: result.region || null,
+            country: result.country || null,
+          };
+      } catch {}
+      if (active) beat();
+    };
+    beat();
+    void start();
+    const timer = setInterval(beat, 30000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+      void supabase.rpc("end_app_presence", { p_session_id: session });
+    };
+  }, [route, profile?.id]);
 
-  const links={...defaults,...data.settings.socialLinks}; const appearance=data.settings.catalogAppearance||{}; const logo=officialLogo;
-  const canDownloadCatalog=permission(data.settings,"downloadCatalogButton")&&permission(data.settings,"catalogPdfDownload");
-  const canQuoteList=permission(data.settings,"quoteButton");
-  const canRequestQuote=permission(data.settings,"botaoOrcamento");
-  const canWhatsApp=permission(data.settings,"whatsappButton")&&permission(data.settings,"botaoWhatsApp");
-  const categoryMap=useMemo(()=>new Map(data.categories.map(item=>[item.id,item])),[data.categories]); const subcategoryMap=useMemo(()=>new Map(data.subcategories.map(item=>[item.id,item])),[data.subcategories]); const productGroupMap=useMemo(()=>new Map(data.productGroups.map(item=>[item.id,item])),[data.productGroups]); const brandMap=useMemo(()=>new Map(data.brands.map(item=>[item.id,item])),[data.brands]);
-  const product=route==="produto"?data.products.find(item=>[item.slug,item.id,item.codigoInterno].some(value=>safeProductRoute(String(value||""))===safeProductRoute(decodeURIComponent(detailRef||"")))):undefined;
-  const recommendations=useMemo(()=>{if(!product)return[];const ids=[...recentProducts,...popularProducts];const related=data.products.filter(item=>item.id!==product.id&&item.ativo!==false&&(item.grupoProdutoId&&item.grupoProdutoId===product.grupoProdutoId||item.subcategoriaId&&item.subcategoriaId===product.subcategoriaId||item.categoriaId===product.categoriaId||item.marcaId===product.marcaId)).sort((a,b)=>Number(Boolean(b.grupoProdutoId&&b.grupoProdutoId===product.grupoProdutoId))-Number(Boolean(a.grupoProdutoId&&a.grupoProdutoId===product.grupoProdutoId))||Number(Boolean(b.subcategoriaId&&b.subcategoriaId===product.subcategoriaId))-Number(Boolean(a.subcategoriaId&&a.subcategoriaId===product.subcategoriaId))||Number(b.destaque)-Number(a.destaque)||(a.ordem||0)-(b.ordem||0));return [...ids.map(id=>data.products.find(item=>item.id===id)),...related,...data.products.filter(item=>item.destaque&&item.ativo!==false)].filter((item,index,list):item is Product=>Boolean(item)&&item!.id!==product.id&&item!.ativo!==false&&list.findIndex(candidate=>candidate?.id===item!.id)===index).slice(0,8);},[data.products,product,recentProducts,popularProducts]);
-  const rememberProduct=(id:string)=>{const next=[id,...recentProducts.filter(value=>value!==id)].slice(0,20);setRecentProducts(next);localStorage.setItem("briland-web-recent-products",JSON.stringify(next));};
-  const routeCategory=route==="categoria"?data.categories.find(item=>[item.slug,item.id].includes(decodeURIComponent(initialSegments[1]||"")))?.id:"";
-  const routeSubcategory=route==="categoria"&&initialSegments[2]==="subcategoria"?data.subcategories.find(item=>item.categoriaId===routeCategory&&[item.slug,item.id].includes(decodeURIComponent(initialSegments[3]||"")))?.id:"";
-  const routeProductGroup=routeSubcategory&&initialSegments[4]==="grupo"?data.productGroups.find(item=>item.subcategoriaId===routeSubcategory&&[item.slug,item.id].includes(decodeURIComponent(initialSegments[5]||"")))?.id:"";
-  const routeBrand=route==="marca"?data.brands.find(item=>item.slug===decodeURIComponent(initialSegments[1]||""))?.id:"";
-  const routeAutomaker=route==="montadora"?data.automakers.find(item=>[item.slug,item.id].some(value=>String(value||"").toLowerCase()===decodeURIComponent(initialSegments[1]||"").toLowerCase())):undefined;
-  const effectiveAutomaker=routeAutomaker?.id||automaker;
-  const filtered=useMemo(()=>data.products.filter(item=>item.ativo!==false).filter(item=>route!=="promocoes"||item.promocao).filter(item=>route!=="lancamentos"||item.lancamento).filter(item=>route!=="favoritos"||favorites.includes(item.id)).filter(item=>!category&&!routeCategory||item.categoriaId===(category||routeCategory)).filter(item=>!subcategory&&!routeSubcategory||item.subcategoriaId===(subcategory||routeSubcategory)).filter(item=>!productGroup&&!routeProductGroup||item.grupoProdutoId===(productGroup||routeProductGroup)).filter(item=>!brand&&!routeBrand||item.marcaId===(brand||routeBrand)).filter(item=>{const q=query.trim().toLowerCase();const hierarchy=[subcategoryMap.get(item.subcategoriaId||"")?.nome,productGroupMap.get(item.grupoProdutoId||"")?.nome];return !q||[item.nome,item.codigoInterno,item.ean,item.ncm,item.descricaoCurta,...hierarchy].join(" ").toLowerCase().includes(q);}).filter(item=>{if(!effectiveAutomaker&&!model&&!year)return true;return data.applications.some(app=>app.produtoId===item.id&&(!effectiveAutomaker||app.montadoraId===effectiveAutomaker)&&(!model||app.modeloId===model)&&matchesYear(app,year));}).sort((a,b)=>sort==="name"?a.nome.localeCompare(b.nome,"pt-BR"):sort==="newest"?String(b.createdAt).localeCompare(String(a.createdAt)):(a.ordem||0)-(b.ordem||0)),[data,query,category,subcategory,productGroup,brand,effectiveAutomaker,model,year,sort,route,routeCategory,routeSubcategory,routeProductGroup,routeBrand,favorites,subcategoryMap,productGroupMap]);
-  useEffect(()=>{if(query.trim().length<2)return;const timer=setTimeout(()=>void telemetry(filtered.length?"search_results":"search_zero_results",pathFor(initialSegments),profile,{query:query.trim().slice(0,80),resultCount:filtered.length}),700);return()=>clearTimeout(timer);},[query,filtered.length]);
-  const suggestions=query.trim().length>=2?filtered.slice(0,5):[];
-  const navigate=(path:string)=>{setMenuOpen(false);router.push(path);};
-  const saveFavorites=(next:string[])=>{setFavorites(next);localStorage.setItem("briland-web-favorites",JSON.stringify(next));}; const toggleFavorite=(id:string)=>{const active=!favorites.includes(id);saveFavorites(active?[...favorites,id]:favorites.filter(value=>value!==id));void telemetry("favorite_toggle",location.pathname,profile,{productId:id,active});};
-  const saveQuote=(next:Record<string,number>)=>{setQuote(next);localStorage.setItem("briland-web-quote",JSON.stringify(next));}; const addQuote=(id:string)=>{const next={...quote,[id]:(quote[id]||0)+1};saveQuote(next);void telemetry("quote_start",location.pathname,profile,{productId:id,quantity:next[id]});};
-  const quoteCount=Object.values(quote).reduce((a,b)=>a+b,0); const pdfRole=role==="ADMIN"||role==="ADMIN_MASTER"||role==="ADMIN_COLABORADOR"?"REPRESENTANTE":role; const pdf=data.settings.catalogPdf?.[pdfRole]?.url||"";
-  const logout=async()=>{await supabase.auth.signOut();const next=await loadCatalog("VISITANTE");setProfile(null);setData(next);catalogMemoryCache={data:next,profile:null};navigate("/");};
+  const links = { ...defaults, ...data.settings.socialLinks };
+  const appearance = data.settings.catalogAppearance || {};
+  const logo = officialLogo;
+  const canDownloadCatalog =
+    permission(data.settings, "downloadCatalogButton") &&
+    permission(data.settings, "catalogPdfDownload");
+  const canQuoteList = permission(data.settings, "quoteButton");
+  const canRequestQuote = permission(data.settings, "botaoOrcamento");
+  const canWhatsApp =
+    permission(data.settings, "whatsappButton") &&
+    permission(data.settings, "botaoWhatsApp");
+  const categoryMap = useMemo(
+    () => new Map(data.categories.map((item) => [item.id, item])),
+    [data.categories],
+  );
+  const subcategoryMap = useMemo(
+    () => new Map(data.subcategories.map((item) => [item.id, item])),
+    [data.subcategories],
+  );
+  const productGroupMap = useMemo(
+    () => new Map(data.productGroups.map((item) => [item.id, item])),
+    [data.productGroups],
+  );
+  const brandMap = useMemo(
+    () => new Map(data.brands.map((item) => [item.id, item])),
+    [data.brands],
+  );
+  const product =
+    route === "produto"
+      ? data.products.find((item) =>
+          [item.slug, item.id, item.codigoInterno].some(
+            (value) =>
+              safeProductRoute(String(value || "")) ===
+              safeProductRoute(decodeURIComponent(detailRef || "")),
+          ),
+        )
+      : undefined;
+  const recommendations = useMemo(() => {
+    if (!product) return [];
+    const ids = [...recentProducts, ...popularProducts];
+    const related = data.products
+      .filter(
+        (item) =>
+          item.id !== product.id &&
+          item.ativo !== false &&
+          ((item.grupoProdutoId &&
+            item.grupoProdutoId === product.grupoProdutoId) ||
+            (item.subcategoriaId &&
+              item.subcategoriaId === product.subcategoriaId) ||
+            item.categoriaId === product.categoriaId ||
+            item.marcaId === product.marcaId),
+      )
+      .sort(
+        (a, b) =>
+          Number(
+            Boolean(
+              b.grupoProdutoId && b.grupoProdutoId === product.grupoProdutoId,
+            ),
+          ) -
+            Number(
+              Boolean(
+                a.grupoProdutoId && a.grupoProdutoId === product.grupoProdutoId,
+              ),
+            ) ||
+          Number(
+            Boolean(
+              b.subcategoriaId && b.subcategoriaId === product.subcategoriaId,
+            ),
+          ) -
+            Number(
+              Boolean(
+                a.subcategoriaId && a.subcategoriaId === product.subcategoriaId,
+              ),
+            ) ||
+          Number(b.destaque) - Number(a.destaque) ||
+          (a.ordem || 0) - (b.ordem || 0),
+      );
+    return [
+      ...ids.map((id) => data.products.find((item) => item.id === id)),
+      ...related,
+      ...data.products.filter((item) => item.destaque && item.ativo !== false),
+    ]
+      .filter(
+        (item, index, list): item is Product =>
+          Boolean(item) &&
+          item!.id !== product.id &&
+          item!.ativo !== false &&
+          list.findIndex((candidate) => candidate?.id === item!.id) === index,
+      )
+      .slice(0, 8);
+  }, [data.products, product, recentProducts, popularProducts]);
+  const rememberProduct = (id: string) => {
+    const next = [id, ...recentProducts.filter((value) => value !== id)].slice(
+      0,
+      20,
+    );
+    setRecentProducts(next);
+    localStorage.setItem("briland-web-recent-products", JSON.stringify(next));
+  };
+  const routeCategory =
+    route === "categoria"
+      ? data.categories.find((item) =>
+          [item.slug, item.id].includes(
+            decodeURIComponent(initialSegments[1] || ""),
+          ),
+        )?.id
+      : "";
+  const routeSubcategory =
+    route === "categoria" && initialSegments[2] === "subcategoria"
+      ? data.subcategories.find(
+          (item) =>
+            item.categoriaId === routeCategory &&
+            [item.slug, item.id].includes(
+              decodeURIComponent(initialSegments[3] || ""),
+            ),
+        )?.id
+      : "";
+  const routeProductGroup =
+    routeSubcategory && initialSegments[4] === "grupo"
+      ? data.productGroups.find(
+          (item) =>
+            item.subcategoriaId === routeSubcategory &&
+            [item.slug, item.id].includes(
+              decodeURIComponent(initialSegments[5] || ""),
+            ),
+        )?.id
+      : "";
+  const routeBrand =
+    route === "marca"
+      ? data.brands.find(
+          (item) => item.slug === decodeURIComponent(initialSegments[1] || ""),
+        )?.id
+      : "";
+  const routeAutomaker =
+    route === "montadora"
+      ? data.automakers.find((item) =>
+          [item.slug, item.id].some(
+            (value) =>
+              String(value || "").toLowerCase() ===
+              decodeURIComponent(initialSegments[1] || "").toLowerCase(),
+          ),
+        )
+      : undefined;
+  const effectiveAutomaker = routeAutomaker?.id || automaker;
+  const filtered = useMemo(
+    () =>
+      data.products
+        .filter((item) => item.ativo !== false)
+        .filter((item) => route !== "promocoes" || item.promocao)
+        .filter((item) => route !== "lancamentos" || item.lancamento)
+        .filter((item) => route !== "favoritos" || favorites.includes(item.id))
+        .filter(
+          (item) =>
+            (!category && !routeCategory) ||
+            item.categoriaId === (category || routeCategory),
+        )
+        .filter(
+          (item) =>
+            (!subcategory && !routeSubcategory) ||
+            item.subcategoriaId === (subcategory || routeSubcategory),
+        )
+        .filter(
+          (item) =>
+            (!productGroup && !routeProductGroup) ||
+            item.grupoProdutoId === (productGroup || routeProductGroup),
+        )
+        .filter(
+          (item) =>
+            (!brand && !routeBrand) || item.marcaId === (brand || routeBrand),
+        )
+        .filter((item) => {
+          const q = query.trim().toLowerCase();
+          const hierarchy = [
+            subcategoryMap.get(item.subcategoriaId || "")?.nome,
+            productGroupMap.get(item.grupoProdutoId || "")?.nome,
+          ];
+          return (
+            !q ||
+            [
+              item.nome,
+              item.codigoInterno,
+              item.ean,
+              item.ncm,
+              item.descricaoCurta,
+              ...hierarchy,
+            ]
+              .join(" ")
+              .toLowerCase()
+              .includes(q)
+          );
+        })
+        .filter((item) => {
+          if (!effectiveAutomaker && !model && !year) return true;
+          return data.applications.some(
+            (app) =>
+              app.produtoId === item.id &&
+              (!effectiveAutomaker || app.montadoraId === effectiveAutomaker) &&
+              (!model || app.modeloId === model) &&
+              matchesYear(app, year),
+          );
+        })
+        .sort((a, b) =>
+          sort === "name"
+            ? a.nome.localeCompare(b.nome, "pt-BR")
+            : sort === "newest"
+              ? String(b.createdAt).localeCompare(String(a.createdAt))
+              : (a.ordem || 0) - (b.ordem || 0),
+        ),
+    [
+      data,
+      query,
+      category,
+      subcategory,
+      productGroup,
+      brand,
+      effectiveAutomaker,
+      model,
+      year,
+      sort,
+      route,
+      routeCategory,
+      routeSubcategory,
+      routeProductGroup,
+      routeBrand,
+      favorites,
+      subcategoryMap,
+      productGroupMap,
+    ],
+  );
+  useEffect(() => {
+    if (query.trim().length < 2) return;
+    const timer = setTimeout(
+      () =>
+        void telemetry(
+          filtered.length ? "search_results" : "search_zero_results",
+          pathFor(initialSegments),
+          profile,
+          { query: query.trim().slice(0, 80), resultCount: filtered.length },
+        ),
+      700,
+    );
+    return () => clearTimeout(timer);
+  }, [query, filtered.length]);
+  const suggestions = query.trim().length >= 2 ? filtered.slice(0, 5) : [];
+  const navigate = (path: string) => {
+    setMenuOpen(false);
+    router.push(path);
+  };
+  const saveFavorites = (next: string[]) => {
+    setFavorites(next);
+    localStorage.setItem("briland-web-favorites", JSON.stringify(next));
+  };
+  const toggleFavorite = (id: string) => {
+    const active = !favorites.includes(id);
+    saveFavorites(
+      active ? [...favorites, id] : favorites.filter((value) => value !== id),
+    );
+    void telemetry("favorite_toggle", location.pathname, profile, {
+      productId: id,
+      active,
+    });
+  };
+  const saveQuote = (next: Record<string, number>) => {
+    setQuote(next);
+    localStorage.setItem("briland-web-quote", JSON.stringify(next));
+  };
+  const addQuote = (id: string) => {
+    const next = { ...quote, [id]: (quote[id] || 0) + 1 };
+    saveQuote(next);
+    void telemetry("quote_start", location.pathname, profile, {
+      productId: id,
+      quantity: next[id],
+    });
+  };
+  const quoteCount = Object.values(quote).reduce((a, b) => a + b, 0);
+  const pdfRole =
+    role === "ADMIN" || role === "ADMIN_MASTER" || role === "ADMIN_COLABORADOR"
+      ? "REPRESENTANTE"
+      : role;
+  const pdf = data.settings.catalogPdf?.[pdfRole]?.url || "";
+  const logout = async () => {
+    await supabase.auth.signOut();
+    const next = await loadCatalog("VISITANTE");
+    setProfile(null);
+    setData(next);
+    catalogMemoryCache = { data: next, profile: null };
+    navigate("/");
+  };
 
-  if(loading)return <div className="loading" aria-label="Carregando catálogo"><img src={officialLogo} alt="Briland"/><i/></div>;
-  if(route==="representante"&&profile?.role==="REPRESENTANTE")return <RepresentativePortal segments={initialSegments} profile={profile} products={data.products} navigate={navigate} logout={logout}/>;
-  return <MotionConfig reducedMotion="user" transition={{duration:.22,ease:[.22,1,.36,1]}}><div className="site" style={{"--navy":appearance.primaryColor||"#021126","--yellow":appearance.accentColor||"#fcb900"} as React.CSSProperties}>
-    <header className="topbar"><button className="mobile-menu" onClick={()=>setMenuOpen(true)} aria-label="Abrir menu"><Menu/></button><button className="brand-logo" onClick={()=>navigate("/")}><img src={logo} alt="Briland"/></button><nav><button onClick={()=>navigate("/produtos")}>Produtos</button><button onClick={()=>navigate("/categorias")}>Categorias</button><button onClick={()=>navigate("/marcas")}>Marcas</button><button onClick={()=>navigate("/montadoras")}>Veículos</button><button onClick={()=>navigate("/lancamentos")}>Lançamentos</button><button onClick={()=>navigate("/promocoes")}>Promoções</button></nav><div className="header-actions"><button title="Notificações" onClick={()=>navigate("/notificacoes")}><Bell/></button><button title="Favoritos" onClick={()=>navigate("/favoritos")}><Heart/><b>{favorites.length||""}</b></button>{canQuoteList&&<button title="Orçamento" onClick={()=>navigate("/orcamento")}><ShoppingCart/><b>{quoteCount||""}</b></button>}{profile?<div className="profile-menu-wrap"><button className="user-action" onClick={()=>setProfileMenuOpen(value=>!value)} aria-expanded={profileMenuOpen}><UserRound/><span>{profile.name.split(" ")[0]}</span></button>{profileMenuOpen&&<div className="profile-menu"><strong>{profile.name}</strong><small>{roleLabel[profile.role]}</small>{profile.role==="REPRESENTANTE"&&<button onClick={()=>{setProfileMenuOpen(false);navigate("/representante");}}>Minha área comercial</button>}<button onClick={()=>{setProfileMenuOpen(false);navigate("/minha-conta");}}>Meus dados</button><button onClick={()=>void logout()}>Sair</button></div>}</div>:<button className="user-action" onClick={()=>navigate("/login")}><LogIn/><span>Entrar</span></button>}</div></header>
-    <AnimatePresence>{menuOpen&&<><motion.button aria-label="Fechar menu" className="drawer-overlay" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} onClick={()=>setMenuOpen(false)}/><motion.div className="mobile-drawer" initial={{x:"-100%"}} animate={{x:0}} exit={{x:"-100%"}} transition={{type:"spring",damping:28,stiffness:320}}><button onClick={()=>setMenuOpen(false)} aria-label="Fechar menu"><X/></button><img className="drawer-logo" src={officialLogo} alt="Briland"/>{[["/produtos","Produtos"],["/categorias","Categorias"],["/marcas","Marcas"],["/montadoras","Veículos"],["/lancamentos","Lançamentos"],["/promocoes","Promoções"],["/favoritos","Favoritos"],["/orcamento","Orçamento"],...(profile?.role==="REPRESENTANTE"?[["/representante","Minha área comercial"]]:[]),...(profile?[["/minha-conta","Meus dados"]]:[])].filter(([path])=>path!=="/orcamento"||canQuoteList).map(([path,label],index)=><motion.button initial={{opacity:0,x:-8}} animate={{opacity:1,x:0}} transition={{delay:.035*index}} key={path} onClick={()=>navigate(path)}>{label}</motion.button>)}{profile?<motion.button className="drawer-account" initial={{opacity:0,x:-8}} animate={{opacity:1,x:0}} transition={{delay:.3}} onClick={()=>void logout()}><LogOut/> Sair de {profile.name.split(" ")[0]}</motion.button>:<motion.button className="drawer-account" initial={{opacity:0,x:-8}} animate={{opacity:1,x:0}} transition={{delay:.3}} onClick={()=>navigate("/login")}><LogIn/> Entrar / Fazer login</motion.button>}</motion.div></>}</AnimatePresence>
-    {error&&<div className="error-banner">{error}<button onClick={()=>void refresh()}>Tentar novamente</button></div>}
-    <motion.main key={pathFor(initialSegments)} initial={{opacity:.9,y:8}} animate={{opacity:1,y:0}}>
-      {route==="home"&&<Home data={data} navigate={navigate}/>}
-      {["produtos","promocoes","lancamentos","favoritos","marca","montadora"].includes(route)&&<Catalog title={route==="promocoes"?"Promoções":route==="lancamentos"?"Lançamentos":route==="favoritos"?"Seus favoritos":routeBrand?brandMap.get(routeBrand)?.nome||"Marca":routeAutomaker?`Produtos para ${routeAutomaker.nome}`:"Catálogo de produtos"} products={filtered} data={data} query={query} setQuery={setQuery} suggestions={suggestions} navigate={navigate} filters={{category,subcategory,productGroup,brand,automaker:effectiveAutomaker,model,year,sort}} setters={{setCategory,setSubcategory,setProductGroup,setBrand,setAutomaker,setModel,setYear,setSort}} filtersOpen={filtersOpen} setFiltersOpen={setFiltersOpen} favorites={favorites} toggleFavorite={toggleFavorite} addQuote={addQuote} pdf={canDownloadCatalog?pdf:""} canQuote={canQuoteList}/>}
-      {route==="categoria"&&routeCategory&&<HierarchyPage data={data} categoryId={routeCategory} subcategoryId={routeSubcategory} productGroupId={routeProductGroup} navigate={navigate} favorites={favorites} toggleFavorite={toggleFavorite} addQuote={canQuoteList?addQuote:undefined}/>}
-      {route==="produto"&&<ProductDetail product={product} data={data} galleryIndex={galleryIndex} setGalleryIndex={setGalleryIndex} favorite={product?favorites.includes(product.id):false} toggleFavorite={toggleFavorite} addQuote={addQuote} links={links} profile={profile} canQuote={canRequestQuote} canWhatsApp={canWhatsApp} recommendations={recommendations} navigate={navigate} rememberProduct={rememberProduct}/>}
-      {route==="categorias"&&<Directory title="Categorias" progressive items={data.categories.map(item=>({id:item.id,name:item.nome,image:item.imagem,path:`/categoria/${item.slug||item.id}`,description:item.descricao,count:data.products.filter(product=>product.categoriaId===item.id&&product.ativo!==false).length}))} navigate={navigate}/>}
-      {route==="marcas"&&<Directory title="Marcas" items={data.brands.map(item=>({id:item.id,name:item.nome,image:item.logo,path:`/marca/${item.slug||item.id}`}))} navigate={navigate}/>}
-      {route==="montadoras"&&<Directory title="Montadoras" progressive items={data.automakers.map(item=>({id:item.id,name:item.nome,image:item.imagem,path:`/montadora/${item.slug||item.id}`,count:new Set(data.applications.filter(application=>application.montadoraId===item.id).map(application=>application.produtoId)).size}))} navigate={navigate}/>}
-      {route==="orcamento"&&(canQuoteList||canRequestQuote)&&<QuotePage data={data} quote={quote} saveQuote={saveQuote} links={links} profile={profile}/>}
-      {route==="orcamento"&&!canQuoteList&&!canRequestQuote&&<Restricted/>}
-      {route==="notificacoes"&&<Notifications products={data.products} navigate={navigate}/>}
-      {route==="login"&&<Login onProfile={async user=>{setProfile(user);setData(await loadCatalog(user.role));navigate("/produtos");}} navigate={navigate}/>}
-      {route==="representante"&&!profile&&<LoginRequired navigate={navigate}/>}
-      {route==="representante"&&profile?.role!=="REPRESENTANTE"&&<Restricted/>}
-      {route==="cadastro"&&<Signup navigate={navigate}/>}
-      {route==="recuperar-senha"&&<ForgotPassword navigate={navigate}/>}
-      {route==="redefinir-senha"&&<ResetPassword navigate={navigate}/>}
-      {route==="minha-conta"&&profile&&<AccountPage profile={profile} onLogout={logout}/>}
-      {route==="minha-conta"&&!profile&&<LoginRequired navigate={navigate}/>}
-      {route==="privacidade"&&<Privacy/>} {route==="excluir-conta"&&<DeleteAccount profile={profile}/>}
-    </motion.main>
-    <footer><div className="footer-brand"><img className="footer-logo" src={officialLogo} alt="Briland"/><p>Peças e acessórios automotivos com informação técnica e atendimento comercial.</p></div><div><b>Catálogo</b><button onClick={()=>navigate("/produtos")}>Produtos</button><button onClick={()=>navigate("/categorias")}>Categorias</button><button onClick={()=>navigate("/montadoras")}>Aplicações</button></div><div><b>Atendimento</b>{canWhatsApp&&<a href={links.whatsapp} target="_blank">WhatsApp</a>}<button onClick={()=>navigate("/privacidade")}>Privacidade</button><button onClick={()=>navigate("/excluir-conta")}>Excluir conta</button></div></footer>
-  </div></MotionConfig>;
+  if (loading)
+    return (
+      <div className="loading" aria-label="Carregando catálogo">
+        <img src={officialLogo} alt="Briland" />
+        <i />
+      </div>
+    );
+  if (route === "representante" && profile?.role === "REPRESENTANTE")
+    return (
+      <RepresentativePortal
+        segments={initialSegments}
+        profile={profile}
+        products={data.products}
+        navigate={navigate}
+        logout={logout}
+      />
+    );
+  return (
+    <MotionConfig
+      reducedMotion="user"
+      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+    >
+      <div
+        className="site"
+        style={
+          {
+            "--navy": appearance.primaryColor || "#021126",
+            "--yellow": appearance.accentColor || "#fcb900",
+          } as React.CSSProperties
+        }
+      >
+        <header className="topbar">
+          <button
+            className="mobile-menu"
+            onClick={() => setMenuOpen(true)}
+            aria-label="Abrir menu"
+          >
+            <Menu />
+          </button>
+          <button className="brand-logo" onClick={() => navigate("/")}>
+            <img src={logo} alt="Briland" />
+          </button>
+          <nav>
+            <button onClick={() => navigate("/produtos")}>Produtos</button>
+            <button onClick={() => navigate("/categorias")}>Categorias</button>
+            <button onClick={() => navigate("/marcas")}>Marcas</button>
+            <button onClick={() => navigate("/montadoras")}>Veículos</button>
+            <button onClick={() => navigate("/lancamentos")}>
+              Lançamentos
+            </button>
+            <button onClick={() => navigate("/promocoes")}>Promoções</button>
+          </nav>
+          <div className="header-actions">
+            <button
+              title="Notificações"
+              onClick={() => navigate("/notificacoes")}
+            >
+              <Bell />
+            </button>
+            <button title="Favoritos" onClick={() => navigate("/favoritos")}>
+              <Heart />
+              <b>{favorites.length || ""}</b>
+            </button>
+            {canQuoteList && (
+              <button title="Orçamento" onClick={() => navigate("/orcamento")}>
+                <ShoppingCart />
+                <b>{quoteCount || ""}</b>
+              </button>
+            )}
+            {profile ? (
+              <div className="profile-menu-wrap">
+                <button
+                  className="user-action"
+                  onClick={() => setProfileMenuOpen((value) => !value)}
+                  aria-expanded={profileMenuOpen}
+                >
+                  <UserRound />
+                  <span>{profile.name.split(" ")[0]}</span>
+                </button>
+                {profileMenuOpen && (
+                  <div className="profile-menu">
+                    <strong>{profile.name}</strong>
+                    <small>{roleLabel[profile.role]}</small>
+                    {profile.role === "REPRESENTANTE" && (
+                      <button
+                        onClick={() => {
+                          setProfileMenuOpen(false);
+                          navigate("/representante");
+                        }}
+                      >
+                        Minha área comercial
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        setProfileMenuOpen(false);
+                        navigate("/minha-conta");
+                      }}
+                    >
+                      Meus dados
+                    </button>
+                    <button onClick={() => void logout()}>Sair</button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <button
+                className="user-action"
+                onClick={() => navigate("/login")}
+              >
+                <LogIn />
+                <span>Entrar</span>
+              </button>
+            )}
+          </div>
+        </header>
+        <AnimatePresence>
+          {menuOpen && (
+            <>
+              <motion.button
+                aria-label="Fechar menu"
+                className="drawer-overlay"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setMenuOpen(false)}
+              />
+              <motion.div
+                className="mobile-drawer"
+                initial={{ x: "-100%" }}
+                animate={{ x: 0 }}
+                exit={{ x: "-100%" }}
+                transition={{ type: "spring", damping: 28, stiffness: 320 }}
+              >
+                <button
+                  onClick={() => setMenuOpen(false)}
+                  aria-label="Fechar menu"
+                >
+                  <X />
+                </button>
+                <img className="drawer-logo" src={officialLogo} alt="Briland" />
+                {[
+                  ["/produtos", "Produtos"],
+                  ["/categorias", "Categorias"],
+                  ["/marcas", "Marcas"],
+                  ["/montadoras", "Veículos"],
+                  ["/lancamentos", "Lançamentos"],
+                  ["/promocoes", "Promoções"],
+                  ["/favoritos", "Favoritos"],
+                  ["/orcamento", "Orçamento"],
+                  ...(profile?.role === "REPRESENTANTE"
+                    ? [["/representante", "Minha área comercial"]]
+                    : []),
+                  ...(profile ? [["/minha-conta", "Meus dados"]] : []),
+                ]
+                  .filter(([path]) => path !== "/orcamento" || canQuoteList)
+                  .map(([path, label], index) => (
+                    <motion.button
+                      initial={{ opacity: 0, x: -8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.035 * index }}
+                      key={path}
+                      onClick={() => navigate(path)}
+                    >
+                      {label}
+                    </motion.button>
+                  ))}
+                {profile ? (
+                  <motion.button
+                    className="drawer-account"
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.3 }}
+                    onClick={() => void logout()}
+                  >
+                    <LogOut /> Sair de {profile.name.split(" ")[0]}
+                  </motion.button>
+                ) : (
+                  <motion.button
+                    className="drawer-account"
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.3 }}
+                    onClick={() => navigate("/login")}
+                  >
+                    <LogIn /> Entrar / Fazer login
+                  </motion.button>
+                )}
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+        {error && (
+          <div className="error-banner">
+            {error}
+            <button onClick={() => void refresh()}>Tentar novamente</button>
+          </div>
+        )}
+        <motion.main
+          key={pathFor(initialSegments)}
+          initial={{ opacity: 0.9, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          {route === "home" && <Home data={data} navigate={navigate} />}
+          {[
+            "produtos",
+            "promocoes",
+            "lancamentos",
+            "favoritos",
+            "marca",
+            "montadora",
+          ].includes(route) && (
+            <Catalog
+              title={
+                route === "promocoes"
+                  ? "Promoções"
+                  : route === "lancamentos"
+                    ? "Lançamentos"
+                    : route === "favoritos"
+                      ? "Seus favoritos"
+                      : routeBrand
+                        ? brandMap.get(routeBrand)?.nome || "Marca"
+                        : routeAutomaker
+                          ? `Produtos para ${routeAutomaker.nome}`
+                          : "Catálogo de produtos"
+              }
+              products={filtered}
+              data={data}
+              query={query}
+              setQuery={setQuery}
+              suggestions={suggestions}
+              navigate={navigate}
+              filters={{
+                category,
+                subcategory,
+                productGroup,
+                brand,
+                automaker: effectiveAutomaker,
+                model,
+                year,
+                sort,
+              }}
+              setters={{
+                setCategory,
+                setSubcategory,
+                setProductGroup,
+                setBrand,
+                setAutomaker,
+                setModel,
+                setYear,
+                setSort,
+              }}
+              filtersOpen={filtersOpen}
+              setFiltersOpen={setFiltersOpen}
+              favorites={favorites}
+              toggleFavorite={toggleFavorite}
+              addQuote={addQuote}
+              pdf={canDownloadCatalog ? pdf : ""}
+              canQuote={canQuoteList}
+            />
+          )}
+          {route === "categoria" && routeCategory && (
+            <HierarchyPage
+              data={data}
+              categoryId={routeCategory}
+              subcategoryId={routeSubcategory}
+              productGroupId={routeProductGroup}
+              navigate={navigate}
+              favorites={favorites}
+              toggleFavorite={toggleFavorite}
+              addQuote={canQuoteList ? addQuote : undefined}
+            />
+          )}
+          {route === "produto" && (
+            <ProductDetail
+              product={product}
+              data={data}
+              galleryIndex={galleryIndex}
+              setGalleryIndex={setGalleryIndex}
+              favorite={product ? favorites.includes(product.id) : false}
+              toggleFavorite={toggleFavorite}
+              addQuote={addQuote}
+              links={links}
+              profile={profile}
+              canQuote={canRequestQuote}
+              canWhatsApp={canWhatsApp}
+              recommendations={recommendations}
+              navigate={navigate}
+              rememberProduct={rememberProduct}
+            />
+          )}
+          {route === "categorias" && (
+            <Directory
+              title="Categorias"
+              progressive
+              items={data.categories.map((item) => ({
+                id: item.id,
+                name: item.nome,
+                image: item.imagem,
+                path: `/categoria/${item.slug || item.id}`,
+                description: item.descricao,
+                count: data.products.filter(
+                  (product) =>
+                    product.categoriaId === item.id && product.ativo !== false,
+                ).length,
+              }))}
+              navigate={navigate}
+            />
+          )}
+          {route === "marcas" && (
+            <Directory
+              title="Marcas"
+              items={data.brands.map((item) => ({
+                id: item.id,
+                name: item.nome,
+                image: item.logo,
+                path: `/marca/${item.slug || item.id}`,
+              }))}
+              navigate={navigate}
+            />
+          )}
+          {route === "montadoras" && (
+            <Directory
+              title="Montadoras"
+              progressive
+              items={data.automakers.map((item) => ({
+                id: item.id,
+                name: item.nome,
+                image: item.imagem,
+                path: `/montadora/${item.slug || item.id}`,
+                count: new Set(
+                  data.applications
+                    .filter(
+                      (application) => application.montadoraId === item.id,
+                    )
+                    .map((application) => application.produtoId),
+                ).size,
+              }))}
+              navigate={navigate}
+            />
+          )}
+          {route === "orcamento" && (canQuoteList || canRequestQuote) && (
+            <QuotePage
+              data={data}
+              quote={quote}
+              saveQuote={saveQuote}
+              links={links}
+              profile={profile}
+            />
+          )}
+          {route === "orcamento" && !canQuoteList && !canRequestQuote && (
+            <Restricted />
+          )}
+          {route === "notificacoes" && (
+            <Notifications products={data.products} navigate={navigate} />
+          )}
+          {route === "login" && (
+            <Login
+              onProfile={async (user) => {
+                setProfile(user);
+                setData(await loadCatalog(user.role));
+                navigate("/produtos");
+              }}
+              navigate={navigate}
+            />
+          )}
+          {route === "representante" && !profile && (
+            <LoginRequired navigate={navigate} />
+          )}
+          {route === "representante" && profile?.role !== "REPRESENTANTE" && (
+            <Restricted />
+          )}
+          {route === "cadastro" && <Signup navigate={navigate} />}
+          {route === "recuperar-senha" && (
+            <ForgotPassword navigate={navigate} />
+          )}
+          {route === "redefinir-senha" && <ResetPassword navigate={navigate} />}
+          {route === "minha-conta" && profile && (
+            <AccountPage profile={profile} onLogout={logout} />
+          )}
+          {route === "minha-conta" && !profile && (
+            <LoginRequired navigate={navigate} />
+          )}
+          {route === "privacidade" && <Privacy />}{" "}
+          {route === "excluir-conta" && <DeleteAccount profile={profile} />}
+        </motion.main>
+        <footer>
+          <div className="footer-brand">
+            <img className="footer-logo" src={officialLogo} alt="Briland" />
+            <p>
+              Peças e acessórios automotivos com informação técnica e
+              atendimento comercial.
+            </p>
+          </div>
+          <div>
+            <b>Catálogo</b>
+            <button onClick={() => navigate("/produtos")}>Produtos</button>
+            <button onClick={() => navigate("/categorias")}>Categorias</button>
+            <button onClick={() => navigate("/montadoras")}>Aplicações</button>
+          </div>
+          <div>
+            <b>Atendimento</b>
+            {canWhatsApp && (
+              <a href={links.whatsapp} target="_blank">
+                WhatsApp
+              </a>
+            )}
+            <button onClick={() => navigate("/privacidade")}>
+              Privacidade
+            </button>
+            <button onClick={() => navigate("/excluir-conta")}>
+              Excluir conta
+            </button>
+          </div>
+        </footer>
+      </div>
+    </MotionConfig>
+  );
 }
 
-function Home({data,navigate}:{data:CatalogData;navigate:(path:string)=>void}){const featured=data.products.filter(p=>p.destaque&&p.ativo!==false).slice(0,8);return <><section className="hero"><div><span>CATÁLOGO DIGITAL BRILAND</span><h1>Encontre a peça certa com agilidade e confiança.</h1><p>Consulte produtos, aplicações por veículo e informações comerciais em uma experiência criada para o mercado automotivo.</p><div><button className="primary" onClick={()=>navigate("/produtos")}>Explorar catálogo <ChevronRight/></button><button className="secondary" onClick={()=>navigate("/montadoras")}>Buscar por veículo</button></div></div>{data.settings.media?.homeImage?<img src={data.settings.media.homeImage} alt="Catálogo Briland"/>:<div className="hero-shape"><Package/></div>}</section><section className="section"><div className="section-head"><div><span>SELEÇÃO COMERCIAL</span><h2>Produtos em destaque</h2></div><button onClick={()=>navigate("/produtos")}>Ver todos <ChevronRight/></button></div><div className="product-grid">{featured.map(product=><ProductCard key={product.id} product={product} navigate={navigate} settings={data.settings}/>)}</div></section><section className="category-strip">{data.categories.slice(0,8).map(item=><ProgressiveNavigationCard key={item.id} item={{id:item.id,name:item.nome,image:item.imagem,path:`/categoria/${item.slug||item.id}`,description:item.descricao,count:data.products.filter(product=>product.categoriaId===item.id&&product.ativo!==false).length}} navigate={navigate}/>)}</section></>}
-function ProductCard({product,navigate,settings,favorite,toggleFavorite,addQuote}:{product:Product;navigate:(path:string)=>void;settings:CatalogData["settings"];favorite?:boolean;toggleFavorite?:(id:string)=>void;addQuote?:(id:string)=>void}) {
-  const showCode=productPermission(product,settings,"codigoInterno");
-  const showName=productPermission(product,settings,"nome");
-  const showDescription=productPermission(product,settings,"descricaoCurta");
-  const showPrice=productPermission(product,settings,"preco");
-  return <motion.article className="product-card" layout initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} whileHover={{y:-4}} whileTap={{scale:.985}}>
-    <button className="image-button" onClick={()=>navigate(`/produto/${product.slug||product.id}`)}>{productImage(product)?<img src={cardImage(product)} alt={product.nome||"Produto Briland"} loading="lazy" decoding="async"/>:<Package/>}{product.promocao&&<span className="badge">PROMOÇÃO</span>}</button>
-    {toggleFavorite&&<button className={`favorite ${favorite?"active":""}`} onClick={()=>toggleFavorite(product.id)}><Heart fill={favorite?"currentColor":"none"}/></button>}
-    <div>{showCode&&<small>{product.codigoInterno||"CÓDIGO NÃO INFORMADO"}</small>}{showName&&<h3>{product.nome}</h3>}{showDescription&&<p>{product.descricaoCurta||"Consulte detalhes e aplicações deste produto."}</p>}{(showPrice||addQuote)&&<div className="card-bottom">{showPrice&&<b>{money(product.preco)}</b>}{addQuote&&<button onClick={()=>addQuote(product.id)}><Plus/> Orçamento</button>}</div>}</div>
-  </motion.article>;
+function Home({
+  data,
+  navigate,
+}: {
+  data: CatalogData;
+  navigate: (path: string) => void;
+}) {
+  const featured = data.products
+    .filter((p) => p.destaque && p.ativo !== false)
+    .slice(0, 8);
+  return (
+    <>
+      <section className="hero">
+        <div>
+          <span>CATÁLOGO DIGITAL BRILAND</span>
+          <h1>Encontre a peça certa com agilidade e confiança.</h1>
+          <p>
+            Consulte produtos, aplicações por veículo e informações comerciais
+            em uma experiência criada para o mercado automotivo.
+          </p>
+          <div>
+            <button className="primary" onClick={() => navigate("/produtos")}>
+              Explorar catálogo <ChevronRight />
+            </button>
+            <button
+              className="secondary"
+              onClick={() => navigate("/montadoras")}
+            >
+              Buscar por veículo
+            </button>
+          </div>
+        </div>
+        {data.settings.media?.homeImage ? (
+          <img src={data.settings.media.homeImage} alt="Catálogo Briland" />
+        ) : (
+          <div className="hero-shape">
+            <Package />
+          </div>
+        )}
+      </section>
+      <section className="section">
+        <div className="section-head">
+          <div>
+            <span>SELEÇÃO COMERCIAL</span>
+            <h2>Produtos em destaque</h2>
+          </div>
+          <button onClick={() => navigate("/produtos")}>
+            Ver todos <ChevronRight />
+          </button>
+        </div>
+        <div className="product-grid">
+          {featured.map((product) => (
+            <ProductCard
+              key={product.id}
+              product={product}
+              navigate={navigate}
+              settings={data.settings}
+            />
+          ))}
+        </div>
+      </section>
+      <section className="category-strip">
+        {data.categories.slice(0, 8).map((item) => (
+          <ProgressiveNavigationCard
+            key={item.id}
+            item={{
+              id: item.id,
+              name: item.nome,
+              image: item.imagem,
+              path: `/categoria/${item.slug || item.id}`,
+              description: item.descricao,
+              count: data.products.filter(
+                (product) =>
+                  product.categoriaId === item.id && product.ativo !== false,
+              ).length,
+            }}
+            navigate={navigate}
+          />
+        ))}
+      </section>
+    </>
+  );
 }
-function Catalog({title,products,data,query,setQuery,suggestions,navigate,filters,setters,filtersOpen,setFiltersOpen,favorites,toggleFavorite,addQuote,pdf,canQuote}:{title:string;products:Product[];data:CatalogData;query:string;setQuery:(v:string)=>void;suggestions:Product[];navigate:(p:string)=>void;filters:any;setters:any;filtersOpen:boolean;setFiltersOpen:(v:boolean)=>void;favorites:string[];toggleFavorite:(id:string)=>void;addQuote:(id:string)=>void;pdf:string;canQuote:boolean}){const models=data.models.filter(item=>!filters.automaker||item.montadoraId===filters.automaker);const subcategories=data.subcategories.filter(item=>!filters.category||item.categoriaId===filters.category);const productGroups=data.productGroups.filter(item=>!filters.subcategory||item.subcategoriaId===filters.subcategory);const[showSuggestions,setShowSuggestions]=useState(false);const searchWrap=useRef<HTMLDivElement|null>(null);useEffect(()=>{const outside=(event:PointerEvent)=>{if(!searchWrap.current?.contains(event.target as Node))setShowSuggestions(false);};document.addEventListener("pointerdown",outside);return()=>document.removeEventListener("pointerdown",outside);},[]);const selectSuggestion=(item:Product)=>{setShowSuggestions(false);navigate(`/produto/${item.slug||item.id}`);};return <section className="catalog-page"><div className="catalog-title"><div><span>CATÁLOGO B2B</span><h1>{title}</h1><p>{products.length} produtos encontrados</p></div>{pdf&&<a className="download" href={pdf} target="_blank" onClick={()=>void telemetry("download_started",location.pathname,null,{fileType:"catalog_pdf"})}><Download/> Catálogo PDF</a>}</div><div className="catalog-layout"><aside className={filtersOpen?"open":""}><div className="filter-mobile-head"><b>Filtros</b><button onClick={()=>setFiltersOpen(false)}><X/></button></div><FilterSelect label="Categoria" value={filters.category} onChange={(v:string)=>{setters.setCategory(v);setters.setSubcategory("");setters.setProductGroup("");}} options={data.categories}/><FilterSelect label="Subcategoria" value={filters.subcategory} onChange={(v:string)=>{setters.setSubcategory(v);setters.setProductGroup("");}} options={subcategories}/><FilterSelect label="Grupo de produtos" value={filters.productGroup} onChange={setters.setProductGroup} options={productGroups}/><FilterSelect label="Marca" value={filters.brand} onChange={setters.setBrand} options={data.brands}/><FilterSelect label="Montadora" value={filters.automaker} onChange={(v:string)=>{setters.setAutomaker(v);setters.setModel("");}} options={data.automakers}/><FilterSelect label="Modelo" value={filters.model} onChange={setters.setModel} options={models}/><label className="filter-field"><span>Ano</span><select value={filters.year||""} onChange={e=>setters.setYear(e.target.value?Number(e.target.value):null)}><option value="">Todos</option>{YEARS.map(y=><option key={y}>{y}</option>)}</select></label><button className="clear" onClick={()=>{setters.setCategory("");setters.setSubcategory("");setters.setProductGroup("");setters.setBrand("");setters.setAutomaker("");setters.setModel("");setters.setYear(null);}}>Limpar filtros</button></aside><div className="catalog-content"><div className="catalog-tools"><div className="search-wrap" ref={searchWrap}><Search/><input value={query} onFocus={()=>setShowSuggestions(true)} onChange={e=>{setQuery(e.target.value);setShowSuggestions(true);}} onKeyDown={e=>{if(e.key==="Escape"){setShowSuggestions(false);e.currentTarget.blur();}if(e.key==="Enter"){e.preventDefault();setShowSuggestions(false);e.currentTarget.blur();}}} placeholder="Buscar por código, nome, EAN ou NCM..."/>{showSuggestions&&suggestions.length>0&&<div className="suggestions">{suggestions.map(item=><button key={item.id} onClick={()=>selectSuggestion(item)}><span>{item.codigoInterno}</span>{item.nome}</button>)}</div>}</div><button className="filter-trigger" onClick={()=>setFiltersOpen(true)}><SlidersHorizontal/> Filtros</button><select value={filters.sort} onChange={e=>setters.setSort(e.target.value)}><option value="order">Ordem do catálogo</option><option value="name">Nome A–Z</option><option value="newest">Mais recentes</option></select></div>{products.length?<div className="product-grid">{products.map(item=><ProductCard key={item.id} product={item} navigate={navigate} favorite={favorites.includes(item.id)} toggleFavorite={toggleFavorite} addQuote={canQuote?addQuote:undefined} settings={data.settings}/>)}</div>:<div className="empty"><Search/><h2>Nenhum produto encontrado</h2><p>Revise os filtros ou fale com nossa equipe para localizar a peça correta.</p></div>}</div></div>{filtersOpen&&<button className="filter-overlay" onClick={()=>setFiltersOpen(false)}/>}</section>}
-function FilterSelect({label,value,onChange,options}:{label:string;value:string;onChange:(v:string)=>void;options:Array<{id:string;nome:string}>}){return <label className="filter-field"><span>{label}</span><select value={value} onChange={e=>onChange(e.target.value)}><option value="">Todos</option>{options.map(item=><option key={item.id} value={item.id}>{item.nome}</option>)}</select></label>}
-
-function HierarchyPage({data,categoryId,subcategoryId,productGroupId,navigate,favorites,toggleFavorite,addQuote}:{data:CatalogData;categoryId:string;subcategoryId?:string;productGroupId?:string;navigate:(path:string)=>void;favorites:string[];toggleFavorite:(id:string)=>void;addQuote?:((id:string)=>void)}) {
-  const category=data.categories.find(item=>item.id===categoryId); const subcategory=data.subcategories.find(item=>item.id===subcategoryId); const productGroup=data.productGroups.find(item=>item.id===productGroupId);
-  const subcategories=data.subcategories.filter(item=>item.categoriaId===categoryId&&item.ativo!==false); const groups=data.productGroups.filter(item=>item.subcategoriaId===subcategoryId&&item.ativo!==false);
-  const directProducts=data.products.filter(item=>item.ativo!==false&&item.categoriaId===categoryId&&(productGroupId?item.grupoProdutoId===productGroupId:subcategoryId?item.subcategoriaId===subcategoryId&&!item.grupoProdutoId:!item.subcategoriaId));
-  const categoryPath=`/categoria/${category?.slug||categoryId}`; const subcategoryPath=subcategory?`${categoryPath}/subcategoria/${subcategory.slug||subcategory.id}`:"";
-  const children=productGroupId?[]:subcategoryId?groups.map(item=>({id:item.id,name:item.nome,image:item.imagem,path:`${subcategoryPath}/grupo/${item.slug||item.id}`,description:item.descricao,count:data.products.filter(product=>product.grupoProdutoId===item.id&&product.ativo!==false).length})):subcategories.map(item=>({id:item.id,name:item.nome,image:item.imagem,path:`${categoryPath}/subcategoria/${item.slug||item.id}`,description:item.descricao,count:data.products.filter(product=>product.subcategoriaId===item.id&&product.ativo!==false).length}));
-  const title=productGroup?.nome||subcategory?.nome||category?.nome||"Classificação"; const path=[category?.nome,subcategory?.nome,productGroup?.nome].filter(Boolean).join(" › ");
-  useEffect(()=>{void telemetry("taxonomy_view",location.pathname,null,{categoryId,subcategoryId:subcategoryId||null,productGroupId:productGroupId||null});},[categoryId,subcategoryId,productGroupId]);
-  return <section className="section"><div className="catalog-title"><div><span>{path}</span><h1>{title}</h1><p>{directProducts.length} produtos neste nível</p></div></div>{children.length>0&&<div className="progressive-grid">{children.map(item=><ProgressiveNavigationCard key={item.id} item={item} navigate={navigate}/>)}</div>}{directProducts.length>0&&<><div className="section-head"><div><span>PRODUTOS</span><h2>Produtos desta seleção</h2></div></div><div className="product-grid">{directProducts.map(item=><ProductCard key={item.id} product={item} navigate={navigate} favorite={favorites.includes(item.id)} toggleFavorite={toggleFavorite} addQuote={addQuote} settings={data.settings}/>)}</div></>}{!children.length&&!directProducts.length&&<div className="empty"><Package/><h2>Nenhum produto disponível</h2></div>}</section>;
+function ProductCard({
+  product,
+  navigate,
+  settings,
+  favorite,
+  toggleFavorite,
+  addQuote,
+}: {
+  product: Product;
+  navigate: (path: string) => void;
+  settings: CatalogData["settings"];
+  favorite?: boolean;
+  toggleFavorite?: (id: string) => void;
+  addQuote?: (id: string) => void;
+}) {
+  const showCode = productPermission(product, settings, "codigoInterno");
+  const showName = productPermission(product, settings, "nome");
+  const showDescription = productPermission(
+    product,
+    settings,
+    "descricaoCurta",
+  );
+  const showPrice = productPermission(product, settings, "preco");
+  return (
+    <motion.article
+      className="product-card"
+      layout
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      whileHover={{ y: -4 }}
+      whileTap={{ scale: 0.985 }}
+    >
+      <button
+        className="image-button"
+        onClick={() => navigate(`/produto/${product.slug || product.id}`)}
+      >
+        {productImage(product) ? (
+          <img
+            src={cardImage(product)}
+            alt={product.nome || "Produto Briland"}
+            loading="lazy"
+            decoding="async"
+          />
+        ) : (
+          <Package />
+        )}
+        {product.promocao && <span className="badge">PROMOÇÃO</span>}
+      </button>
+      {toggleFavorite && (
+        <button
+          className={`favorite ${favorite ? "active" : ""}`}
+          onClick={() => toggleFavorite(product.id)}
+        >
+          <Heart fill={favorite ? "currentColor" : "none"} />
+        </button>
+      )}
+      <div>
+        {showCode && (
+          <small>{product.codigoInterno || "CÓDIGO NÃO INFORMADO"}</small>
+        )}
+        {showName && <h3>{product.nome}</h3>}
+        {showDescription && (
+          <p>
+            {product.descricaoCurta ||
+              "Consulte detalhes e aplicações deste produto."}
+          </p>
+        )}
+        {(showPrice || addQuote) && (
+          <div className="card-bottom">
+            {showPrice && <b>{money(product.preco)}</b>}
+            {addQuote && (
+              <button onClick={() => addQuote(product.id)}>
+                <Plus /> Orçamento
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </motion.article>
+  );
+}
+function Catalog({
+  title,
+  products,
+  data,
+  query,
+  setQuery,
+  suggestions,
+  navigate,
+  filters,
+  setters,
+  filtersOpen,
+  setFiltersOpen,
+  favorites,
+  toggleFavorite,
+  addQuote,
+  pdf,
+  canQuote,
+}: {
+  title: string;
+  products: Product[];
+  data: CatalogData;
+  query: string;
+  setQuery: (v: string) => void;
+  suggestions: Product[];
+  navigate: (p: string) => void;
+  filters: any;
+  setters: any;
+  filtersOpen: boolean;
+  setFiltersOpen: (v: boolean) => void;
+  favorites: string[];
+  toggleFavorite: (id: string) => void;
+  addQuote: (id: string) => void;
+  pdf: string;
+  canQuote: boolean;
+}) {
+  const models = data.models.filter(
+    (item) => !filters.automaker || item.montadoraId === filters.automaker,
+  );
+  const subcategories = data.subcategories.filter(
+    (item) => !filters.category || item.categoriaId === filters.category,
+  );
+  const productGroups = data.productGroups.filter(
+    (item) =>
+      !filters.subcategory || item.subcategoriaId === filters.subcategory,
+  );
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const searchWrap = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const outside = (event: PointerEvent) => {
+      if (!searchWrap.current?.contains(event.target as Node))
+        setShowSuggestions(false);
+    };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, []);
+  const selectSuggestion = (item: Product) => {
+    setShowSuggestions(false);
+    navigate(`/produto/${item.slug || item.id}`);
+  };
+  return (
+    <section className="catalog-page">
+      <div className="catalog-title">
+        <div>
+          <span>CATÁLOGO B2B</span>
+          <h1>{title}</h1>
+          <p>{products.length} produtos encontrados</p>
+        </div>
+          {pdf && (
+            <AnimatedPdfDownload
+              label="Catálogo PDF"
+              filename="catalogo-briland.pdf"
+              prepare={(report) => remotePdf(pdf, report)}
+              onComplete={() =>
+                void telemetry("download_completed", location.pathname, null, {
+                  fileType: "catalog_pdf",
+                })
+              }
+            />
+          )}
+      </div>
+      <div className="catalog-layout">
+        <aside className={filtersOpen ? "open" : ""}>
+          <div className="filter-mobile-head">
+            <b>Filtros</b>
+            <button onClick={() => setFiltersOpen(false)}>
+              <X />
+            </button>
+          </div>
+          <FilterSelect
+            label="Categoria"
+            value={filters.category}
+            onChange={(v: string) => {
+              setters.setCategory(v);
+              setters.setSubcategory("");
+              setters.setProductGroup("");
+            }}
+            options={data.categories}
+          />
+          <FilterSelect
+            label="Subcategoria"
+            value={filters.subcategory}
+            onChange={(v: string) => {
+              setters.setSubcategory(v);
+              setters.setProductGroup("");
+            }}
+            options={subcategories}
+          />
+          <FilterSelect
+            label="Grupo de produtos"
+            value={filters.productGroup}
+            onChange={setters.setProductGroup}
+            options={productGroups}
+          />
+          <FilterSelect
+            label="Marca"
+            value={filters.brand}
+            onChange={setters.setBrand}
+            options={data.brands}
+          />
+          <FilterSelect
+            label="Montadora"
+            value={filters.automaker}
+            onChange={(v: string) => {
+              setters.setAutomaker(v);
+              setters.setModel("");
+            }}
+            options={data.automakers}
+          />
+          <FilterSelect
+            label="Modelo"
+            value={filters.model}
+            onChange={setters.setModel}
+            options={models}
+          />
+          <label className="filter-field">
+            <span>Ano</span>
+            <select
+              value={filters.year || ""}
+              onChange={(e) =>
+                setters.setYear(e.target.value ? Number(e.target.value) : null)
+              }
+            >
+              <option value="">Todos</option>
+              {YEARS.map((y) => (
+                <option key={y}>{y}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="clear"
+            onClick={() => {
+              setters.setCategory("");
+              setters.setSubcategory("");
+              setters.setProductGroup("");
+              setters.setBrand("");
+              setters.setAutomaker("");
+              setters.setModel("");
+              setters.setYear(null);
+            }}
+          >
+            Limpar filtros
+          </button>
+        </aside>
+        <div className="catalog-content">
+          <div className="catalog-tools">
+            <div className="search-wrap" ref={searchWrap}>
+              <Search />
+              <input
+                value={query}
+                onFocus={() => setShowSuggestions(true)}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setShowSuggestions(true);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setShowSuggestions(false);
+                    e.currentTarget.blur();
+                  }
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    setShowSuggestions(false);
+                    e.currentTarget.blur();
+                  }
+                }}
+                placeholder="Buscar por código, nome, EAN ou NCM..."
+              />
+              {showSuggestions && suggestions.length > 0 && (
+                <div className="suggestions">
+                  {suggestions.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => selectSuggestion(item)}
+                    >
+                      <span>{item.codigoInterno}</span>
+                      {item.nome}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button
+              className="filter-trigger"
+              onClick={() => setFiltersOpen(true)}
+            >
+              <SlidersHorizontal /> Filtros
+            </button>
+            <select
+              value={filters.sort}
+              onChange={(e) => setters.setSort(e.target.value)}
+            >
+              <option value="order">Ordem do catálogo</option>
+              <option value="name">Nome A–Z</option>
+              <option value="newest">Mais recentes</option>
+            </select>
+          </div>
+          {products.length ? (
+            <div className="product-grid">
+              {products.map((item) => (
+                <ProductCard
+                  key={item.id}
+                  product={item}
+                  navigate={navigate}
+                  favorite={favorites.includes(item.id)}
+                  toggleFavorite={toggleFavorite}
+                  addQuote={canQuote ? addQuote : undefined}
+                  settings={data.settings}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="empty">
+              <Search />
+              <h2>Nenhum produto encontrado</h2>
+              <p>
+                Revise os filtros ou fale com nossa equipe para localizar a peça
+                correta.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+      {filtersOpen && (
+        <button
+          className="filter-overlay"
+          onClick={() => setFiltersOpen(false)}
+        />
+      )}
+    </section>
+  );
+}
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: Array<{ id: string; nome: string }>;
+}) {
+  return (
+    <label className="filter-field">
+      <span>{label}</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Todos</option>
+        {options.map((item) => (
+          <option key={item.id} value={item.id}>
+            {item.nome}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
-function ProductDetail({product,data,galleryIndex,setGalleryIndex,favorite,toggleFavorite,addQuote,links,profile,canQuote,canWhatsApp,recommendations,navigate,rememberProduct}:{product?:Product;data:CatalogData;galleryIndex:number;setGalleryIndex:(v:number)=>void;favorite:boolean;toggleFavorite:(id:string)=>void;addQuote:(id:string)=>void;links:SocialLinks;profile:UserProfile|null;canQuote:boolean;canWhatsApp:boolean;recommendations:Product[];navigate:(path:string)=>void;rememberProduct:(id:string)=>void}) {
-  useEffect(()=>{setGalleryIndex(0);if(product){rememberProduct(product.id);void telemetry("product_view",location.pathname,profile,{productId:product.id,code:product.codigoInterno,categoryId:product.categoriaId,subcategoryId:product.subcategoriaId||null,productGroupId:product.grupoProdutoId||null,brandId:product.marcaId});}},[product?.id]);
-  if(!product)return <div className="empty page-empty"><Package/><h1>Produto não encontrado</h1><a href="/produtos">Voltar ao catálogo</a></div>;
-  const category=data.categories.find(i=>i.id===product.categoriaId); const subcategory=data.subcategories.find(i=>i.id===product.subcategoriaId); const productGroup=data.productGroups.find(i=>i.id===product.grupoProdutoId); const brand=data.brands.find(i=>i.id===product.marcaId); const apps=data.applications.filter(i=>i.produtoId===product.id); const images=[detailImage(product),...(product.imagensExtras||[])].filter(Boolean); const hierarchyPath=[category?.nome,subcategory?.nome,productGroup?.nome].filter(Boolean).join(" › "); const message=`Olá! Tenho interesse no produto ${product.codigoInterno||""} — ${product.nome}${hierarchyPath?` (${hierarchyPath})`:""}.\n${location.href}`;
-  const showCategory=productPermission(product,data.settings,"categoria"),showBrand=productPermission(product,data.settings,"marca"),showCode=productPermission(product,data.settings,"codigoInterno"),showName=productPermission(product,data.settings,"nome"),showShort=productPermission(product,data.settings,"descricaoCurta"),showPrice=productPermission(product,data.settings,"preco"),showStock=productPermission(product,data.settings,"estoque"),showManual=productPermission(product,data.settings,"manualPdf"),showApplications=productPermission(product,data.settings,"aplicacoesVeiculo"),showComplete=productPermission(product,data.settings,"descricaoCompleta"),showTechnical=productPermission(product,data.settings,"fichaTecnica")&&Boolean(product.fichaTecnica);
-  const technicalFields=[["EAN",product.ean,"ean"],["NCM",product.ncm,"ncm"],["Caixa master",product.caixaMaster,"caixaMaster"],["Condição",product.condicaoComercial,"condicaoComercial"],["Prazo",product.prazoEntrega,"prazoEntrega"]].filter(([,value,key])=>Boolean(value)&&productPermission(product,data.settings,String(key))); const compactDescription=showComplete&&Boolean(product.descricaoCompleta)&&String(product.descricaoCompleta).length<=360; const compactApplications=showApplications&&apps.length<=3;
-  return <section className="detail-page"><button className="back" onClick={()=>history.back()}><ChevronLeft/> Voltar</button><div className="detail-grid"><div className="gallery"><div className="main-image">{images[galleryIndex]?<img src={largeProductImage(images[galleryIndex],product)} alt={product.nome} decoding="async" fetchPriority="high"/>:<Package/>}{images.length>1&&<><button className="gallery-prev" onClick={()=>setGalleryIndex((galleryIndex-1+images.length)%images.length)}><ChevronLeft/></button><button className="gallery-next" onClick={()=>setGalleryIndex((galleryIndex+1)%images.length)}><ChevronRight/></button></>}</div>{images.length>1&&<div className="thumbs">{images.map((image,index)=><button key={image} className={index===galleryIndex?"active":""} onClick={()=>{setGalleryIndex(index);void telemetry("gallery_interaction",location.pathname,profile,{productId:product.id,index});}}><img src={thumbnailImage(image,product)} alt="" loading="lazy" decoding="async"/></button>)}</div>}</div><div className="product-info">{showCategory&&<div className="eyebrow">{category?.nome||"Produto Briland"}</div>}{showCode&&<div className="code">{product.codigoInterno}</div>}{showName&&<h1>{product.nome}</h1>}{showShort&&product.descricaoCurta&&<p className="lead">{product.descricaoCurta}</p>}{showBrand&&<div className="brand-line">{brand?.logo&&<img src={brand.logo} alt={brand.nome}/>}<span>{brand?.nome}</span></div>}{(showPrice||showStock)&&<div className="price-stock">{showPrice&&<div><small>Preço</small><b>{money(product.preco)}</b></div>}{showStock&&<div><small>Disponibilidade</small><b>{product.estoque==null?"Sob consulta":product.estoque>0?`${product.estoque} unidades`:"Consulte"}</b></div>}</div>}<div className="detail-actions">{canQuote&&<button className="primary" onClick={()=>addQuote(product.id)}><ShoppingCart/> Adicionar ao orçamento</button>}{canWhatsApp&&<a className="whatsapp" href={whatsappLink(links.whatsapp,message)} target="_blank" onClick={()=>void telemetry("whatsapp_open",location.pathname,profile,{productId:product.id})}>Falar no WhatsApp</a>}<button onClick={()=>toggleFavorite(product.id)} className={favorite?"active":""}><Heart fill={favorite?"currentColor":"none"}/></button><button onClick={()=>{void navigator.share?.({title:product.nome,url:location.href});void telemetry("product_share",location.pathname,profile,{productId:product.id});}}><Share2/></button></div>{showManual&&product.manualPdf&&<a className="manual" href={product.manualPdf} target="_blank" onClick={()=>void telemetry("download_started",location.pathname,profile,{fileType:"product_manual",productId:product.id})}><Download/> Baixar manual do produto</a>} {(technicalFields.length>0||compactDescription||compactApplications)&&<div className="inline-product-details">{(technicalFields.length>0||compactDescription)&&<section><h2>Informações do produto</h2>{compactDescription&&<p>{product.descricaoCompleta}</p>}{technicalFields.length>0&&<dl>{technicalFields.map(([label,value])=><div key={String(label)}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>}</section>}{compactApplications&&<section><h2>Aplicações por veículo</h2>{apps.length?<div className="applications">{apps.map(app=><div key={app.id}><b>{app.montadoraNome} {app.modeloNome}</b><span>{vehicleYearLabel(app)}</span>{app.observacaoComercial&&<small>{app.observacaoComercial}</small>}</div>)}</div>:<p>Consulte nossa equipe para confirmar a aplicação correta.</p>}</section>}</div>}</div></div><div className="detail-panels">{showComplete&&!compactDescription&&<article><h2>Descrição completa</h2><p>{product.descricaoCompleta||"Informações comerciais sob consulta."}</p></article>}{showApplications&&!compactApplications&&<article><h2>Aplicações por veículo</h2><div className="applications">{apps.map(app=><div key={app.id}><b>{app.montadoraNome} {app.modeloNome}</b><span>{vehicleYearLabel(app)}</span>{app.observacaoComercial&&<small>{app.observacaoComercial}</small>}</div>)}</div></article>}{showTechnical&&<article><h2>Ficha técnica</h2><p>{product.fichaTecnica}</p></article>}</div>{recommendations.length>0&&<section className="recommendations"><div className="section-head"><div><span>PARA VOCÊ</span><h2>Recomendados</h2></div></div><div className="product-grid">{recommendations.map(item=><ProductCard key={item.id} product={item} navigate={navigate} settings={data.settings}/>)}</div></section>}</section>;
+function HierarchyPage({
+  data,
+  categoryId,
+  subcategoryId,
+  productGroupId,
+  navigate,
+  favorites,
+  toggleFavorite,
+  addQuote,
+}: {
+  data: CatalogData;
+  categoryId: string;
+  subcategoryId?: string;
+  productGroupId?: string;
+  navigate: (path: string) => void;
+  favorites: string[];
+  toggleFavorite: (id: string) => void;
+  addQuote?: (id: string) => void;
+}) {
+  const category = data.categories.find((item) => item.id === categoryId);
+  const subcategory = data.subcategories.find(
+    (item) => item.id === subcategoryId,
+  );
+  const productGroup = data.productGroups.find(
+    (item) => item.id === productGroupId,
+  );
+  const subcategories = data.subcategories.filter(
+    (item) => item.categoriaId === categoryId && item.ativo !== false,
+  );
+  const groups = data.productGroups.filter(
+    (item) => item.subcategoriaId === subcategoryId && item.ativo !== false,
+  );
+  const directProducts = data.products.filter(
+    (item) =>
+      item.ativo !== false &&
+      item.categoriaId === categoryId &&
+      (productGroupId
+        ? item.grupoProdutoId === productGroupId
+        : subcategoryId
+          ? item.subcategoriaId === subcategoryId && !item.grupoProdutoId
+          : !item.subcategoriaId),
+  );
+  const categoryPath = `/categoria/${category?.slug || categoryId}`;
+  const subcategoryPath = subcategory
+    ? `${categoryPath}/subcategoria/${subcategory.slug || subcategory.id}`
+    : "";
+  const children = productGroupId
+    ? []
+    : subcategoryId
+      ? groups.map((item) => ({
+          id: item.id,
+          name: item.nome,
+          image: item.imagem,
+          path: `${subcategoryPath}/grupo/${item.slug || item.id}`,
+          description: item.descricao,
+          count: data.products.filter(
+            (product) =>
+              product.grupoProdutoId === item.id && product.ativo !== false,
+          ).length,
+        }))
+      : subcategories.map((item) => ({
+          id: item.id,
+          name: item.nome,
+          image: item.imagem,
+          path: `${categoryPath}/subcategoria/${item.slug || item.id}`,
+          description: item.descricao,
+          count: data.products.filter(
+            (product) =>
+              product.subcategoriaId === item.id && product.ativo !== false,
+          ).length,
+        }));
+  const title =
+    productGroup?.nome ||
+    subcategory?.nome ||
+    category?.nome ||
+    "Classificação";
+  const path = [category?.nome, subcategory?.nome, productGroup?.nome]
+    .filter(Boolean)
+    .join(" › ");
+  useEffect(() => {
+    void telemetry("taxonomy_view", location.pathname, null, {
+      categoryId,
+      subcategoryId: subcategoryId || null,
+      productGroupId: productGroupId || null,
+    });
+  }, [categoryId, subcategoryId, productGroupId]);
+  return (
+    <section className="section">
+      <div className="catalog-title">
+        <div>
+          <span>{path}</span>
+          <h1>{title}</h1>
+          <p>{directProducts.length} produtos neste nível</p>
+        </div>
+      </div>
+      {children.length > 0 && (
+        <div className="progressive-grid">
+          {children.map((item) => (
+            <ProgressiveNavigationCard
+              key={item.id}
+              item={item}
+              navigate={navigate}
+            />
+          ))}
+        </div>
+      )}
+      {directProducts.length > 0 && (
+        <>
+          <div className="section-head">
+            <div>
+              <span>PRODUTOS</span>
+              <h2>Produtos desta seleção</h2>
+            </div>
+          </div>
+          <div className="product-grid">
+            {directProducts.map((item) => (
+              <ProductCard
+                key={item.id}
+                product={item}
+                navigate={navigate}
+                favorite={favorites.includes(item.id)}
+                toggleFavorite={toggleFavorite}
+                addQuote={addQuote}
+                settings={data.settings}
+              />
+            ))}
+          </div>
+        </>
+      )}
+      {!children.length && !directProducts.length && (
+        <div className="empty">
+          <Package />
+          <h2>Nenhum produto disponível</h2>
+        </div>
+      )}
+    </section>
+  );
 }
 
-function Restricted(){return <section className="narrow-page"><div className="empty"><Package/><h2>Recurso não disponível para este acesso</h2><p>Esta função não está liberada para o seu perfil.</p><a href="/produtos">Voltar ao catálogo</a></div></section>}
-type NavigationItem={id:string;name:string;image?:string|null;path:string;description?:string|null;count?:number};
-function ProgressiveNavigationCard({item,navigate}:{item:NavigationItem;navigate:(path:string)=>void}){return <motion.button className={`progressive-nav-card${item.image?"":" fallback"}`} onClick={()=>navigate(item.path)} whileHover={{y:-4,scale:1.01}} whileTap={{scale:.98}}>{item.image?<img src={item.image} alt="" loading="lazy" decoding="async"/>:<div className="progressive-nav-fallback"><Package/></div>}<div className="progressive-nav-shade"/><div className="progressive-nav-content"><b>{item.name}</b>{item.description&&<p>{item.description}</p>}<small>{item.count||0} {(item.count||0)===1?"produto":"produtos"}</small></div><span className="progressive-nav-arrow"><ChevronRight/></span></motion.button>}
-function Directory({title,items,navigate,progressive=false}:{title:string;items:NavigationItem[];navigate:(p:string)=>void;progressive?:boolean}){return <section className="directory section"><div className="section-head"><div><span>NAVEGUE PELO CATÁLOGO</span><h1>{title}</h1></div></div><div className={progressive?"progressive-grid":"directory-grid"}>{items.map(item=>progressive?<ProgressiveNavigationCard key={item.id} item={item} navigate={navigate}/>:<button key={item.id} onClick={()=>navigate(item.path)}>{item.image?<img src={item.image} alt=""/>:<Package/>}<div><b>{item.name}</b>{item.description&&<p>{item.description}</p>}</div><ChevronRight/></button>)}</div></section>}
-function QuotePage({data,quote,saveQuote,links,profile}:{data:CatalogData;quote:Record<string,number>;saveQuote:(v:Record<string,number>)=>void;links:SocialLinks;profile:UserProfile|null}){const items=Object.entries(quote).map(([id,quantity])=>({product:data.products.find(p=>p.id===id),quantity})).filter(item=>item.product) as Array<{product:Product;quantity:number}>;const update=(id:string,q:number)=>{const next={...quote};if(q<=0)delete next[id];else next[id]=q;saveQuote(next);};const send=async(channel:"lead"|"whatsapp")=>{const lines=items.map(item=>`${item.quantity}x ${item.product.codigoInterno||""} — ${item.product.nome}`);const text=`Olá! Gostaria de solicitar um orçamento:\n\n${lines.join("\n")}`;if(channel==="whatsapp")window.open(whatsappLink(links.whatsapp,text),"_blank");else await supabase.from("LeadOrcamento").insert({id:crypto.randomUUID(),nome:profile?.name||"Visitante do catálogo web",empresa:profile?.company||"Não informado",email:profile?.email||null,telefone:profile?.phone||null,mensagem:`[Comercial] ${text}`,origem:"WEB_CATALOG",status:"NOVO"});void telemetry("quote_sent",location.pathname,profile,{channel,itemCount:items.length});};return <section className="narrow-page"><span className="eyebrow">SOLICITAÇÃO COMERCIAL</span><h1>Lista de orçamento</h1>{items.length?<><div className="quote-list">{items.map(({product,quantity})=><article key={product.id}>{productImage(product)?<img src={productImage(product)} alt=""/>:<Package/>}<div><small>{product.codigoInterno}</small><b>{product.nome}</b></div><div className="quantity"><button onClick={()=>update(product.id,quantity-1)}><Minus/></button><span>{quantity}</span><button onClick={()=>update(product.id,quantity+1)}><Plus/></button></div><button onClick={()=>update(product.id,0)}><X/></button></article>)}</div><div className="quote-actions"><button className="primary" onClick={()=>void send("lead")}>Enviar solicitação</button><button className="whatsapp" onClick={()=>void send("whatsapp")}>Enviar pelo WhatsApp</button></div></>:<div className="empty"><ShoppingCart/><h2>Sua lista está vazia</h2><p>Adicione produtos para solicitar tudo em uma única mensagem.</p><a href="/produtos">Explorar produtos</a></div>}</section>}
-function Notifications({products,navigate}:{products:Product[];navigate:(p:string)=>void}){const items=products.filter(p=>p.lancamento||p.promocao).sort((a,b)=>String(b.updatedAt).localeCompare(String(a.updatedAt))).slice(0,30);return <section className="narrow-page"><span className="eyebrow">NOVIDADES</span><h1>Notificações do catálogo</h1><div className="notification-list">{items.map(product=><button key={product.id} onClick={()=>navigate(`/produto/${product.slug||product.id}`)}><span className={product.promocao?"promo":"launch"}>{product.promocao?"Promoção":"Lançamento"}</span><div><b>{product.nome}</b><small>{product.codigoInterno}</small></div><ChevronRight/></button>)}{!items.length&&<div className="empty"><Bell/><h2>Nenhuma novidade no momento</h2></div>}</div></section>}
-function Login({onProfile,navigate}:{onProfile:(p:UserProfile)=>void;navigate:(p:string)=>void}){const[email,setEmail]=useState("");const[password,setPassword]=useState("");const[error,setError]=useState("");const[busy,setBusy]=useState(false);const[firstAccess,setFirstAccess]=useState(false);const check=async()=>{if(!email.includes("@"))return;const{data}=await supabase.rpc("is_client_first_access",{p_email:email.trim()});setFirstAccess(data===true);};const submit=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{const{data:first}=await supabase.rpc("is_client_first_access",{p_email:email.trim()});if(first){setFirstAccess(true);return;}const{error:authError}=await supabase.auth.signInWithPassword({email,password});if(authError)throw authError;const user=await currentProfile();if(!user)throw new Error("Seu cadastro ainda não está ativo.");await telemetry("login","/login",user);onProfile(user);}catch(err){const text=err instanceof Error?err.message:"Não foi possível entrar.";setError(text.toLowerCase().includes("email not confirmed")?"Confirme o e-mail enviado para concluir seu cadastro.":text);}finally{setBusy(false);}};return <AuthFrame title={firstAccess?"Crie sua primeira senha":"Acesse sua conta"} subtitle={firstAccess?"Enviaremos um código único para confirmar seu e-mail.":"Entre para visualizar informações liberadas ao seu perfil."}>{firstAccess?<FirstAccess email={email} onBack={()=>setFirstAccess(false)}/>:<form onSubmit={submit}><label>E-mail<input type="email" value={email} onChange={e=>{setEmail(e.target.value);setFirstAccess(false);}} onBlur={()=>void check()} required/></label><label>Senha<input type="password" value={password} onChange={e=>setPassword(e.target.value)}/></label>{error&&<span className="form-error">{error}</span>}<button className="primary" disabled={busy}>{busy?"Verificando...":"Entrar"}</button><button type="button" className="link-button" onClick={()=>navigate("/recuperar-senha")}>Esqueci minha senha</button><button type="button" className="link-button" onClick={()=>navigate("/cadastro")}>Ainda não tenho cadastro</button></form>}</AuthFrame>}
-function FirstAccess({email,onBack}:{email:string;onBack:()=>void}){const[code,setCode]=useState("");const[password,setPassword]=useState("");const[confirmation,setConfirmation]=useState("");const[msg,setMsg]=useState("");const[busy,setBusy]=useState(false);const[sent,setSent]=useState(false);const send=async()=>{setBusy(true);const{error}=await supabase.auth.signInWithOtp({email:email.trim().toLowerCase(),options:{shouldCreateUser:true,data:{registration_source:"representative_first_access"}}});setMsg(error?"Não foi possível enviar o código.":"Código enviado. Confira também a caixa de spam.");setSent(!error);setBusy(false);};useEffect(()=>{if(!sent)void send();},[]);const finish=async(e:React.FormEvent)=>{e.preventDefault();if(password.length<8||password!==confirmation){setMsg("A senha precisa ter 8 caracteres e coincidir.");return;}setBusy(true);const verified=await supabase.auth.verifyOtp({email:email.trim().toLowerCase(),token:code.trim(),type:"email"});if(verified.error){setMsg("Código inválido ou expirado.");setBusy(false);return;}const updated=await supabase.auth.updateUser({password});if(updated.error){setMsg(updated.error.message);setBusy(false);return;}const completed=await supabase.rpc("complete_client_first_access");if(completed.error){setMsg(completed.error.message);setBusy(false);return;}await supabase.auth.signOut({scope:"local"});setMsg("Senha criada. Você já pode entrar.");setTimeout(onBack,1400);setBusy(false);};return <form onSubmit={finish}><label>E-mail<input value={email} disabled/></label><label>Código recebido<input inputMode="numeric" autoComplete="one-time-code" value={code} onChange={e=>setCode(e.target.value)} required/></label><label>Nova senha<input type="password" minLength={8} value={password} onChange={e=>setPassword(e.target.value)} required/></label><label>Confirmar senha<input type="password" minLength={8} value={confirmation} onChange={e=>setConfirmation(e.target.value)} required/></label>{msg&&<span className="form-message">{msg}</span>}<button className="primary" disabled={busy||!code}>{busy?"Processando...":"Criar minha senha"}</button><button type="button" className="link-button" disabled={busy} onClick={()=>void send()}>Reenviar código</button><button type="button" className="link-button" onClick={onBack}>Voltar</button></form>}
-function ForgotPassword({navigate}:{navigate:(p:string)=>void}){const[email,setEmail]=useState("");const[msg,setMsg]=useState("");const[busy,setBusy]=useState(false);const send=async(type:"reset"|"signup")=>{setBusy(true);setMsg("");try{const normalized=email.trim().toLowerCase();if(type==="reset"){const{error}=await supabase.auth.resetPasswordForEmail(normalized,{redirectTo:`${location.origin}/redefinir-senha`});if(error)throw error;}else{const{error}=await supabase.auth.resend({type:"signup",email:normalized,options:{emailRedirectTo:`${location.origin}/login?confirmado=1`}});if(error)throw error;}setMsg(type==="reset"?"Se o e-mail estiver cadastrado, enviaremos um link seguro para criar uma nova senha.":"Se o cadastro ainda estiver pendente, enviaremos uma nova confirmação.");}catch{setMsg("Não foi possível enviar agora. Aguarde alguns minutos e tente novamente.");}finally{setBusy(false);}};return <AuthFrame title="Recuperar acesso" subtitle="Informe o e-mail utilizado no cadastro."><form onSubmit={e=>{e.preventDefault();void send("reset");}}><label>E-mail<input type="email" value={email} onChange={e=>setEmail(e.target.value)} required/></label>{msg&&<span className="form-message">{msg}</span>}<button className="primary" disabled={busy}>{busy?"Enviando...":"Enviar link para redefinir senha"}</button><button type="button" className="link-button" disabled={busy||!email.includes("@")} onClick={()=>void send("signup")}>Reenviar confirmação de cadastro</button><button type="button" className="link-button" onClick={()=>navigate("/login")}>Voltar ao login</button></form></AuthFrame>}
-function ResetPassword({navigate}:{navigate:(p:string)=>void}){const[password,setPassword]=useState("");const[confirmation,setConfirmation]=useState("");const[msg,setMsg]=useState("");const[busy,setBusy]=useState(false);const valid=password.length>=8&&password===confirmation;const submit=async(e:React.FormEvent)=>{e.preventDefault();if(!valid)return;setBusy(true);const{error}=await supabase.auth.updateUser({password});if(error)setMsg("Este link é inválido ou expirou. Solicite uma nova recuperação.");else{setMsg("Senha alterada com sucesso. Você já pode entrar.");await supabase.auth.signOut({scope:"local"});setTimeout(()=>navigate("/login"),1200);}setBusy(false);};return <AuthFrame title="Criar nova senha" subtitle="Escolha uma senha com pelo menos 8 caracteres."><form onSubmit={submit}><label>Nova senha<input type="password" minLength={8} value={password} onChange={e=>setPassword(e.target.value)} required/></label><label>Confirmar nova senha<input type="password" minLength={8} value={confirmation} onChange={e=>setConfirmation(e.target.value)} required/></label>{confirmation&&password!==confirmation&&<span className="form-error">As senhas não coincidem.</span>}{msg&&<span className="form-message">{msg}</span>}<button className="primary" disabled={!valid||busy}>{busy?"Salvando...":"Salvar nova senha"}</button></form></AuthFrame>}
-function AccountPage({profile,onLogout}:{profile:UserProfile;onLogout:()=>Promise<void>}){const[currentPassword,setCurrentPassword]=useState("");const[newPassword,setNewPassword]=useState("");const[confirmation,setConfirmation]=useState("");const[msg,setMsg]=useState("");const[busy,setBusy]=useState(false);const valid=currentPassword.length>0&&newPassword.length>=8&&newPassword===confirmation;const change=async(e:React.FormEvent)=>{e.preventDefault();if(!valid)return;setBusy(true);setMsg("");const check=await supabase.auth.signInWithPassword({email:profile.email,password:currentPassword});if(check.error)setMsg("A senha atual está incorreta.");else{const result=await supabase.auth.updateUser({password:newPassword});setMsg(result.error?"Não foi possível alterar a senha.":"Senha alterada com sucesso.");if(!result.error){setCurrentPassword("");setNewPassword("");setConfirmation("");}}setBusy(false);};const fields=[["Nome",profile.name],["Empresa",profile.company],["E-mail",profile.email],["Telefone",profile.phone],["CNPJ",profile.cnpj],["Cidade / UF",[profile.city,profile.state].filter(Boolean).join(" / ")],["Perfil",roleLabel[profile.role]]].filter(([,value])=>value);return <section className="text-page account-page"><span className="eyebrow">CONTA</span><h1>Minha conta</h1><div className="account-data">{fields.map(([label,value])=><div key={String(label)}><small>{label}</small><b>{value}</b></div>)}</div><h2>Alterar senha</h2><form onSubmit={change}><label>Senha atual<input type="password" value={currentPassword} onChange={e=>setCurrentPassword(e.target.value)} required/></label><label>Nova senha<input type="password" minLength={8} value={newPassword} onChange={e=>setNewPassword(e.target.value)} required/></label><label>Confirmar nova senha<input type="password" minLength={8} value={confirmation} onChange={e=>setConfirmation(e.target.value)} required/></label>{confirmation&&newPassword!==confirmation&&<span className="form-error">As senhas não coincidem.</span>}{msg&&<span className="form-message">{msg}</span>}<button className="primary" disabled={!valid||busy}>{busy?"Alterando...":"Alterar senha"}</button><button type="button" className="link-button" onClick={()=>void onLogout()}><LogOut/> Sair da conta</button></form></section>}
-function LoginRequired({navigate}:{navigate:(p:string)=>void}){return <section className="narrow-page"><div className="empty"><UserRound/><h2>Entre para acessar sua conta</h2><button className="primary" onClick={()=>navigate("/login")}>Fazer login</button></div></section>}
-function Signup({navigate}:{navigate:(p:string)=>void}){const[form,setForm]=useState({nome:"",empresa:"",telefone:"",email:"",cnpj:"",senha:"",observacoes:"",website:""});const[msg,setMsg]=useState("");const[startedAt]=useState(()=>Date.now());const[busy,setBusy]=useState(false);const submit=async(e:React.FormEvent)=>{e.preventDefault();setMsg("");setBusy(true);try{const response=await fetch("/api/cadastro",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...form,startedAt})});const result=await response.json();if(!response.ok)throw new Error(result.error||"Não foi possível enviar o cadastro.");setMsg("Cadastro recebido. Confirme o e-mail enviado e depois entre com a senha cadastrada.");}catch(error){setMsg(error instanceof Error?error.message:"Não foi possível enviar o cadastro.");}finally{setBusy(false);}};return <AuthFrame title="Crie seu acesso" subtitle="Após confirmar o e-mail, você poderá entrar imediatamente."><form onSubmit={submit} className="two-cols"><input className="signup-trap" name="website" value={form.website} onChange={e=>setForm({...form,website:e.target.value})} tabIndex={-1} autoComplete="off" aria-hidden="true"/>{[["nome","Nome"],["empresa","Empresa"],["telefone","Telefone"],["email","E-mail"],["cnpj","CNPJ"],["senha","Senha"]].map(([key,label])=><label key={key}>{label}<input type={key==="senha"?"password":key==="email"?"email":"text"} inputMode={key==="telefone"?"tel":key==="cnpj"?"numeric":undefined} maxLength={key==="telefone"?15:key==="cnpj"?18:undefined} value={(form as any)[key]} onChange={e=>setForm({...form,[key]:key==="telefone"?maskPhone(e.target.value):key==="cnpj"?maskCnpj(e.target.value):e.target.value})} minLength={key==="senha"?8:undefined} required/></label>)}<label className="full">Observações<textarea value={form.observacoes} onChange={e=>setForm({...form,observacoes:e.target.value})}/></label>{msg&&<span className="form-message full">{msg}</span>}<button className="primary full" disabled={busy}>{busy?"Enviando...":"Enviar cadastro"}</button><button type="button" className="link-button full" onClick={()=>navigate("/login")}>Já tenho acesso</button></form></AuthFrame>}
-function AuthFrame({title,subtitle,children}:{title:string;subtitle:string;children:React.ReactNode}){return <section className="auth-page"><div className="auth-copy"><span className="logo-mark">BRILAND</span><h1>Uma experiência comercial conectada.</h1><p>O mesmo catálogo, as mesmas regras e informações em todos os canais Briland.</p></div><div className="auth-card"><UserRound/><h2>{title}</h2><p>{subtitle}</p>{children}</div></section>}
-function Privacy(){return <section className="text-page"><span className="eyebrow">PRIVACIDADE</span><h1>Política de privacidade</h1><p>O catálogo web Briland utiliza os mesmos serviços, regras de acesso e finalidades informadas no catálogo digital. Coletamos dados fornecidos no cadastro, eventos de uso, informações aproximadas de cidade e estado, dispositivo e rede para segurança, melhoria do catálogo e análise comercial.</p><h2>Localização e análise</h2><p>Não utilizamos GPS. A localização é aproximada pela conexão de internet, sem armazenamento do endereço IP completo. Visitantes anônimos são apresentados apenas de forma agregada.</p><h2>Retenção e direitos</h2><p>Identificadores analíticos são mantidos pelo período definido na política Briland. Você pode solicitar correção ou exclusão de seus dados pela área de exclusão de conta.</p></section>}
-function DeleteAccount({profile}:{profile:UserProfile|null}){const[email,setEmail]=useState(profile?.email||"");const[reason,setReason]=useState("");const[msg,setMsg]=useState("");const submit=async(e:React.FormEvent)=>{e.preventDefault();const{data,error}=await supabase.rpc("request_account_deletion",{p_email:email.trim().toLowerCase(),p_reason:reason||"Solicitação enviada pelo catálogo web."});setMsg(error?error.message:(data?.message||"Solicitação recebida."));};return <section className="text-page"><span className="eyebrow">PRIVACIDADE</span><h1>Exclusão de conta</h1><p>Envie a solicitação para desativação do acesso e tratamento dos dados associados.</p><form onSubmit={submit}><label>E-mail<input type="email" value={email} onChange={e=>setEmail(e.target.value)} required/></label><label>Motivo<textarea value={reason} onChange={e=>setReason(e.target.value)}/></label>{msg&&<span className="form-message">{msg}</span>}<button className="primary">Solicitar exclusão</button></form></section>}
+function ProductDetail({
+  product,
+  data,
+  galleryIndex,
+  setGalleryIndex,
+  favorite,
+  toggleFavorite,
+  addQuote,
+  links,
+  profile,
+  canQuote,
+  canWhatsApp,
+  recommendations,
+  navigate,
+  rememberProduct,
+}: {
+  product?: Product;
+  data: CatalogData;
+  galleryIndex: number;
+  setGalleryIndex: (v: number) => void;
+  favorite: boolean;
+  toggleFavorite: (id: string) => void;
+  addQuote: (id: string) => void;
+  links: SocialLinks;
+  profile: UserProfile | null;
+  canQuote: boolean;
+  canWhatsApp: boolean;
+  recommendations: Product[];
+  navigate: (path: string) => void;
+  rememberProduct: (id: string) => void;
+}) {
+  useEffect(() => {
+    setGalleryIndex(0);
+    if (product) {
+      rememberProduct(product.id);
+      void telemetry("product_view", location.pathname, profile, {
+        productId: product.id,
+        code: product.codigoInterno,
+        categoryId: product.categoriaId,
+        subcategoryId: product.subcategoriaId || null,
+        productGroupId: product.grupoProdutoId || null,
+        brandId: product.marcaId,
+      });
+    }
+  }, [product?.id]);
+  if (!product)
+    return (
+      <div className="empty page-empty">
+        <Package />
+        <h1>Produto não encontrado</h1>
+        <a href="/produtos">Voltar ao catálogo</a>
+      </div>
+    );
+  const category = data.categories.find((i) => i.id === product.categoriaId);
+  const subcategory = data.subcategories.find(
+    (i) => i.id === product.subcategoriaId,
+  );
+  const productGroup = data.productGroups.find(
+    (i) => i.id === product.grupoProdutoId,
+  );
+  const brand = data.brands.find((i) => i.id === product.marcaId);
+  const apps = data.applications.filter((i) => i.produtoId === product.id);
+  const images = [
+    detailImage(product),
+    ...(product.imagensExtras || []),
+  ].filter(Boolean);
+  const hierarchyPath = [category?.nome, subcategory?.nome, productGroup?.nome]
+    .filter(Boolean)
+    .join(" › ");
+  const message = `Olá! Tenho interesse no produto ${product.codigoInterno || ""} — ${product.nome}${hierarchyPath ? ` (${hierarchyPath})` : ""}.\n${location.href}`;
+  const showCategory = productPermission(product, data.settings, "categoria"),
+    showBrand = productPermission(product, data.settings, "marca"),
+    showCode = productPermission(product, data.settings, "codigoInterno"),
+    showName = productPermission(product, data.settings, "nome"),
+    showShort = productPermission(product, data.settings, "descricaoCurta"),
+    showPrice = productPermission(product, data.settings, "preco"),
+    showStock = productPermission(product, data.settings, "estoque"),
+    showManual = productPermission(product, data.settings, "manualPdf"),
+    showApplications = productPermission(
+      product,
+      data.settings,
+      "aplicacoesVeiculo",
+    ),
+    showComplete = productPermission(
+      product,
+      data.settings,
+      "descricaoCompleta",
+    ),
+    showTechnical =
+      productPermission(product, data.settings, "fichaTecnica") &&
+      Boolean(product.fichaTecnica);
+  const technicalFields = [
+    ["EAN", product.ean, "ean"],
+    ["NCM", product.ncm, "ncm"],
+    ["Caixa master", product.caixaMaster, "caixaMaster"],
+    ["Condição", product.condicaoComercial, "condicaoComercial"],
+    ["Prazo", product.prazoEntrega, "prazoEntrega"],
+  ].filter(
+    ([, value, key]) =>
+      Boolean(value) && productPermission(product, data.settings, String(key)),
+  );
+  const compactDescription =
+    showComplete &&
+    Boolean(product.descricaoCompleta) &&
+    String(product.descricaoCompleta).length <= 360;
+  const compactApplications = showApplications && apps.length <= 3;
+  return (
+    <section className="detail-page">
+      <button className="back" onClick={() => history.back()}>
+        <ChevronLeft /> Voltar
+      </button>
+      <div className="detail-grid">
+        <div className="gallery">
+          <div className="main-image">
+            {images[galleryIndex] ? (
+              <img
+                src={largeProductImage(images[galleryIndex], product)}
+                alt={product.nome}
+                decoding="async"
+                fetchPriority="high"
+              />
+            ) : (
+              <Package />
+            )}
+            {images.length > 1 && (
+              <>
+                <button
+                  className="gallery-prev"
+                  onClick={() =>
+                    setGalleryIndex(
+                      (galleryIndex - 1 + images.length) % images.length,
+                    )
+                  }
+                >
+                  <ChevronLeft />
+                </button>
+                <button
+                  className="gallery-next"
+                  onClick={() =>
+                    setGalleryIndex((galleryIndex + 1) % images.length)
+                  }
+                >
+                  <ChevronRight />
+                </button>
+              </>
+            )}
+          </div>
+          {images.length > 1 && (
+            <div className="thumbs">
+              {images.map((image, index) => (
+                <button
+                  key={image}
+                  className={index === galleryIndex ? "active" : ""}
+                  onClick={() => {
+                    setGalleryIndex(index);
+                    void telemetry(
+                      "gallery_interaction",
+                      location.pathname,
+                      profile,
+                      { productId: product.id, index },
+                    );
+                  }}
+                >
+                  <img
+                    src={thumbnailImage(image, product)}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="product-info">
+          {showCategory && (
+            <div className="eyebrow">{category?.nome || "Produto Briland"}</div>
+          )}
+          {showCode && <div className="code">{product.codigoInterno}</div>}
+          {showName && <h1>{product.nome}</h1>}
+          {showShort && product.descricaoCurta && (
+            <p className="lead">{product.descricaoCurta}</p>
+          )}
+          {showBrand && (
+            <div className="brand-line">
+              {brand?.logo && <img src={brand.logo} alt={brand.nome} />}
+              <span>{brand?.nome}</span>
+            </div>
+          )}
+          {(showPrice || showStock) && (
+            <div className="price-stock">
+              {showPrice && (
+                <div>
+                  <small>Preço</small>
+                  <b>{money(product.preco)}</b>
+                </div>
+              )}
+              {showStock && (
+                <div>
+                  <small>Disponibilidade</small>
+                  <b>
+                    {product.estoque == null
+                      ? "Sob consulta"
+                      : product.estoque > 0
+                        ? `${product.estoque} unidades`
+                        : "Consulte"}
+                  </b>
+                </div>
+              )}
+            </div>
+          )}
+          <div className="detail-actions">
+            {canQuote && (
+              <button className="primary" onClick={() => addQuote(product.id)}>
+                <ShoppingCart /> Adicionar ao orçamento
+              </button>
+            )}
+            {canWhatsApp && (
+              <a
+                className="whatsapp"
+                href={whatsappLink(links.whatsapp, message)}
+                target="_blank"
+                onClick={() =>
+                  void telemetry("whatsapp_open", location.pathname, profile, {
+                    productId: product.id,
+                  })
+                }
+              >
+                Falar no WhatsApp
+              </a>
+            )}
+            <button
+              onClick={() => toggleFavorite(product.id)}
+              className={favorite ? "active" : ""}
+            >
+              <Heart fill={favorite ? "currentColor" : "none"} />
+            </button>
+            <button
+              onClick={() => {
+                void navigator.share?.({
+                  title: product.nome,
+                  url: location.href,
+                });
+                void telemetry("product_share", location.pathname, profile, {
+                  productId: product.id,
+                });
+              }}
+            >
+              <Share2 />
+            </button>
+          </div>
+          {showManual && product.manualPdf && (
+            <a
+              className="manual"
+              href={product.manualPdf}
+              target="_blank"
+              onClick={() =>
+                void telemetry("download_started", location.pathname, profile, {
+                  fileType: "product_manual",
+                  productId: product.id,
+                })
+              }
+            >
+              <Download /> Baixar manual do produto
+            </a>
+          )}{" "}
+          {(technicalFields.length > 0 ||
+            compactDescription ||
+            compactApplications) && (
+            <div className="inline-product-details">
+              {(technicalFields.length > 0 || compactDescription) && (
+                <section>
+                  <h2>Informações do produto</h2>
+                  {compactDescription && <p>{product.descricaoCompleta}</p>}
+                  {technicalFields.length > 0 && (
+                    <dl>
+                      {technicalFields.map(([label, value]) => (
+                        <div key={String(label)}>
+                          <dt>{label}</dt>
+                          <dd>{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  )}
+                </section>
+              )}
+              {compactApplications && (
+                <section>
+                  <h2>Aplicações por veículo</h2>
+                  {apps.length ? (
+                    <div className="applications">
+                      {apps.map((app) => (
+                        <div key={app.id}>
+                          <b>
+                            {app.montadoraNome} {app.modeloNome}
+                          </b>
+                          <span>{vehicleYearLabel(app)}</span>
+                          {app.observacaoComercial && (
+                            <small>{app.observacaoComercial}</small>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p>
+                      Consulte nossa equipe para confirmar a aplicação correta.
+                    </p>
+                  )}
+                </section>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="detail-panels">
+        {showComplete && !compactDescription && (
+          <article>
+            <h2>Descrição completa</h2>
+            <p>
+              {product.descricaoCompleta ||
+                "Informações comerciais sob consulta."}
+            </p>
+          </article>
+        )}
+        {showApplications && !compactApplications && (
+          <article>
+            <h2>Aplicações por veículo</h2>
+            <div className="applications">
+              {apps.map((app) => (
+                <div key={app.id}>
+                  <b>
+                    {app.montadoraNome} {app.modeloNome}
+                  </b>
+                  <span>{vehicleYearLabel(app)}</span>
+                  {app.observacaoComercial && (
+                    <small>{app.observacaoComercial}</small>
+                  )}
+                </div>
+              ))}
+            </div>
+          </article>
+        )}
+        {showTechnical && (
+          <article>
+            <h2>Ficha técnica</h2>
+            <p>{product.fichaTecnica}</p>
+          </article>
+        )}
+      </div>
+      {recommendations.length > 0 && (
+        <section className="recommendations">
+          <div className="section-head">
+            <div>
+              <span>PARA VOCÊ</span>
+              <h2>Recomendados</h2>
+            </div>
+          </div>
+          <div className="product-grid">
+            {recommendations.map((item) => (
+              <ProductCard
+                key={item.id}
+                product={item}
+                navigate={navigate}
+                settings={data.settings}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+    </section>
+  );
+}
+
+function Restricted() {
+  return (
+    <section className="narrow-page">
+      <div className="empty">
+        <Package />
+        <h2>Recurso não disponível para este acesso</h2>
+        <p>Esta função não está liberada para o seu perfil.</p>
+        <a href="/produtos">Voltar ao catálogo</a>
+      </div>
+    </section>
+  );
+}
+type NavigationItem = {
+  id: string;
+  name: string;
+  image?: string | null;
+  path: string;
+  description?: string | null;
+  count?: number;
+};
+function ProgressiveNavigationCard({
+  item,
+  navigate,
+}: {
+  item: NavigationItem;
+  navigate: (path: string) => void;
+}) {
+  return (
+    <motion.button
+      className={`progressive-nav-card${item.image ? "" : " fallback"}`}
+      onClick={() => navigate(item.path)}
+      whileHover={{ y: -4, scale: 1.01 }}
+      whileTap={{ scale: 0.98 }}
+    >
+      {item.image ? (
+        <img src={item.image} alt="" loading="lazy" decoding="async" />
+      ) : (
+        <div className="progressive-nav-fallback">
+          <Package />
+        </div>
+      )}
+      <div className="progressive-nav-shade" />
+      <div className="progressive-nav-content">
+        <b>{item.name}</b>
+        {item.description && <p>{item.description}</p>}
+        <small>
+          {item.count || 0} {(item.count || 0) === 1 ? "produto" : "produtos"}
+        </small>
+      </div>
+      <span className="progressive-nav-arrow">
+        <ChevronRight />
+      </span>
+    </motion.button>
+  );
+}
+function Directory({
+  title,
+  items,
+  navigate,
+  progressive = false,
+}: {
+  title: string;
+  items: NavigationItem[];
+  navigate: (p: string) => void;
+  progressive?: boolean;
+}) {
+  return (
+    <section className="directory section">
+      <div className="section-head">
+        <div>
+          <span>NAVEGUE PELO CATÁLOGO</span>
+          <h1>{title}</h1>
+        </div>
+      </div>
+      <div className={progressive ? "progressive-grid" : "directory-grid"}>
+        {items.map((item) =>
+          progressive ? (
+            <ProgressiveNavigationCard
+              key={item.id}
+              item={item}
+              navigate={navigate}
+            />
+          ) : (
+            <button key={item.id} onClick={() => navigate(item.path)}>
+              {item.image ? <img src={item.image} alt="" /> : <Package />}
+              <div>
+                <b>{item.name}</b>
+                {item.description && <p>{item.description}</p>}
+              </div>
+              <ChevronRight />
+            </button>
+          ),
+        )}
+      </div>
+    </section>
+  );
+}
+function QuotePage({
+  data,
+  quote,
+  saveQuote,
+  links,
+  profile,
+}: {
+  data: CatalogData;
+  quote: Record<string, number>;
+  saveQuote: (v: Record<string, number>) => void;
+  links: SocialLinks;
+  profile: UserProfile | null;
+}) {
+  const items = Object.entries(quote)
+    .map(([id, quantity]) => ({
+      product: data.products.find((p) => p.id === id),
+      quantity,
+    }))
+    .filter((item) => item.product) as Array<{
+    product: Product;
+    quantity: number;
+  }>;
+  const update = (id: string, q: number) => {
+    const next = { ...quote };
+    if (q <= 0) delete next[id];
+    else next[id] = q;
+    saveQuote(next);
+  };
+  const send = async (channel: "lead" | "whatsapp") => {
+    const lines = items.map(
+      (item) =>
+        `${item.quantity}x ${item.product.codigoInterno || ""} — ${item.product.nome}`,
+    );
+    const text = `Olá! Gostaria de solicitar um orçamento:\n\n${lines.join("\n")}`;
+    if (channel === "whatsapp")
+      window.open(whatsappLink(links.whatsapp, text), "_blank");
+    else
+      await supabase
+        .from("LeadOrcamento")
+        .insert({
+          id: crypto.randomUUID(),
+          nome: profile?.name || "Visitante do catálogo web",
+          empresa: profile?.company || "Não informado",
+          email: profile?.email || null,
+          telefone: profile?.phone || null,
+          mensagem: `[Comercial] ${text}`,
+          origem: "WEB_CATALOG",
+          status: "NOVO",
+        });
+    void telemetry("quote_sent", location.pathname, profile, {
+      channel,
+      itemCount: items.length,
+    });
+  };
+  return (
+    <section className="narrow-page">
+      <span className="eyebrow">SOLICITAÇÃO COMERCIAL</span>
+      <h1>Lista de orçamento</h1>
+      {items.length ? (
+        <>
+          <div className="quote-list">
+            {items.map(({ product, quantity }) => (
+              <article key={product.id}>
+                {productImage(product) ? (
+                  <img src={productImage(product)} alt="" />
+                ) : (
+                  <Package />
+                )}
+                <div>
+                  <small>{product.codigoInterno}</small>
+                  <b>{product.nome}</b>
+                </div>
+                <div className="quantity">
+                  <button onClick={() => update(product.id, quantity - 1)}>
+                    <Minus />
+                  </button>
+                  <span>{quantity}</span>
+                  <button onClick={() => update(product.id, quantity + 1)}>
+                    <Plus />
+                  </button>
+                </div>
+                <button onClick={() => update(product.id, 0)}>
+                  <X />
+                </button>
+              </article>
+            ))}
+          </div>
+          <div className="quote-actions">
+            <button className="primary" onClick={() => void send("lead")}>
+              Enviar solicitação
+            </button>
+            <button className="whatsapp" onClick={() => void send("whatsapp")}>
+              Enviar pelo WhatsApp
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="empty">
+          <ShoppingCart />
+          <h2>Sua lista está vazia</h2>
+          <p>Adicione produtos para solicitar tudo em uma única mensagem.</p>
+          <a href="/produtos">Explorar produtos</a>
+        </div>
+      )}
+    </section>
+  );
+}
+function Notifications({
+  products,
+  navigate,
+}: {
+  products: Product[];
+  navigate: (p: string) => void;
+}) {
+  const items = products
+    .filter((p) => p.lancamento || p.promocao)
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+    .slice(0, 30);
+  return (
+    <section className="narrow-page">
+      <span className="eyebrow">NOVIDADES</span>
+      <h1>Notificações do catálogo</h1>
+      <div className="notification-list">
+        {items.map((product) => (
+          <button
+            key={product.id}
+            onClick={() => navigate(`/produto/${product.slug || product.id}`)}
+          >
+            <span className={product.promocao ? "promo" : "launch"}>
+              {product.promocao ? "Promoção" : "Lançamento"}
+            </span>
+            <div>
+              <b>{product.nome}</b>
+              <small>{product.codigoInterno}</small>
+            </div>
+            <ChevronRight />
+          </button>
+        ))}
+        {!items.length && (
+          <div className="empty">
+            <Bell />
+            <h2>Nenhuma novidade no momento</h2>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+function Login({
+  onProfile,
+  navigate,
+}: {
+  onProfile: (p: UserProfile) => void;
+  navigate: (p: string) => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [firstAccess, setFirstAccess] = useState(false);
+  const check = async () => {
+    if (!email.includes("@")) return;
+    const { data } = await supabase.rpc("is_client_first_access", {
+      p_email: email.trim(),
+    });
+    setFirstAccess(data === true);
+  };
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const { data: first } = await supabase.rpc("is_client_first_access", {
+        p_email: email.trim(),
+      });
+      if (first) {
+        setFirstAccess(true);
+        return;
+      }
+      const { error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (authError) throw authError;
+      const user = await currentProfile();
+      if (!user) throw new Error("Seu cadastro ainda não está ativo.");
+      await telemetry("login", "/login", user);
+      onProfile(user);
+    } catch (err) {
+      const text =
+        err instanceof Error ? err.message : "Não foi possível entrar.";
+      setError(
+        text.toLowerCase().includes("email not confirmed")
+          ? "Confirme o e-mail enviado para concluir seu cadastro."
+          : text,
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <AuthFrame
+      title={firstAccess ? "Crie sua primeira senha" : "Acesse sua conta"}
+      subtitle={
+        firstAccess
+          ? "Enviaremos um código único para confirmar seu e-mail."
+          : "Entre para visualizar informações liberadas ao seu perfil."
+      }
+    >
+      {firstAccess ? (
+        <FirstAccess email={email} onBack={() => setFirstAccess(false)} />
+      ) : (
+        <form onSubmit={submit}>
+          <label>
+            E-mail
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                setFirstAccess(false);
+              }}
+              onBlur={() => void check()}
+              required
+            />
+          </label>
+          <label>
+            Senha
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
+          {error && <span className="form-error">{error}</span>}
+          <button className="primary" disabled={busy}>
+            {busy ? "Verificando..." : "Entrar"}
+          </button>
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => navigate("/recuperar-senha")}
+          >
+            Esqueci minha senha
+          </button>
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => navigate("/cadastro")}
+          >
+            Ainda não tenho cadastro
+          </button>
+        </form>
+      )}
+    </AuthFrame>
+  );
+}
+function FirstAccess({ email, onBack }: { email: string; onBack: () => void }) {
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const send = async () => {
+    setBusy(true);
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email.trim().toLowerCase(),
+      options: {
+        shouldCreateUser: true,
+        data: { registration_source: "representative_first_access" },
+      },
+    });
+    setMsg(
+      error
+        ? "Não foi possível enviar o código."
+        : "Código enviado. Confira também a caixa de spam.",
+    );
+    setSent(!error);
+    setBusy(false);
+  };
+  useEffect(() => {
+    if (!sent) void send();
+  }, []);
+  const finish = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password.length < 8 || password !== confirmation) {
+      setMsg("A senha precisa ter 8 caracteres e coincidir.");
+      return;
+    }
+    setBusy(true);
+    const verified = await supabase.auth.verifyOtp({
+      email: email.trim().toLowerCase(),
+      token: code.trim(),
+      type: "email",
+    });
+    if (verified.error) {
+      setMsg("Código inválido ou expirado.");
+      setBusy(false);
+      return;
+    }
+    const updated = await supabase.auth.updateUser({ password });
+    if (updated.error) {
+      setMsg(updated.error.message);
+      setBusy(false);
+      return;
+    }
+    const completed = await supabase.rpc("complete_client_first_access");
+    if (completed.error) {
+      setMsg(completed.error.message);
+      setBusy(false);
+      return;
+    }
+    await supabase.auth.signOut({ scope: "local" });
+    setMsg("Senha criada. Você já pode entrar.");
+    setTimeout(onBack, 1400);
+    setBusy(false);
+  };
+  return (
+    <form onSubmit={finish}>
+      <label>
+        E-mail
+        <input value={email} disabled />
+      </label>
+      <label>
+        Código recebido
+        <input
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          required
+        />
+      </label>
+      <label>
+        Nova senha
+        <input
+          type="password"
+          minLength={8}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
+      </label>
+      <label>
+        Confirmar senha
+        <input
+          type="password"
+          minLength={8}
+          value={confirmation}
+          onChange={(e) => setConfirmation(e.target.value)}
+          required
+        />
+      </label>
+      {msg && <span className="form-message">{msg}</span>}
+      <button className="primary" disabled={busy || !code}>
+        {busy ? "Processando..." : "Criar minha senha"}
+      </button>
+      <button
+        type="button"
+        className="link-button"
+        disabled={busy}
+        onClick={() => void send()}
+      >
+        Reenviar código
+      </button>
+      <button type="button" className="link-button" onClick={onBack}>
+        Voltar
+      </button>
+    </form>
+  );
+}
+function ForgotPassword({ navigate }: { navigate: (p: string) => void }) {
+  const [email, setEmail] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const send = async (type: "reset" | "signup") => {
+    setBusy(true);
+    setMsg("");
+    try {
+      const normalized = email.trim().toLowerCase();
+      if (type === "reset") {
+        const { error } = await supabase.auth.resetPasswordForEmail(
+          normalized,
+          { redirectTo: `${location.origin}/redefinir-senha` },
+        );
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.auth.resend({
+          type: "signup",
+          email: normalized,
+          options: { emailRedirectTo: `${location.origin}/login?confirmado=1` },
+        });
+        if (error) throw error;
+      }
+      setMsg(
+        type === "reset"
+          ? "Se o e-mail estiver cadastrado, enviaremos um link seguro para criar uma nova senha."
+          : "Se o cadastro ainda estiver pendente, enviaremos uma nova confirmação.",
+      );
+    } catch {
+      setMsg(
+        "Não foi possível enviar agora. Aguarde alguns minutos e tente novamente.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <AuthFrame
+      title="Recuperar acesso"
+      subtitle="Informe o e-mail utilizado no cadastro."
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void send("reset");
+        }}
+      >
+        <label>
+          E-mail
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+        </label>
+        {msg && <span className="form-message">{msg}</span>}
+        <button className="primary" disabled={busy}>
+          {busy ? "Enviando..." : "Enviar link para redefinir senha"}
+        </button>
+        <button
+          type="button"
+          className="link-button"
+          disabled={busy || !email.includes("@")}
+          onClick={() => void send("signup")}
+        >
+          Reenviar confirmação de cadastro
+        </button>
+        <button
+          type="button"
+          className="link-button"
+          onClick={() => navigate("/login")}
+        >
+          Voltar ao login
+        </button>
+      </form>
+    </AuthFrame>
+  );
+}
+function ResetPassword({ navigate }: { navigate: (p: string) => void }) {
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const valid = password.length >= 8 && password === confirmation;
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!valid) return;
+    setBusy(true);
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error)
+      setMsg("Este link é inválido ou expirou. Solicite uma nova recuperação.");
+    else {
+      setMsg("Senha alterada com sucesso. Você já pode entrar.");
+      await supabase.auth.signOut({ scope: "local" });
+      setTimeout(() => navigate("/login"), 1200);
+    }
+    setBusy(false);
+  };
+  return (
+    <AuthFrame
+      title="Criar nova senha"
+      subtitle="Escolha uma senha com pelo menos 8 caracteres."
+    >
+      <form onSubmit={submit}>
+        <label>
+          Nova senha
+          <input
+            type="password"
+            minLength={8}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
+        </label>
+        <label>
+          Confirmar nova senha
+          <input
+            type="password"
+            minLength={8}
+            value={confirmation}
+            onChange={(e) => setConfirmation(e.target.value)}
+            required
+          />
+        </label>
+        {confirmation && password !== confirmation && (
+          <span className="form-error">As senhas não coincidem.</span>
+        )}
+        {msg && <span className="form-message">{msg}</span>}
+        <button className="primary" disabled={!valid || busy}>
+          {busy ? "Salvando..." : "Salvar nova senha"}
+        </button>
+      </form>
+    </AuthFrame>
+  );
+}
+function AccountPage({
+  profile,
+  onLogout,
+}: {
+  profile: UserProfile;
+  onLogout: () => Promise<void>;
+}) {
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const valid =
+    currentPassword.length > 0 &&
+    newPassword.length >= 8 &&
+    newPassword === confirmation;
+  const change = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!valid) return;
+    setBusy(true);
+    setMsg("");
+    const check = await supabase.auth.signInWithPassword({
+      email: profile.email,
+      password: currentPassword,
+    });
+    if (check.error) setMsg("A senha atual está incorreta.");
+    else {
+      const result = await supabase.auth.updateUser({ password: newPassword });
+      setMsg(
+        result.error
+          ? "Não foi possível alterar a senha."
+          : "Senha alterada com sucesso.",
+      );
+      if (!result.error) {
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmation("");
+      }
+    }
+    setBusy(false);
+  };
+  const fields = [
+    ["Nome", profile.name],
+    ["Empresa", profile.company],
+    ["E-mail", profile.email],
+    ["Telefone", profile.phone],
+    ["CNPJ", profile.cnpj],
+    ["Cidade / UF", [profile.city, profile.state].filter(Boolean).join(" / ")],
+    ["Perfil", roleLabel[profile.role]],
+  ].filter(([, value]) => value);
+  return (
+    <section className="text-page account-page">
+      <span className="eyebrow">CONTA</span>
+      <h1>Minha conta</h1>
+      <div className="account-data">
+        {fields.map(([label, value]) => (
+          <div key={String(label)}>
+            <small>{label}</small>
+            <b>{value}</b>
+          </div>
+        ))}
+      </div>
+      <h2>Alterar senha</h2>
+      <form onSubmit={change}>
+        <label>
+          Senha atual
+          <input
+            type="password"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+            required
+          />
+        </label>
+        <label>
+          Nova senha
+          <input
+            type="password"
+            minLength={8}
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            required
+          />
+        </label>
+        <label>
+          Confirmar nova senha
+          <input
+            type="password"
+            minLength={8}
+            value={confirmation}
+            onChange={(e) => setConfirmation(e.target.value)}
+            required
+          />
+        </label>
+        {confirmation && newPassword !== confirmation && (
+          <span className="form-error">As senhas não coincidem.</span>
+        )}
+        {msg && <span className="form-message">{msg}</span>}
+        <button className="primary" disabled={!valid || busy}>
+          {busy ? "Alterando..." : "Alterar senha"}
+        </button>
+        <button
+          type="button"
+          className="link-button"
+          onClick={() => void onLogout()}
+        >
+          <LogOut /> Sair da conta
+        </button>
+      </form>
+    </section>
+  );
+}
+function LoginRequired({ navigate }: { navigate: (p: string) => void }) {
+  return (
+    <section className="narrow-page">
+      <div className="empty">
+        <UserRound />
+        <h2>Entre para acessar sua conta</h2>
+        <button className="primary" onClick={() => navigate("/login")}>
+          Fazer login
+        </button>
+      </div>
+    </section>
+  );
+}
+function Signup({ navigate }: { navigate: (p: string) => void }) {
+  const [form, setForm] = useState({
+    nome: "",
+    empresa: "",
+    telefone: "",
+    email: "",
+    cnpj: "",
+    senha: "",
+    observacoes: "",
+    website: "",
+  });
+  const [msg, setMsg] = useState("");
+  const [startedAt] = useState(() => Date.now());
+  const [busy, setBusy] = useState(false);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMsg("");
+    setBusy(true);
+    try {
+      const response = await fetch("/api/cadastro", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, startedAt }),
+      });
+      const result = await response.json();
+      if (!response.ok)
+        throw new Error(result.error || "Não foi possível enviar o cadastro.");
+      setMsg(
+        "Cadastro recebido. Confirme o e-mail enviado e depois entre com a senha cadastrada.",
+      );
+    } catch (error) {
+      setMsg(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível enviar o cadastro.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <AuthFrame
+      title="Crie seu acesso"
+      subtitle="Após confirmar o e-mail, você poderá entrar imediatamente."
+    >
+      <form onSubmit={submit} className="two-cols">
+        <input
+          className="signup-trap"
+          name="website"
+          value={form.website}
+          onChange={(e) => setForm({ ...form, website: e.target.value })}
+          tabIndex={-1}
+          autoComplete="off"
+          aria-hidden="true"
+        />
+        {[
+          ["nome", "Nome"],
+          ["empresa", "Empresa"],
+          ["telefone", "Telefone"],
+          ["email", "E-mail"],
+          ["cnpj", "CNPJ"],
+          ["senha", "Senha"],
+        ].map(([key, label]) => (
+          <label key={key}>
+            {label}
+            <input
+              type={
+                key === "senha"
+                  ? "password"
+                  : key === "email"
+                    ? "email"
+                    : "text"
+              }
+              inputMode={
+                key === "telefone"
+                  ? "tel"
+                  : key === "cnpj"
+                    ? "numeric"
+                    : undefined
+              }
+              maxLength={
+                key === "telefone" ? 15 : key === "cnpj" ? 18 : undefined
+              }
+              value={(form as any)[key]}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  [key]:
+                    key === "telefone"
+                      ? maskPhone(e.target.value)
+                      : key === "cnpj"
+                        ? maskCnpj(e.target.value)
+                        : e.target.value,
+                })
+              }
+              minLength={key === "senha" ? 8 : undefined}
+              required
+            />
+          </label>
+        ))}
+        <label className="full">
+          Observações
+          <textarea
+            value={form.observacoes}
+            onChange={(e) => setForm({ ...form, observacoes: e.target.value })}
+          />
+        </label>
+        {msg && <span className="form-message full">{msg}</span>}
+        <button className="primary full" disabled={busy}>
+          {busy ? "Enviando..." : "Enviar cadastro"}
+        </button>
+        <button
+          type="button"
+          className="link-button full"
+          onClick={() => navigate("/login")}
+        >
+          Já tenho acesso
+        </button>
+      </form>
+    </AuthFrame>
+  );
+}
+function AuthFrame({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="auth-page">
+      <div className="auth-copy">
+        <span className="logo-mark">BRILAND</span>
+        <h1>Uma experiência comercial conectada.</h1>
+        <p>
+          O mesmo catálogo, as mesmas regras e informações em todos os canais
+          Briland.
+        </p>
+      </div>
+      <div className="auth-card">
+        <UserRound />
+        <h2>{title}</h2>
+        <p>{subtitle}</p>
+        {children}
+      </div>
+    </section>
+  );
+}
+function Privacy() {
+  return (
+    <section className="text-page">
+      <span className="eyebrow">PRIVACIDADE</span>
+      <h1>Política de privacidade</h1>
+      <p>
+        O catálogo web Briland utiliza os mesmos serviços, regras de acesso e
+        finalidades informadas no catálogo digital. Coletamos dados fornecidos
+        no cadastro, eventos de uso, informações aproximadas de cidade e estado,
+        dispositivo e rede para segurança, melhoria do catálogo e análise
+        comercial.
+      </p>
+      <h2>Localização e análise</h2>
+      <p>
+        Não utilizamos GPS. A localização é aproximada pela conexão de internet,
+        sem armazenamento do endereço IP completo. Visitantes anônimos são
+        apresentados apenas de forma agregada.
+      </p>
+      <h2>Retenção e direitos</h2>
+      <p>
+        Identificadores analíticos são mantidos pelo período definido na
+        política Briland. Você pode solicitar correção ou exclusão de seus dados
+        pela área de exclusão de conta.
+      </p>
+    </section>
+  );
+}
+function DeleteAccount({ profile }: { profile: UserProfile | null }) {
+  const [email, setEmail] = useState(profile?.email || "");
+  const [reason, setReason] = useState("");
+  const [msg, setMsg] = useState("");
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { data, error } = await supabase.rpc("request_account_deletion", {
+      p_email: email.trim().toLowerCase(),
+      p_reason: reason || "Solicitação enviada pelo catálogo web.",
+    });
+    setMsg(error ? error.message : data?.message || "Solicitação recebida.");
+  };
+  return (
+    <section className="text-page">
+      <span className="eyebrow">PRIVACIDADE</span>
+      <h1>Exclusão de conta</h1>
+      <p>
+        Envie a solicitação para desativação do acesso e tratamento dos dados
+        associados.
+      </p>
+      <form onSubmit={submit}>
+        <label>
+          E-mail
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+        </label>
+        <label>
+          Motivo
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </label>
+        {msg && <span className="form-message">{msg}</span>}
+        <button className="primary">Solicitar exclusão</button>
+      </form>
+    </section>
+  );
+}

@@ -122,14 +122,31 @@ async function approximateLocation(): Promise<ApproxLocation> {
   }
 }
 
-async function trackedDownload(url: string, metadata: Record<string, unknown> = {}, token?: string) {
-  if (!url) return;
+async function trackedDownload(url: string, metadata: Record<string, unknown> = {}, token?: string, onProgress?: (progress: number | null) => void) {
+  if (!url) return false;
   void trackTelemetry({ eventType: "download_started", screen: "download", route: "download", success: true, metadata }, token);
   try {
     if (Platform.OS === "web" && typeof document !== "undefined") {
       const response = await fetch(url);
       if (!response.ok) throw new Error("O arquivo não está disponível.");
-      const blob = await response.blob();
+      const total = Number(response.headers.get("content-length")) || 0;
+      let blob: Blob;
+      if (response.body && total) {
+        const reader = response.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let received = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          onProgress?.(Math.min(99, Math.round(received / total * 100)));
+        }
+        blob = new Blob(chunks as BlobPart[], { type: response.headers.get("content-type") || "application/pdf" });
+      } else {
+        onProgress?.(null);
+        blob = await response.blob();
+      }
       const objectUrl = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = objectUrl;
@@ -140,16 +157,23 @@ async function trackedDownload(url: string, metadata: Record<string, unknown> = 
       URL.revokeObjectURL(objectUrl);
     } else {
       const fileName = String(metadata.fileName || url.split("/").pop() || `arquivo-${Date.now()}.pdf`).replace(/[^a-z0-9._-]/gi, "-");
-      const result = await FileSystem.downloadAsync(url, `${FileSystem.cacheDirectory}${fileName}`);
+      const download = FileSystem.createDownloadResumable(url, `${FileSystem.cacheDirectory}${fileName}`, {}, ({ totalBytesWritten, totalBytesExpectedToWrite }) => {
+        onProgress?.(totalBytesExpectedToWrite > 0 ? Math.min(99, Math.round(totalBytesWritten / totalBytesExpectedToWrite * 100)) : null);
+      });
+      const result = await download.downloadAsync();
+      if (!result) throw new Error("A transferência não foi concluída.");
       if (result.status < 200 || result.status >= 300) throw new Error("A transferência não foi concluída.");
       if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(result.uri);
       else await Linking.openURL(result.uri);
     }
     void trackTelemetry({ eventType: "download_completed", screen: "download", route: "download", success: true, metadata }, token);
     void trackTelemetry({ eventType: "download_opened", screen: "download", route: "download", success: true, metadata }, token);
+    onProgress?.(100);
+    return true;
   } catch (error) {
     void trackTelemetry({ eventType: "download_failed", screen: "download", route: "download", success: false, message: error instanceof Error ? error.message : "Falha no download.", metadata }, token);
     notify("Download não concluído", "Não foi possível transferir o arquivo. Verifique sua internet e tente novamente.");
+    return false;
   }
 }
 const defaultAppearance: CatalogAppearance = { version: 1, primaryColor: "#021126", accentColor: "#FCB900", backgroundColor: "#F4F6FA", surfaceColor: "#FFFFFF", textColor: "#021126", fontFamily: "system", cardRadius: 12, dockOpacity: 72, dockHeight: 62, dockPosition: "bottom", showProductCategory: true, showProductBrand: true, logoUrl: "" };
@@ -3495,14 +3519,32 @@ function Chip({ text, onPress }: { text: string; onPress: () => void }) {
 }
 
 function CatalogPdfButton({ url }: { url: string }) {
+  const [phase, setPhase] = useState<"idle" | "loading" | "done">("idle");
+  const [progress, setProgress] = useState<number | null>(0);
+  const stretch = useRef(new Animated.Value(0)).current;
+  const download = async () => {
+    if (phase !== "idle") return;
+    setPhase("loading");
+    setProgress(null);
+    Animated.timing(stretch, { toValue: 1, duration: 430, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+    const success = await trackedDownload(url, { fileType: "catalog_pdf", fileName: "catalogo-briland.pdf" }, undefined, setProgress);
+    if (success) {
+      setPhase("done");
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+    }
+    Animated.timing(stretch, { toValue: 0, duration: 260, useNativeDriver: false }).start();
+    setPhase("idle");
+    setProgress(0);
+  };
   return (
-    <Pressable style={styles.catalogPdfButton} onPress={() => void trackedDownload(url, { fileType: "catalog_pdf", fileName: "catalogo-briland.pdf" })}>
-      <View style={styles.catalogPdfIcon}><Ionicons name="document-text-outline" size={22} color={colors.navy} /></View>
+    <Pressable style={styles.catalogPdfButton} onPress={() => void download()} disabled={phase !== "idle"}>
+      <Animated.View style={[styles.catalogPdfMotion, { width: stretch.interpolate({ inputRange: [0, 1], outputRange: [46, 142] }) }]}>
+        {phase === "idle" ? <View style={styles.catalogPdfCircle}><Ionicons name="download-outline" size={22} color="#111" /></View> : phase === "done" ? <View style={[styles.catalogPdfCircle, styles.catalogPdfDone]}><Ionicons name="checkmark" size={23} color="#16834B" /></View> : <View style={styles.catalogPdfTrack}><View style={[styles.catalogPdfFill, { width: progress == null ? "38%" : `${progress}%` }]} /></View>}
+      </Animated.View>
       <View style={styles.flex}>
-        <Text style={styles.catalogPdfTitle}>Download PDF do catálogo</Text>
-        <Text style={styles.mutedSmall}>Catálogo organizado por categorias</Text>
+        <Text style={styles.catalogPdfTitle}>{phase === "done" ? "Download iniciado" : "Download PDF do catálogo"}</Text>
+        <Text style={styles.mutedSmall}>{phase === "idle" ? "catalogo-briland.pdf" : phase === "loading" ? (progress == null ? "Preparando PDF…" : `${progress}% · catalogo-briland.pdf`) : "PDF pronto"}</Text>
       </View>
-      <Ionicons name="download-outline" size={24} color={colors.navy} />
     </Pressable>
   );
 }
@@ -3640,6 +3682,11 @@ const styles = StyleSheet.create({
   menuTitle: { fontSize: 22, color: colors.navy, fontWeight: "900" },
   catalogPdfButton: { minHeight: 74, borderRadius: 18, backgroundColor: colors.white, padding: 14, marginBottom: 14, flexDirection: "row", alignItems: "center", gap: 13, borderWidth: 1, borderColor: colors.line, ...shadow },
   catalogPdfIcon: { width: 46, height: 46, borderRadius: 13, backgroundColor: colors.yellow, alignItems: "center", justifyContent: "center" },
+  catalogPdfMotion: { height: 46, justifyContent: "center" },
+  catalogPdfCircle: { width: 44, height: 44, borderRadius: 22, borderWidth: 2, borderColor: "#111", backgroundColor: "#FFFDF7", alignItems: "center", justifyContent: "center" },
+  catalogPdfDone: { borderColor: "#16834B" },
+  catalogPdfTrack: { height: 8, borderRadius: 5, borderWidth: 2, borderColor: "#111", backgroundColor: "#FFFDF7", overflow: "hidden" },
+  catalogPdfFill: { height: "100%", backgroundColor: "#111" },
   catalogPdfTitle: { color: colors.navy, fontSize: 16, fontWeight: "900" },
   muted: { color: colors.muted, fontSize: 15, lineHeight: 22 },
   titleBlock: { marginTop: 14, marginBottom: 20 },

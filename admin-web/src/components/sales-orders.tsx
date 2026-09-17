@@ -19,6 +19,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import type { Produto, SalesOrder, SalesOrderItem, Usuario } from "@/lib/types";
 import { orderPdfFile } from "@/lib/order-pdf";
+import { AnimatedPdfDownload } from "@/components/animated-pdf-download";
 
 const statusLabel: Record<string, string> = {
   DRAFT: "Rascunho",
@@ -691,13 +692,15 @@ function OrderModal({
           </div>
         </div>
         <div className="mt-6 flex flex-wrap justify-end gap-3">
-          <button
-            className="btn-white"
-            onClick={() => void downloadPdf({ ...order, items: calculated })}
-          >
-            <Download size={17} />
-            PDF
-          </button>
+          <AnimatedPdfDownload
+            filename={`pedido-${String(order.orderNumber).padStart(6, "0")}.pdf`}
+            prepare={() =>
+              orderPdfFile(
+                { ...order, items: calculated },
+                "/catalog-assets/briland-logo.png",
+              )
+            }
+          />
           {editable && (
             <>
               <button
@@ -762,13 +765,4 @@ async function uploadAdminPdf(order: SalesOrder) {
       contentType: "application/pdf",
       upsert: true,
     });
-}
-async function downloadPdf(order: SalesOrder) {
-  const file = await orderPdfFile(order, "/catalog-assets/briland-logo.png");
-  const url = URL.createObjectURL(file);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = file.name;
-  a.click();
-  URL.revokeObjectURL(url);
 }

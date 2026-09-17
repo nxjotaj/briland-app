@@ -22,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import { orderPdfFile, stockPdfFile } from "@/lib/order-pdf";
+import { AnimatedPdfDownload } from "@/components/animated-pdf-download";
 import { maskCep, maskCnpj, maskPhone } from "@/lib/input-masks";
 import { supabase } from "@/lib/supabase";
 import type {
@@ -1005,22 +1006,6 @@ function OrderEditor({
       discount: totals.subtotal - totals.total,
       total: totals.total,
     });
-  const download = async () => {
-    try {
-      const file = await currentOrderPdf();
-      const url = URL.createObjectURL(file);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = file.name;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-      setMsg("PDF baixado no dispositivo.");
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : "Não foi possível baixar o PDF.");
-    }
-  };
   const share = async () => {
     try {
       const file = await currentOrderPdf();
@@ -1069,10 +1054,22 @@ function OrderEditor({
             <Share2 />
             Compartilhar PDF
           </button>
-          <button onClick={() => void download()}>
-            <Download />
-            Baixar PDF
-          </button>
+          <AnimatedPdfDownload
+            label="Baixar PDF"
+            filename={`pedido-${orderNo(order.orderNumber)}.pdf`}
+            prepare={async (report) => {
+              report(null);
+              return currentOrderPdf();
+            }}
+            onComplete={() => setMsg("PDF baixado no dispositivo.")}
+            onError={(e) =>
+              setMsg(
+                e instanceof Error
+                  ? e.message
+                  : "Não foi possível baixar o PDF.",
+              )
+            }
+          />
         </div>
       </div>
       <div className="rep-form-grid">
