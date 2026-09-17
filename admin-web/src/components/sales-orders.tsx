@@ -526,6 +526,12 @@ function OrderModal({
             </label>
           )}
         </div>
+        {payment === "UPFRONT" && (
+          <div className="mt-4 flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-200 font-black">5%</div>
+            <div><div className="font-black">Desconto adicional por pagamento à vista</div><div className="text-xs font-semibold text-amber-800">Os 5% são aplicados sobre o valor já reduzido pelo desconto comercial, sem somar os percentuais.</div></div>
+          </div>
+        )}
         {editable && (
           <div className="relative my-5">
             <input
@@ -567,34 +573,36 @@ function OrderModal({
             )}
           </div>
         )}
-        <div className="overflow-auto">
-          <table className="data-table w-full">
-            <thead>
-              <tr>
-                <th>Produto</th>
-                <th>Disponível</th>
-                <th>Qtd.</th>
-                <th>Tabela</th>
-                <th>Desc.</th>
-                <th>Unitário</th>
-                <th>Total</th>
-                <th />
+        <div className="mt-5 overflow-hidden rounded-2xl border border-slate-200">
+          <div className="overflow-auto">
+          <table className="w-full min-w-[1080px] table-fixed border-collapse">
+            <colgroup><col className="w-[9%]" /><col className="w-[23%]" /><col className="w-[8%]" /><col className="w-[8%]" /><col className="w-[9%]" /><col className="w-[10%]" /><col className="w-[9%]" /><col className="w-[10%]" /><col className="w-[10%]" /><col className="w-[4%]" /></colgroup>
+            <thead className="bg-[#061a34] text-white">
+              <tr className="text-[10px] font-black uppercase tracking-[.08em]">
+                <th className="px-3 py-4 text-left">Código</th>
+                <th className="px-3 py-4 text-left">Descrição</th>
+                <th className="px-3 py-4 text-center">Disponível</th>
+                <th className="px-3 py-4 text-center">Quantidade</th>
+                <th className="px-3 py-4 text-right">Tabela</th>
+                <th className="px-3 py-4 text-center">Desc. comercial</th>
+                <th className="px-3 py-4 text-center">Desc. à vista</th>
+                <th className="px-3 py-4 text-right">Unitário final</th>
+                <th className="px-3 py-4 text-right">Total</th>
+                <th className="px-2 py-4 text-center" />
               </tr>
             </thead>
             <tbody>
               {calculated.map((i, index) => (
-                <tr key={i.productId}>
-                  <td>
-                    <b>{i.productCode}</b>
-                    <div>{i.productName}</div>
-                  </td>
-                  <td>
+                <tr key={i.productId} className="border-b border-slate-100 bg-white transition last:border-0 hover:bg-blue-50/40">
+                  <td className="px-3 py-4 align-middle text-sm font-black">{i.productCode}</td>
+                  <td className="px-3 py-4 align-middle text-sm font-bold leading-snug text-slate-700">{i.productName}</td>
+                  <td className="px-3 py-4 text-center align-middle font-black tabular-nums">
                     {stock.find((s) => s.productId === i.productId)
                       ?.availableBalance ?? 0}
                   </td>
-                  <td>
+                  <td className="px-3 py-4 text-center align-middle">
                     <input
-                      className="input w-20"
+                      className="input h-10 w-full px-2 text-center tabular-nums"
                       type="number"
                       min="1"
                       disabled={!editable}
@@ -610,10 +618,11 @@ function OrderModal({
                       }
                     />
                   </td>
-                  <td>{money(i.listPrice)}</td>
-                  <td>
+                  <td className="px-3 py-4 text-right align-middle text-sm font-bold tabular-nums">{money(i.listPrice)}</td>
+                  <td className="px-3 py-4 text-center align-middle">
+                    <div className="relative">
                     <input
-                      className="input w-24"
+                      className="input h-10 w-full px-2 pr-7 text-center tabular-nums"
                       type="number"
                       min="0"
                       max="100"
@@ -632,11 +641,14 @@ function OrderModal({
                           ),
                         )
                       }
-                    />
+                    /><span className="pointer-events-none absolute right-2 top-2.5 text-xs font-black text-slate-400">%</span></div>
                   </td>
-                  <td>{money(i.unitPrice)}</td>
-                  <td className="font-black">{money(i.lineTotal)}</td>
-                  <td>
+                  <td className="px-3 py-4 text-center align-middle">
+                    {i.paymentDiscountPercent > 0 ? <div><span className="inline-flex rounded-full border border-amber-200 bg-amber-100 px-2.5 py-1 text-xs font-black text-amber-800">+ {i.paymentDiscountPercent}%</span><div className="mt-1 text-[9px] font-bold text-amber-700">após comercial</div></div> : <span className="text-slate-400">—</span>}
+                  </td>
+                  <td className="px-3 py-4 text-right align-middle text-sm font-bold tabular-nums">{money(i.unitPrice)}</td>
+                  <td className="px-3 py-4 text-right align-middle text-sm font-black tabular-nums">{money(i.lineTotal)}</td>
+                  <td className="px-2 py-4 text-center align-middle">
                     {editable && (
                       <button
                         className="icon-btn"
@@ -652,6 +664,7 @@ function OrderModal({
               ))}
             </tbody>
           </table>
+          </div>
         </div>
         <label className="field-label mt-5">
           Observações
