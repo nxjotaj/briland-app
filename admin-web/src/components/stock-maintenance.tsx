@@ -85,6 +85,9 @@ type HistoryRow = {
   actorName?: string | null;
   actorEmail?: string | null;
 };
+type ReservationReview = {
+  reviewId: string; orderId: string; orderNumber: number; orderCreatedAt: string; invoiceNumber: string; invoiceIssuedAt: string; accessKey: string; clientName: string; productId: string; productCode: string; productName: string; orderedQuantity: number; invoicedQuantity: number; remainingQuantity: number; status: "PENDING" | "KEPT_RESERVED" | "RELEASED"; createdAt: string; resolutionComment?: string | null;
+};
 
 const normalizeCode = (value: string) =>
   value.trim().toLocaleUpperCase("pt-BR");
@@ -296,7 +299,7 @@ export function StockMaintenance({
   notify: Notify;
   reloadProducts: () => Promise<void>;
 }) {
-  const [section, setSection] = useState<"manual" | "xml" | "history">(
+  const [section, setSection] = useState<"manual" | "xml" | "reviews" | "history">(
     "manual",
   );
   return (
@@ -305,6 +308,7 @@ export function StockMaintenance({
         {[
           ["manual", "Manutenção rápida"],
           ["xml", "Entrada e saída por XML"],
+          ["reviews", "Pendências de faturamento"],
           ["history", "Histórico"],
         ].map(([id, label]) => (
           <button
@@ -331,9 +335,42 @@ export function StockMaintenance({
           reloadProducts={reloadProducts}
         />
       )}{" "}
+      {section === "reviews" && <ReservationReviews notify={notify} />}{" "}
       {section === "history" && <StockHistory notify={notify} />}
     </div>
   );
+}
+
+function ReservationReviews({ notify }: { notify: Notify }) {
+  const [rows, setRows] = useState<ReservationReview[]>([]);
+  const [loading, setLoading] = useState(true);
+  const load = async () => {
+    setLoading(true);
+    const { data, error } = await supabase.rpc("get_stock_reservation_reviews", { p_status: null });
+    if (error) notify(stockError(error)); else setRows((data || []) as ReservationReview[]);
+    setLoading(false);
+  };
+  useEffect(() => { void load(); }, []);
+  const decide = async (row: ReservationReview, action: "KEEP" | "RELEASE") => {
+    const verb = action === "KEEP" ? "manter reservadas" : "liberar para novos pedidos";
+    if (!confirm(`${verb.charAt(0).toUpperCase()}${verb.slice(1)} as ${row.remainingQuantity} unidade(s) de ${row.productCode}?`)) return;
+    const comment = prompt("Observação da decisão administrativa (opcional):") || "";
+    const { error } = await supabase.rpc("resolve_stock_reservation_review", { p_review_id: row.reviewId, p_action: action, p_comment: comment || null });
+    if (error) notify(stockError(error)); else { notify(action === "KEEP" ? "Reserva residual mantida." : "Reserva residual liberada para novos pedidos."); await load(); }
+  };
+  const pending = rows.filter((row) => row.status === "PENDING");
+  return <div className="space-y-4">
+    <Card title={`${pending.length} pendência(s) aguardando ação`}>
+      <p className="text-sm font-semibold text-slate-600">Diferenças entre o pedido aprovado e a quantidade efetivamente faturada. Enquanto estiver pendente, o saldo restante continua reservado e indisponível para novos pedidos.</p>
+    </Card>
+    {loading ? <div className="flex justify-center p-10"><Loader2 className="animate-spin" /></div> : rows.map((row) => <Card key={row.reviewId} title={`Pedido ${String(row.orderNumber).padStart(6,"0")} — NF-e ${row.invoiceNumber || "sem número"}`}>
+      <div className="grid gap-3 md:grid-cols-4"><Info label="Cliente" value={row.clientName || "-"}/><Info label="Produto" value={`${row.productCode} — ${row.productName}`}/><Info label="Data do pedido" value={formatDate(row.orderCreatedAt)}/><Info label="Data da NF-e" value={formatDate(row.invoiceIssuedAt)}/></div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3"><Info label="Pedido" value={`${row.orderedQuantity} un.`}/><Info label="Faturado" value={`${row.invoicedQuantity} un.`}/><Info label="Ainda reservado" value={`${row.remainingQuantity} un.`}/></div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><span className={`rounded-full px-3 py-1 text-xs font-black ${row.status === "PENDING" ? "bg-amber-100 text-amber-900" : row.status === "KEPT_RESERVED" ? "bg-blue-100 text-blue-900" : "bg-emerald-100 text-emerald-900"}`}>{row.status === "PENDING" ? "Aguardando decisão" : row.status === "KEPT_RESERVED" ? "Reserva mantida" : "Reserva liberada"}</span>{row.status !== "RELEASED" && <div className="flex gap-2">{row.status === "PENDING" && <button className="btn-white" onClick={() => void decide(row,"KEEP")}>Manter reservado</button>}<button className="btn-primary" onClick={() => void decide(row,"RELEASE")}>Liberar saldo</button></div>}</div>
+      {row.resolutionComment && <p className="mt-3 text-sm text-slate-600"><b>Decisão:</b> {row.resolutionComment}</p>}
+    </Card>)}
+    {!loading && !rows.length && <div className="rounded-2xl bg-emerald-50 p-6 text-center font-bold text-emerald-900">Nenhuma divergência de faturamento registrada.</div>}
+  </div>;
 }
 
 function ManualMaintenance({

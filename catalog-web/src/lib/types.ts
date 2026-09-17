@@ -13,7 +13,7 @@ export type Settings = { media?:{initialImage?:string;homeImage?:string}; social
 export type CatalogData = { products:Product[]; categories:Category[]; subcategories:Subcategory[]; productGroups:ProductGroup[]; brands:Brand[]; automakers:Automaker[]; models:VehicleModel[]; applications:VehicleApplication[]; settings:Settings };
 export type CatalogRevision = { id:number; revision:number; changeKind:"CATALOGO"|"SEGURANCA"; updatedAt:string };
 
-export type OrderStatus = "DRAFT"|"SUBMITTED"|"RETURNED"|"APPROVED"|"INVOICED"|"REJECTED"|"CANCELLED";
+export type OrderStatus = "DRAFT"|"SUBMITTED"|"RETURNED"|"APPROVED"|"PARTIALLY_INVOICED"|"INVOICED"|"REJECTED"|"CANCELLED";
 export type FreightType = "CIF"|"FOB";
 export type PaymentType = "UPFRONT"|"INSTALLMENTS";
 export type SalesOrder = { id:string; orderNumber:number; representativeId:string; clientId?:string|null; status:OrderStatus; freightType?:FreightType|null; redispatchName?:string|null; redispatchPhone?:string|null; paymentType?:PaymentType|null; paymentTerms?:string|null; notes?:string|null; subtotal:number; discount:number; total:number; clientSnapshot:Record<string,unknown>; representativeSnapshot:Record<string,unknown>; expiresAt:string; submittedAt?:string|null; approvedAt?:string|null; createdAt:string; updatedAt:string; items?:SalesOrderItem[]; history?:SalesOrderHistory[] };

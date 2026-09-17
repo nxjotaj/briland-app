@@ -37,6 +37,7 @@ const labels: Record<string, string> = {
   SUBMITTED: "Enviado",
   RETURNED: "Devolvido",
   APPROVED: "Aprovado",
+  PARTIALLY_INVOICED: "Faturado parcial",
   INVOICED: "Faturado",
   REJECTED: "Rejeitado",
   CANCELLED: "Cancelado",
