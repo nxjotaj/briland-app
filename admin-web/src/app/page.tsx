@@ -16,6 +16,7 @@ import {
   Activity,
   ArrowUpRight,
   Bell,
+  ChevronDown,
   ChevronRight,
   CircleUserRound,
   Clock3,
@@ -130,6 +131,14 @@ const tabs: { id: Tab; icon: React.ElementType }[] = [
   { id: "Links", icon: LinkIcon },
   { id: "Conteúdo", icon: Settings },
   { id: "Aparência", icon: Settings }
+];
+
+type MenuGroupId = "overview" | "operations" | "registrations" | "settings";
+const menuGroups: Array<{ id: MenuGroupId; label: string; icon: React.ElementType; tabs: Tab[] }> = [
+  { id: "overview", label: "Visão geral", icon: BarChart3, tabs: ["Dashboard", "Análises"] },
+  { id: "operations", label: "Operação comercial", icon: PackagePlus, tabs: ["Produtos", "Manutenção de saldo", "Leads", "Pedidos"] },
+  { id: "registrations", label: "Cadastros", icon: Tags, tabs: ["Categorias", "Marcas", "Montadoras", "Aplicações"] },
+  { id: "settings", label: "Configurações", icon: Settings, tabs: ["Usuários", "Permissões", "Diagnóstico", "Catálogo PDF", "Mídia", "Links", "Conteúdo", "Aparência"] }
 ];
 
 const emptyData: AppData = {
@@ -590,6 +599,11 @@ export default function Page() {
   const [loginError, setLoginError] = useState("");
   const [data, setData] = useState<AppData>(emptyData);
   const [active, setActive] = useState<Tab>("Dashboard");
+  const [openMenuGroups, setOpenMenuGroups] = useState<Record<MenuGroupId, boolean>>({ overview: true, operations: false, registrations: false, settings: false });
+  useEffect(() => {
+    const group = menuGroups.find((item) => item.tabs.includes(active));
+    if (group) setOpenMenuGroups((current) => current[group.id] ? current : { ...current, [group.id]: true });
+  }, [active]);
   const [query, setQuery] = useState("");
   const [toast, setToast] = useState("");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -1013,15 +1027,29 @@ export default function Page() {
             <img src={brilandLogo.src} alt="Briland" className="h-12 w-full max-w-[170px] object-contain object-left" />
           </div>
         </div>
-        <div className="mb-3 px-3 text-[10px] font-black uppercase tracking-[.22em] text-muted">Menu principal</div>
-        <nav className="admin-nav min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
-          {visibleTabs.map(({ id, icon: Icon }) => (
-            <button key={id} onClick={() => { setActive(id); setMobileNavOpen(false); }} className={`nav-item ${active === id ? "nav-item-active" : ""}`}>
-              <span className="nav-icon"><Icon size={17} /></span><span className="flex-1">{id}</span>
-              {id === "Pedidos" && unseenOrders.length > 0 && <span className="rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-black text-white">{unseenOrders.length}</span>}
-              {active === id && <ChevronRight size={15} />}
-            </button>
-          ))}
+        <div className="mb-3 px-3 text-[10px] font-black uppercase tracking-[.22em] text-muted">Áreas administrativas</div>
+        <nav className="admin-nav min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+          {menuGroups.map((group) => {
+            const groupTabs = visibleTabs.filter(({ id }) => group.tabs.includes(id));
+            if (!groupTabs.length) return null;
+            const isOpen = openMenuGroups[group.id];
+            const hasActive = group.tabs.includes(activeTab);
+            const GroupIcon = group.icon;
+            return <div key={group.id} className={`nav-group ${hasActive ? "nav-group-current" : ""}`}>
+              <button className="nav-group-trigger" aria-expanded={isOpen} onClick={() => setOpenMenuGroups((current) => ({ ...current, [group.id]: !current[group.id] }))}>
+                <span className="nav-group-icon"><GroupIcon size={16} /></span><span className="flex-1">{group.label}</span>
+                {group.id === "operations" && unseenOrders.length > 0 && <span className="nav-group-badge">{unseenOrders.length}</span>}
+                <ChevronDown size={16} className={`nav-group-chevron ${isOpen ? "rotate-180" : ""}`} />
+              </button>
+              <div className={`nav-group-items ${isOpen ? "nav-group-items-open" : ""}`}><div>
+                {groupTabs.map(({ id, icon: Icon }) => <button key={id} onClick={() => { setActive(id); setMobileNavOpen(false); }} className={`nav-item ${active === id ? "nav-item-active" : ""}`}>
+                  <span className="nav-icon"><Icon size={16} /></span><span className="flex-1">{id}</span>
+                  {id === "Pedidos" && unseenOrders.length > 0 && <span className="rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-black text-white">{unseenOrders.length}</span>}
+                  {active === id && <ChevronRight size={14} />}
+                </button>)}
+              </div></div>
+            </div>;
+          })}
         </nav>
         <div className="user-card mt-5 shrink-0 p-3">
           <div className="flex items-center gap-3"><div className="user-avatar">{adminUser.name.slice(0, 1).toUpperCase()}</div><div className="min-w-0 flex-1"><div className="truncate text-sm font-black">{adminUser.name}</div><div className="truncate text-xs text-muted">{adminUser.email}</div></div><button aria-label="Sair" onClick={logout} className="icon-btn"><LogOut size={16} /></button></div>
