@@ -9,6 +9,7 @@ export type Route =
   | "promotions"
   | "launches"
   | "contact"
+  | "representativeClients"
   | "representativeOrders"
   | "newOrder"
   | "notifications"

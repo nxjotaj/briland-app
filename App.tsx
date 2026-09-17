@@ -59,6 +59,14 @@ const CATALOG_PUBLIC_URL = "https://briland-catalogo.vercel.app";
 const PRIVACY_POLICY_URL = "https://briland-catalogo.vercel.app/privacidade.html";
 const ACCOUNT_DELETION_URL = "https://briland-catalogo.vercel.app/excluir-conta.html";
 const vehicleYears = () => Array.from({ length: new Date().getFullYear() + 2 - 1950 }, (_, index) => 1950 + index).reverse();
+const onlyDigits = (value: string) => value.replace(/\D/g, "");
+const maskCnpj = (value: string) => onlyDigits(value).slice(0, 14).replace(/^(\d{2})(\d)/, "$1.$2").replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3").replace(/\.(\d{3})(\d)/, ".$1/$2").replace(/(\d{4})(\d)/, "$1-$2");
+const maskCep = (value: string) => onlyDigits(value).slice(0, 8).replace(/(\d{5})(\d)/, "$1-$2");
+const maskPhone = (value: string) => {
+  const digits = onlyDigits(value).slice(0, 11);
+  if (digits.length <= 10) return digits.replace(/^(\d{2})(\d)/, "($1) $2").replace(/(\d{4})(\d)/, "$1-$2");
+  return digits.replace(/^(\d{2})(\d)/, "($1) $2").replace(/(\d{5})(\d)/, "$1-$2");
+};
 const vehicleApplicationLabel = (application: ProdutoModeloVeiculoView) => {
   if (!application.anoInicial || !application.anoFinal) return "Todos os anos";
   return application.anoInicial === application.anoFinal ? String(application.anoInicial) : `${application.anoInicial} a ${application.anoFinal}`;
@@ -190,7 +198,7 @@ function productImageUrl(product: Produto, variant: "card" | "detail" | "thumb",
 
 type UpdateControllerState = "atual" | "disponivel" | "baixando" | "aplicando" | "falhou";
 
-const userSelect = "id,name,company,email,role,status,notes,phone,cnpj,stateRegistration,address,city,state,registrationNotes,approvedAt,approvedBy,lastLoginAt,createdAt,updatedAt,authUserId";
+const userSelect = "id,name,company,email,role,status,notes,phone,cnpj,stateRegistration,address,zipCode,neighborhood,city,state,representanteId,orderDiscountLimit,registrationNotes,approvedAt,approvedBy,lastLoginAt,createdAt,updatedAt,authUserId";
 function notify(title: string, message: string) {
   Alert.alert(title, message);
 }
@@ -1306,6 +1314,7 @@ export default function App() {
               )}
               {route === "detail" && !retainedCatalogRoute && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} imageVersion={imageRefreshVersion} selectedVehicle={selectedVehicleText} favorite={favoriteProductIds.includes(selectedProduct.id)} onFavorite={() => toggleFavorite(selectedProduct)} onTrack={trackProductEvent} />}
               {route === "contact" && <ContactScreen onSubmit={createLead} />}
+              {route === "representativeClients" && role === "REPRESENTANTE" && authToken && currentUser && <RepresentativeClientsScreen token={authToken} representative={currentUser} />}
               {route === "representativeOrders" && role === "REPRESENTANTE" && authToken && <RepresentativeOrdersScreen token={authToken} onNew={() => void openNewMobileOrder()} onOpen={(order) => { setMobileOrder(order); go("newOrder"); }} />}
               {route === "newOrder" && role === "REPRESENTANTE" && authToken && mobileOrder && <MobileOrderScreen order={mobileOrder} token={authToken} representative={currentUser} products={activeProducts} onSaved={(saved) => { setMobileOrder(saved); if (saved.status === "SUBMITTED") go("representativeOrders"); }} />}
               {route === "notifications" && <NotificationsScreen notifications={catalogNotifications} products={data.produtos} onOpen={openNotification} />}
@@ -2400,6 +2409,92 @@ function AboutScreen({ settings }: { settings: AboutSettings }) {
 const mobileOrderStatus:Record<string,string>={DRAFT:"Rascunho",SUBMITTED:"Enviado",RETURNED:"Devolvido",APPROVED:"Aprovado",REJECTED:"Rejeitado",CANCELLED:"Cancelado"};
 const mobileOrderNumber=(value:number)=>String(value).padStart(6,"0");
 
+type RepresentativeClientDraft = {
+  name: string;
+  company: string;
+  cnpj: string;
+  stateRegistration: string;
+  email: string;
+  phone: string;
+  address: string;
+  zipCode: string;
+  neighborhood: string;
+  city: string;
+  state: string;
+};
+const emptyRepresentativeClient: RepresentativeClientDraft = { name:"",company:"",cnpj:"",stateRegistration:"",email:"",phone:"",address:"",zipCode:"",neighborhood:"",city:"",state:"" };
+
+function RepresentativeClientsScreen({ token, representative }: { token: string; representative: Usuario }) {
+  const [clients, setClients] = useState<Usuario[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<RepresentativeClientDraft>(emptyRepresentativeClient);
+  const load = async () => {
+    setLoading(true);
+    try {
+      setClients(await supabaseGet<Usuario>("User", `select=*&role=eq.CLIENTE&representanteId=eq.${representative.id}&order=company.asc`, token));
+    } catch (error) {
+      Alert.alert("Clientes", error instanceof Error ? error.message : "Não foi possível carregar seus clientes.");
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { void load(); }, [token, representative.id]);
+  const normalizedQuery = query.trim().toLocaleLowerCase("pt-BR");
+  const filtered = clients.filter((client) => !normalizedQuery || `${client.company || ""} ${client.name || ""} ${client.cnpj || ""} ${client.city || ""} ${client.email || ""}`.toLocaleLowerCase("pt-BR").includes(normalizedQuery));
+  const change = (key: keyof RepresentativeClientDraft, value: string) => setForm((current) => ({
+    ...current,
+    [key]: key === "cnpj" ? maskCnpj(value) : key === "zipCode" ? maskCep(value) : key === "phone" ? maskPhone(value) : key === "state" ? value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2) : key === "stateRegistration" ? value.toUpperCase().slice(0, 30) : value,
+  }));
+  const save = async () => {
+    if (Object.values(form).some((value) => !value.trim())) {
+      Alert.alert("Dados incompletos", "Preencha todos os campos obrigatórios do cliente.");
+      return;
+    }
+    if (onlyDigits(form.cnpj).length !== 14) { Alert.alert("CNPJ inválido", "Informe os 14 números do CNPJ."); return; }
+    if (onlyDigits(form.zipCode).length !== 8) { Alert.alert("CEP inválido", "Informe os 8 números do CEP."); return; }
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) { Alert.alert("E-mail inválido", "Informe um e-mail válido para o primeiro acesso do cliente."); return; }
+    setSaving(true);
+    try {
+      await supabaseRpc<Usuario>("create_representative_client", { p_payload: { ...form, email: form.email.trim().toLowerCase() } }, token);
+      await load();
+      setCreating(false);
+      setForm(emptyRepresentativeClient);
+      Alert.alert("Cliente cadastrado", "O cliente foi vinculado ao seu acesso e já pode ser usado em novos pedidos.");
+    } catch (error) {
+      Alert.alert("Não foi possível cadastrar", error instanceof Error ? error.message : "Revise os dados e tente novamente.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  const fields: Array<[keyof RepresentativeClientDraft, string, "default" | "numeric" | "email-address" | "phone-pad"]> = [
+    ["company","Razão social","default"],["cnpj","CNPJ","numeric"],["stateRegistration","Inscrição estadual","default"],["name","Responsável","default"],["email","E-mail","email-address"],["phone","Telefone","phone-pad"],["address","Endereço completo","default"],["zipCode","CEP","numeric"],["neighborhood","Bairro","default"],["city","Cidade","default"],["state","Estado (UF)","default"],
+  ];
+  return <>
+    <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock} keyboardShouldPersistTaps="handled">
+      <PageTitle title="Clientes" subtitle="Consulte seus clientes e faça novos cadastros diretamente pelo celular." />
+      <Pressable style={styles.yellowButton} onPress={() => setCreating(true)}><Ionicons name="person-add-outline" size={21} color={colors.navy}/><Text style={styles.yellowButtonText}>Cadastrar novo cliente</Text></Pressable>
+      <View style={styles.representativeClientSearch}><Ionicons name="search-outline" size={21} color={colors.navy}/><TextInput value={query} onChangeText={setQuery} placeholder="Buscar por empresa, CNPJ, cidade ou e-mail" placeholderTextColor="#8C94A0" style={styles.searchInput} autoCapitalize="none" returnKeyType="search"/></View>
+      {loading ? <ActivityIndicator style={{marginTop:30}} color={colors.navy}/> : filtered.map((client) => <View key={client.id} style={styles.representativeClientCard}>
+        <View style={styles.representativeClientIcon}><Ionicons name="business-outline" size={24} color={colors.navy}/></View>
+        <View style={styles.flex}><Text style={styles.representativeClientCompany}>{client.company || client.name}</Text><Text style={styles.representativeClientDocument}>{maskCnpj(client.cnpj || "")}{client.stateRegistration ? `  •  IE ${client.stateRegistration}` : ""}</Text><Text style={styles.mutedSmall}>{client.name}  •  {client.city}/{client.state}</Text><Text style={styles.representativeClientContact}>{maskPhone(client.phone || "")}  •  {client.email}</Text></View>
+      </View>)}
+      {!loading && !filtered.length && <View style={styles.emptySearchCard}><Ionicons name="people-outline" size={42} color={colors.yellow}/><Text style={styles.emptySearchTitle}>{query ? "Nenhum cliente encontrado" : "Nenhum cliente vinculado"}</Text><Text style={styles.muted}>{query ? "Tente outro nome, CNPJ, cidade ou e-mail." : "Cadastre seu primeiro cliente pelo botão acima."}</Text></View>}
+    </ScrollView>
+    <Modal visible={creating} transparent animationType="slide" onRequestClose={() => !saving && setCreating(false)}>
+      <Pressable style={styles.sheetOverlay} onPress={() => !saving && setCreating(false)} />
+      <ScrollView style={styles.editorSheet} contentContainerStyle={styles.editorContent} keyboardShouldPersistTaps="handled">
+        <View style={styles.sheetHeader}><View><Text style={styles.sheetTitle}>Cadastrar cliente</Text><Text style={styles.mutedSmall}>Todos os campos são obrigatórios.</Text></View><Pressable style={styles.sideClose} disabled={saving} onPress={() => setCreating(false)}><Ionicons name="close" size={24} color={colors.navy}/></Pressable></View>
+        {fields.map(([key,label,keyboard]) => <View key={key} style={styles.inputGroup}><Text style={styles.label}>{label} <Text style={styles.required}>*</Text></Text><View style={styles.input}><TextInput value={form[key]} onChangeText={(value) => change(key,value)} keyboardType={keyboard} autoCapitalize={key === "email" ? "none" : key === "state" || key === "stateRegistration" ? "characters" : "sentences"} autoCorrect={false} maxLength={key === "cnpj" ? 18 : key === "phone" ? 15 : key === "zipCode" ? 9 : key === "state" ? 2 : undefined} placeholder={label} placeholderTextColor="#9BA0AA" style={styles.inputText}/></View></View>)}
+        <View style={styles.securityBox}><Ionicons name="shield-checkmark-outline" size={25} color={colors.navy}/><Text style={[styles.mutedSmall,styles.flex]}>O cadastro será vinculado automaticamente a {representative.name}. O cliente usará o e-mail informado para criar a primeira senha.</Text></View>
+        <Pressable disabled={saving} style={[styles.yellowButton,saving && styles.disabledButton]} onPress={() => void save()}>{saving ? <ActivityIndicator color={colors.navy}/> : <><Ionicons name="save-outline" size={21} color={colors.navy}/><Text style={styles.yellowButtonText}>Salvar cliente</Text></>}</Pressable>
+      </ScrollView>
+    </Modal>
+  </>;
+}
+
 function RepresentativeOrdersScreen({token,onNew,onOpen}:{token:string;onNew:()=>void;onOpen:(order:SalesOrder)=>void}){
   const[orders,setOrders]=useState<SalesOrder[]>([]);const[loading,setLoading]=useState(true);const load=async()=>{setLoading(true);try{setOrders(await supabaseGet<SalesOrder>("SalesOrder","select=*,items:SalesOrderItem(*)&order=createdAt.desc",token));}catch(err){Alert.alert("Pedidos",err instanceof Error?err.message:"Não foi possível carregar.");}finally{setLoading(false);}};useEffect(()=>{void load();},[]);
   return <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}><PageTitle title="Meus pedidos" subtitle="Consulte rapidamente rascunhos e pedidos já enviados."/><Pressable style={styles.yellowButton} onPress={onNew}><Ionicons name="add-circle-outline" size={21} color={colors.navy}/><Text style={styles.yellowButtonText}>Criar novo pedido</Text></Pressable>{loading?<ActivityIndicator style={{marginTop:30}} color={colors.navy}/>:orders.map(order=><Pressable key={order.id} style={styles.mobileOrderCard} onPress={()=>onOpen(order)}><View><Text style={styles.productCode}>PEDIDO {mobileOrderNumber(order.orderNumber)}</Text><Text style={styles.mobileOrderClient}>{String(order.clientSnapshot?.company||"Cliente ainda não selecionado")}</Text><Text style={styles.mutedSmall}>{new Date(order.updatedAt).toLocaleString("pt-BR")}</Text></View><View style={styles.mobileOrderRight}><Text style={styles.mobileOrderStatus}>{mobileOrderStatus[order.status]}</Text><Text style={styles.mobileOrderTotal}>{money(order.total)}</Text></View></Pressable>)}{!loading&&!orders.length&&<View style={styles.emptySearchCard}><Ionicons name="receipt-outline" size={42} color={colors.yellow}/><Text style={styles.emptySearchTitle}>Nenhum pedido</Text><Text style={styles.muted}>Crie o primeiro pedido pelo botão acima.</Text></View>}</ScrollView>;
@@ -3377,7 +3472,7 @@ function SideMenu({ visible, onClose, go, onLogout, role, user, links, allowWhat
             </View>
           ))}
           {isAdminRole(role) && <View style={styles.sideSection}><Text style={styles.sideSectionTitle}>Gestão</Text><Pressable style={styles.sideItem} onPress={() => go("admin")}><Ionicons name="speedometer-outline" size={23} color={colors.navy} /><Text style={styles.sideLabel}>Painel admin</Text><Ionicons name="chevron-forward" size={20} color={colors.navy} /></Pressable></View>}
-          {role === "REPRESENTANTE" && <View style={styles.sideSection}><Text style={styles.sideSectionTitle}>Comercial</Text><Pressable style={styles.sideItem} onPress={() => go("representativeOrders")}><Ionicons name="receipt-outline" size={23} color={colors.navy} /><Text style={styles.sideLabel}>Meus pedidos</Text><Ionicons name="chevron-forward" size={20} color={colors.navy} /></Pressable></View>}
+          {role === "REPRESENTANTE" && <View style={styles.sideSection}><Text style={styles.sideSectionTitle}>Comercial</Text><Pressable style={styles.sideItem} onPress={() => go("representativeClients")}><Ionicons name="people-outline" size={23} color={colors.navy} /><Text style={styles.sideLabel}>Clientes</Text><Ionicons name="chevron-forward" size={20} color={colors.navy} /></Pressable><Pressable style={styles.sideItem} onPress={() => go("representativeOrders")}><Ionicons name="receipt-outline" size={23} color={colors.navy} /><Text style={styles.sideLabel}>Meus pedidos</Text><Ionicons name="chevron-forward" size={20} color={colors.navy} /></Pressable></View>}
           <View style={styles.sideSocialDock}>
             <Pressable style={styles.sideSocialIcon} onPress={() => Linking.openURL(links.instagram)}><Ionicons name="logo-instagram" size={24} color={colors.navy} /></Pressable>
             <Pressable style={styles.sideSocialIcon} onPress={() => Linking.openURL(links.linkedin)}><Ionicons name="logo-linkedin" size={24} color={colors.navy} /></Pressable>
@@ -3850,6 +3945,12 @@ const styles = StyleSheet.create({
   mobileOrderRight:{alignItems:"flex-end",gap:8},
   mobileOrderStatus:{overflow:"hidden",borderRadius:10,backgroundColor:"#E8F1FB",paddingHorizontal:9,paddingVertical:5,color:colors.navy,fontSize:10,fontWeight:"900"},
   mobileOrderTotal:{color:colors.navy,fontSize:16,fontWeight:"900"},
+  representativeClientSearch:{height:58,marginTop:14,marginBottom:4,borderRadius:16,backgroundColor:colors.white,borderWidth:1,borderColor:colors.line,paddingHorizontal:15,flexDirection:"row",alignItems:"center",gap:10,...shadow},
+  representativeClientCard:{minHeight:132,marginTop:12,padding:15,borderRadius:18,backgroundColor:colors.white,flexDirection:"row",alignItems:"flex-start",gap:12,borderWidth:1,borderColor:colors.line,...shadow},
+  representativeClientIcon:{width:46,height:46,borderRadius:14,backgroundColor:"#FFF6D8",alignItems:"center",justifyContent:"center"},
+  representativeClientCompany:{color:colors.navy,fontSize:16,lineHeight:21,fontWeight:"900"},
+  representativeClientDocument:{marginTop:5,color:colors.navy,fontSize:12,fontWeight:"800"},
+  representativeClientContact:{marginTop:5,color:colors.muted,fontSize:12,lineHeight:17},
   mobileChoiceRow:{flexGrow:0,marginBottom:12},
   mobileChoice:{minHeight:42,marginRight:8,borderWidth:1,borderColor:colors.line,borderRadius:21,backgroundColor:colors.white,paddingHorizontal:15,alignItems:"center",justifyContent:"center"},
   mobileChoiceActive:{borderColor:colors.navy,backgroundColor:colors.navy},
