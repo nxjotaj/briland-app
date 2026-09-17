@@ -60,6 +60,13 @@ type FiscalDocument = {
   storagePath?: string;
   manualClassificationReason?: string;
   errors: string[];
+  orderMatch?: {
+    orderId: string;
+    orderNumber: number;
+    clientName: string;
+    comparison: { exact: boolean; differences: Array<{ code: string; orderQuantity?: number; invoiceQuantity?: number; result: string }> };
+  } | null;
+  orderMatchConfirmed?: boolean;
 };
 type HistoryRow = {
   movementId: string;
@@ -234,6 +241,7 @@ async function parseFiscalXml(
     },
     recipient: {
       cnpj: dest ? localName(dest, "CNPJ") : "",
+      ie: dest ? localName(dest, "IE") : "",
       name: dest ? localName(dest, "xNome") : "",
     },
     purpose: localName(root, "finNFe"),
@@ -629,7 +637,17 @@ function XmlMaintenance({
           continue;
         }
         try {
-          parsed.push(await parseFiscalXml(file, products, direction));
+          const document = await parseFiscalXml(file, products, direction);
+          if (direction === "SAIDA" && document.nature === "VENDA" && document.recipient.cnpj) {
+            const { data, error } = await supabase.rpc("match_sales_order_for_invoice", {
+              p_recipient_cnpj: document.recipient.cnpj,
+              p_recipient_ie: document.recipient.ie || null,
+              p_items: document.items.map(({ productCode, quantity }) => ({ productCode, quantity })),
+            });
+            if (error) throw error;
+            document.orderMatch = data as FiscalDocument["orderMatch"];
+          }
+          parsed.push(document);
         } catch (e) {
           notify(stockError(e));
         }
@@ -681,6 +699,10 @@ function XmlMaintenance({
       notify("Classifique todos os documentos antes de confirmar.");
       return;
     }
+    if (documents.some((d) => d.orderMatch && !d.orderMatchConfirmed)) {
+      notify("Confirme ou descarte a sugestão de pedido de cada NF-e antes de aplicar o lote.");
+      return;
+    }
     if (
       !confirm(
         partial
@@ -717,6 +739,9 @@ function XmlMaintenance({
         uploaded.push(path);
         payload.push({
           ...doc,
+          salesOrderId: doc.orderMatchConfirmed ? doc.orderMatch?.orderId : null,
+          orderMatch: undefined,
+          orderMatchConfirmed: undefined,
           file: undefined,
           storagePath: path,
           items: doc.items.map(
@@ -809,6 +834,25 @@ function XmlMaintenance({
                 value={doc.authorized ? "Autorizada" : "Não autorizada"}
               />
             </div>
+            {direction === "SAIDA" && doc.nature === "VENDA" && (
+              doc.orderMatch ? (
+                <div className={`mb-4 rounded-2xl border p-4 ${doc.orderMatch.comparison.exact ? "border-emerald-300 bg-emerald-50 text-emerald-950" : "border-amber-300 bg-amber-50 text-amber-950"}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="font-black">Pedido sugerido {String(doc.orderMatch.orderNumber).padStart(6, "0")} — {doc.orderMatch.clientName}</p>
+                      <p className="mt-1 text-sm font-semibold">CNPJ/IE do cliente conferidos. {doc.orderMatch.comparison.exact ? "Produtos e quantidades coincidem integralmente." : "Existem diferenças entre o pedido e a nota fiscal."}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button type="button" className={doc.orderMatchConfirmed ? "btn-primary" : "btn-white"} onClick={() => setDocuments((current) => current.map((item, i) => i === index ? { ...item, orderMatchConfirmed: true } : item))}>Sim, vincular pedido</button>
+                      <button type="button" className="btn-white" onClick={() => setDocuments((current) => current.map((item, i) => i === index ? { ...item, orderMatchConfirmed: false, orderMatch: null } : item))}>Não é este pedido</button>
+                    </div>
+                  </div>
+                  {!doc.orderMatch.comparison.exact && <div className="mt-3 space-y-1 text-sm font-bold">{doc.orderMatch.comparison.differences.map((difference) => <div key={difference.code}>• {difference.code}: pedido {difference.orderQuantity ?? 0}, NF-e {difference.invoiceQuantity ?? 0}</div>)}</div>}
+                </div>
+              ) : (
+                <div className="mb-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm font-bold text-blue-950">Nenhum pedido aprovado foi encontrado para o CNPJ/IE desta NF-e. A saída de estoque continuará normalmente e ficará registrada como venda sem pedido vinculado.</div>
+              )
+            )}
             {(doc.nature === "NAO_RECONHECIDA" ||
               doc.classifiedManually ||
               doc.errors.some((e) =>

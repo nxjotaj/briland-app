@@ -47,11 +47,26 @@ try {
   ensure(saved.clientSnapshot.stateRegistration === "110042490114", "Inscrição estadual ausente do snapshot do pedido.");
   const reservation = (await client.query(`select * from public."StockReservation" where "orderId"='test_order_tx'`)).rows[0];
   ensure(reservation.status === "ACTIVE" && reservation.quantity === 1, "Reserva de estoque não criada.");
+  const balanceBeforeApproval = Number((await client.query(`select estoque from public."Produto" where id=$1`, [product.id])).rows[0].estoque);
   await client.query("select set_config('request.jwt.claim.sub',$1,true)", [String(admin.authUserId)]);
   const approved = (await client.query(`select * from public.transition_sales_order('test_order_tx','APPROVE','Teste transacional')`)).rows[0];
   ensure(approved.status === "APPROVED", "Aprovação não mudou o status.");
+  const maintained = (await client.query(`select status from public."StockReservation" where "orderId"='test_order_tx'`)).rows[0];
+  ensure(maintained.status === "ACTIVE", "A aprovação não manteve a reserva até o faturamento.");
+  const balanceAfterApproval = Number((await client.query(`select estoque from public."Produto" where id=$1`, [product.id])).rows[0].estoque);
+  ensure(balanceAfterApproval === balanceBeforeApproval, "A aprovação baixou o estoque antes do XML fiscal.");
+  const match = (await client.query(`select public.match_sales_order_for_invoice($1,$2,jsonb_build_array(jsonb_build_object('productCode',$3::text,'quantity',2))) result`, ['00000000000191','110042490114',product.codigoInterno])).rows[0].result;
+  ensure(match?.orderId === 'test_order_tx' && match?.comparison?.exact === false && match?.comparison?.differences?.length === 1, "A conciliação não sinalizou a divergência de quantidade.");
+  const accessKey = '35260900000000000191550010000000021000000001';
+  await client.query(`select public.apply_fiscal_stock_batch('SAIDA','Teste de faturamento',jsonb_build_array(jsonb_build_object('accessKey',$1::text,'number','2','series','1','issuedAt',now()::text,'issuer',jsonb_build_object('cnpj','11111111000111','name','Briland'),'recipient',jsonb_build_object('cnpj','00000000000191','ie','110042490114','name','Empresa Teste'),'purpose','1','operationNature','VENDA','cfops',jsonb_build_array('5102'),'nature','VENDA','authorized',true,'salesOrderId','test_order_tx','items',jsonb_build_array(jsonb_build_object('lineNumber',1,'productCode',$2::text,'description','Produto teste','quantity',2,'cfop','5102')))))`, [accessKey, product.codigoInterno]);
+  const invoiced = (await client.query(`select * from public."SalesOrder" where id='test_order_tx'`)).rows[0];
+  ensure(invoiced.status === 'INVOICED' && invoiced.fiscalDocumentId, "O XML não marcou o pedido como faturado.");
   const consumed = (await client.query(`select status from public."StockReservation" where "orderId"='test_order_tx'`)).rows[0];
-  ensure(consumed.status === "CONSUMED", "Reserva não foi consumida.");
+  ensure(consumed.status === "CONSUMED", "A reserva não foi consumida no faturamento.");
+  const balanceAfterInvoice = Number((await client.query(`select estoque from public."Produto" where id=$1`, [product.id])).rows[0].estoque);
+  ensure(balanceAfterInvoice === balanceBeforeApproval - 2, "O faturamento não baixou exatamente a quantidade divergente da NF-e.");
+  const invoiceHistory = (await client.query(`select metadata from public."SalesOrderHistory" where "orderId"='test_order_tx' and action='INVOICED' order by "createdAt" desc limit 1`)).rows[0];
+  ensure(invoiceHistory?.metadata?.comparison?.exact === false, "A divergência não foi registrada no histórico do pedido.");
   await client.query("rollback");
   console.log("Testes transacionais de pedido aprovados; dados de teste revertidos.");
 } catch (error) {

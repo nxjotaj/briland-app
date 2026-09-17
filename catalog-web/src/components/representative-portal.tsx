@@ -37,6 +37,7 @@ const labels: Record<string, string> = {
   SUBMITTED: "Enviado",
   RETURNED: "Devolvido",
   APPROVED: "Aprovado",
+  INVOICED: "Faturado",
   REJECTED: "Rejeitado",
   CANCELLED: "Cancelado",
 };
@@ -290,6 +291,12 @@ function Dashboard({
     [
       "Aprovados",
       filtered.filter((o) => o.status === "APPROVED").length,
+      PackageCheck,
+      "/representante/pedidos",
+    ],
+    [
+      "Faturados",
+      filtered.filter((o) => o.status === "INVOICED").length,
       PackageCheck,
       "/representante/pedidos",
     ],

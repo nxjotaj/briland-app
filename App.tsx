@@ -2406,7 +2406,7 @@ function AboutScreen({ settings }: { settings: AboutSettings }) {
   );
 }
 
-const mobileOrderStatus:Record<string,string>={DRAFT:"Rascunho",SUBMITTED:"Enviado",RETURNED:"Devolvido",APPROVED:"Aprovado",REJECTED:"Rejeitado",CANCELLED:"Cancelado"};
+const mobileOrderStatus:Record<string,string>={DRAFT:"Rascunho",SUBMITTED:"Enviado",RETURNED:"Devolvido",APPROVED:"Aprovado",INVOICED:"Faturado",REJECTED:"Rejeitado",CANCELLED:"Cancelado"};
 const mobileOrderNumber=(value:number)=>String(value).padStart(6,"0");
 
 type RepresentativeClientDraft = {

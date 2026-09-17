@@ -25,6 +25,7 @@ const statusLabel: Record<string, string> = {
   SUBMITTED: "Enviado",
   RETURNED: "Devolvido",
   APPROVED: "Aprovado",
+  INVOICED: "Faturado",
   REJECTED: "Rejeitado",
   CANCELLED: "Cancelado",
 };
@@ -33,6 +34,7 @@ const statusStyle: Record<string, string> = {
   SUBMITTED: "border-blue-200 bg-blue-100 text-blue-800",
   RETURNED: "border-amber-200 bg-amber-100 text-amber-800",
   APPROVED: "border-emerald-200 bg-emerald-100 text-emerald-800",
+  INVOICED: "border-cyan-200 bg-cyan-100 text-cyan-800",
   REJECTED: "border-red-200 bg-red-100 text-red-800",
   CANCELLED: "border-slate-300 bg-slate-200 text-slate-600",
 };
@@ -211,8 +213,8 @@ export function SalesOrders({
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <button onClick={() => setStatus("SUBMITTED")} className="rounded-[22px] border border-red-100 bg-gradient-to-br from-white to-red-50 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex items-center justify-between"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-100 text-red-700"><Eye size={19} /></div><span className="rounded-full bg-red-600 px-2.5 py-1 text-[10px] font-black text-white">URGENTE</span></div><div className="mt-5 text-3xl font-black">{newOrderIds.length}</div><div className="mt-1 text-sm font-black">Novos pedidos</div><div className="mt-1 text-xs font-semibold text-slate-500">Ainda não visualizados</div></button>
         <button onClick={() => setStatus("SUBMITTED")} className="rounded-[22px] border border-blue-100 bg-gradient-to-br from-white to-blue-50 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100 text-blue-700"><RefreshCw size={19} /></div><div className="mt-5 text-3xl font-black">{orders.filter((o) => o.status === "SUBMITTED").length}</div><div className="mt-1 text-sm font-black">Aguardando análise</div><div className="mt-1 text-xs font-semibold text-slate-500">Fila comercial ativa</div></button>
-        <button onClick={() => setStatus("APPROVED")} className="rounded-[22px] border border-emerald-100 bg-gradient-to-br from-white to-emerald-50 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700"><CheckCircle2 size={19} /></div><div className="mt-5 text-3xl font-black">{orders.filter((o) => o.status === "APPROVED").length}</div><div className="mt-1 text-sm font-black">Aprovados</div><div className="mt-1 text-xs font-semibold text-slate-500">Pedidos concluídos</div></button>
-        <button onClick={() => setStatus("REJECTED")} className="rounded-[22px] border border-rose-100 bg-gradient-to-br from-white to-rose-50 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-100 text-rose-700"><XCircle size={19} /></div><div className="mt-5 text-3xl font-black">{orders.filter((o) => o.status === "REJECTED").length}</div><div className="mt-1 text-sm font-black">Rejeitados</div><div className="mt-1 text-xs font-semibold text-slate-500">Decisões negativas</div></button>
+        <button onClick={() => setStatus("APPROVED")} className="rounded-[22px] border border-emerald-100 bg-gradient-to-br from-white to-emerald-50 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700"><CheckCircle2 size={19} /></div><div className="mt-5 text-3xl font-black">{orders.filter((o) => o.status === "APPROVED").length}</div><div className="mt-1 text-sm font-black">Aprovados</div><div className="mt-1 text-xs font-semibold text-slate-500">Aguardando faturamento</div></button>
+        <button onClick={() => setStatus("INVOICED")} className="rounded-[22px] border border-cyan-100 bg-gradient-to-br from-white to-cyan-50 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-100 text-cyan-700"><PackageCheck size={19} /></div><div className="mt-5 text-3xl font-black">{orders.filter((o) => o.status === "INVOICED").length}</div><div className="mt-1 text-sm font-black">Faturados</div><div className="mt-1 text-xs font-semibold text-slate-500">NF-e conciliada e estoque baixado</div></button>
       </div>
       <div className="mb-6 rounded-[24px] border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><div className="flex items-center gap-2 text-base font-black"><Filter size={18} className="text-blue-700" /> Filtros comerciais</div><div className="mt-1 text-xs font-semibold text-slate-500">Refine a fila por cliente, representante, período, status ou valor.</div></div>{activeFilterCount > 0 && <button className="text-xs font-black text-blue-700 hover:underline" onClick={clearFilters}>Limpar {activeFilterCount} filtro(s)</button>}</div>
