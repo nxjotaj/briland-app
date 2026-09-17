@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { Produto, SalesOrder, SalesOrderItem, Usuario } from "@/lib/types";
-import { orderPdfFile } from "../../../catalog-web/src/lib/order-pdf";
+import { orderPdfFile } from "@/lib/order-pdf";
 
 const statusLabel: Record<string, string> = {
   DRAFT: "Rascunho",
