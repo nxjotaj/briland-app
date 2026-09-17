@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { buildCommercialOrderPdf } from "../../../shared/order-pdf-core";
+import { buildCommercialOrderPdf } from "./order-pdf-core";
 import type { SalesOrder, SalesStock } from "./types";
 
 const PAGE = { width: 595.28, height: 841.89 };

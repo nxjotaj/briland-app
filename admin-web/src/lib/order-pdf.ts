@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { buildCommercialOrderPdf } from "../../../shared/order-pdf-core";
+import { buildCommercialOrderPdf } from "../../../catalog-web/src/lib/order-pdf-core";
 import type { SalesOrder } from "./types";
 
 export async function orderPdfFile(order: SalesOrder, logoUrl = "/catalog-assets/briland-logo.png") {
