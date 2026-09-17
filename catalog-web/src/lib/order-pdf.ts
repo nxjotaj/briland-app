@@ -72,8 +72,10 @@ export async function buildOrderPdf(order: SalesOrder, logoBytes?: Uint8Array) {
   return pdf.save();
 }
 
-export async function orderPdfFile(order: SalesOrder) {
-  const bytes=await buildOrderPdf(order); const blob=new Blob([bytes as BlobPart],{type:"application/pdf"});
+export async function orderPdfFile(order: SalesOrder, logoUrl = "/briland-logo.png") {
+  const logoResponse = await fetch(logoUrl);
+  if (!logoResponse.ok) throw new Error("Não foi possível carregar a logo da Briland.");
+  const bytes=await buildOrderPdf(order,new Uint8Array(await logoResponse.arrayBuffer())); const blob=new Blob([bytes as BlobPart],{type:"application/pdf"});
   return new File([blob],`pedido-${String(order.orderNumber).padStart(6,"0")}.pdf`,{type:"application/pdf"});
 }
 

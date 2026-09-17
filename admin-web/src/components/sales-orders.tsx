@@ -16,9 +16,9 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { supabase } from "@/lib/supabase";
 import type { Produto, SalesOrder, SalesOrderItem, Usuario } from "@/lib/types";
+import { orderPdfFile } from "../../../catalog-web/src/lib/order-pdf";
 
 const statusLabel: Record<string, string> = {
   DRAFT: "Rascunho",
@@ -750,93 +750,8 @@ function OrderModal({
   );
 }
 
-async function adminPdfFile(order: SalesOrder) {
-  const pdf = await PDFDocument.create();
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const logoResponse = await fetch("/catalog-assets/briland-logo.png");
-  if (!logoResponse.ok) throw new Error("Não foi possível carregar a logo da Briland.");
-  const logo = await pdf.embedPng(await logoResponse.arrayBuffer());
-  let page = pdf.addPage([595.28, 841.89]);
-  let y = 745;
-  const head = () => {
-    page.drawRectangle({
-      x: 0,
-      y: 762,
-      width: 595.28,
-      height: 80,
-      color: rgb(0.008, 0.067, 0.149),
-    });
-    page.drawImage(logo, { x: 25, y: 756, width: 190, height: 86 });
-    page.drawText(`PEDIDO ${number(order.orderNumber)}`, {
-      x: 420,
-      y: 799,
-      size: 13,
-      font: bold,
-      color: rgb(1, 1, 1),
-    });
-    y = 745;
-  };
-  head();
-  page.drawText(
-    `Cliente: ${String(order.clientSnapshot?.company || order.clientSnapshot?.name || "-")}`,
-    { x: 35, y, size: 10, font: bold },
-  );
-  y -= 17;
-  page.drawText(
-    `CNPJ: ${String(order.clientSnapshot?.cnpj || "-")}  |  Inscricao estadual: ${String(order.clientSnapshot?.stateRegistration || "-")}`,
-    { x: 35, y, size: 8, font },
-  );
-  y -= 17;
-  page.drawText(
-    `Representante: ${String(order.representativeSnapshot?.name || "-")}  |  Frete: ${order.freightType || "-"}  |  Pagamento: ${order.paymentType === "UPFRONT" ? "A vista antecipado" : order.paymentTerms || "Parcelado"}`,
-    { x: 35, y, size: 8, font },
-  );
-  y -= 30;
-  for (const item of order.items || []) {
-    if (y < 65) {
-      page = pdf.addPage([595.28, 841.89]);
-      head();
-    }
-    page.drawText(`${item.productCode}  ${item.productName.slice(0, 42)}`, {
-      x: 35,
-      y,
-      size: 8,
-      font: bold,
-    });
-    page.drawText(
-      `${item.quantity} x ${money(item.unitPrice)}  Desc. ${item.effectiveDiscountPercent}%`,
-      { x: 355, y, size: 8, font },
-    );
-    page.drawText(money(item.lineTotal), { x: 505, y, size: 8, font: bold });
-    y -= 20;
-  }
-  y -= 10;
-  if (order.notes) {
-    page.drawText(`Observacoes: ${order.notes.slice(0, 100)}`, {
-      x: 35,
-      y,
-      size: 8,
-      font,
-    });
-    y -= 22;
-  }
-  page.drawText(`TOTAL: ${money(order.total)}`, {
-    x: 400,
-    y,
-    size: 14,
-    font: bold,
-    color: rgb(0.008, 0.067, 0.149),
-  });
-  const bytes = await pdf.save();
-  return new File(
-    [new Blob([bytes as BlobPart], { type: "application/pdf" })],
-    `pedido-${number(order.orderNumber)}.pdf`,
-    { type: "application/pdf" },
-  );
-}
 async function uploadAdminPdf(order: SalesOrder) {
-  const file = await adminPdfFile(order);
+  const file = await orderPdfFile(order, "/catalog-assets/briland-logo.png");
   await supabase.storage
     .from("sales-orders")
     .upload(`${order.id}/${file.name}`, file, {
@@ -845,7 +760,7 @@ async function uploadAdminPdf(order: SalesOrder) {
     });
 }
 async function downloadPdf(order: SalesOrder) {
-  const file = await adminPdfFile(order);
+  const file = await orderPdfFile(order, "/catalog-assets/briland-logo.png");
   const url = URL.createObjectURL(file);
   const a = document.createElement("a");
   a.href = url;
