@@ -1,4 +1,4 @@
-export type Role = "VISITANTE" | "NAO_CLIENTE" | "CLIENTE" | "REPRESENTANTE" | "ADMIN" | "ADMIN_MASTER" | "ADMIN_COLABORADOR";
+export type Role = "VISITANTE" | "NAO_CLIENTE" | "CLIENTE" | "REPRESENTANTE" | "ADMIN" | "ADMIN_MASTER" | "ADMIN_COLABORADOR" | "ADMIN_EXPEDICAO";
 
 export type Produto = {
   id: string;

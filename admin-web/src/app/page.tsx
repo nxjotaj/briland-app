@@ -187,9 +187,11 @@ const userSelectFields = "id,name,company,email,role,status,notes,phone,cnpj,sta
 
 const isMaster = (role?: Role | null) => role === "ADMIN_MASTER" || role === "ADMIN";
 const isCollaborator = (role?: Role | null) => role === "ADMIN_COLABORADOR";
-const canUseAdminWeb = (role?: Role | null) => isMaster(role) || isCollaborator(role);
+const isExpedition = (role?: Role | null) => role === "ADMIN_EXPEDICAO";
+const canUseAdminWeb = (role?: Role | null) => isMaster(role) || isCollaborator(role) || isExpedition(role);
 const visibleTabsFor = (role?: Role | null) => {
   if (isMaster(role)) return tabs;
+  if (isExpedition(role)) return tabs.filter(({ id }) => ["Produtos", "Manutenção de saldo"].includes(id));
   return tabs.filter(({ id }) => ["Dashboard", "Produtos", "Manutenção de saldo", "Categorias", "Marcas", "Montadoras", "Aplicações", "Leads", "Pedidos"].includes(id));
 };
 
@@ -687,6 +689,7 @@ export default function Page() {
     }
     setSessionToken(token);
     setAdminUser(user);
+    if (isExpedition(user.role)) setActive("Produtos");
     await reloadAll(user.role);
   };
 
@@ -725,7 +728,7 @@ export default function Page() {
         supabase.from("ModeloVeiculo").select("*").order("nome").returns<ModeloVeiculo[]>(),
         supabase.from("ProdutoModeloVeiculo").select("*").returns<ProdutoModeloVeiculo[]>(),
         supabase.from("Aplicacao").select("*").order("nome").returns<Aplicacao[]>(),
-        supabase.from("LeadOrcamento").select("*").order("createdAt", { ascending: false }).limit(300).returns<Lead[]>(),
+        isExpedition(roleOverride) ? Promise.resolve({ data: [], error: null }) : supabase.from("LeadOrcamento").select("*").order("createdAt", { ascending: false }).limit(300).returns<Lead[]>(),
         supabase.from("ProdutoAplicacao").select("*").returns<ProdutoAplicacao[]>(),
         supabase.rpc("get_app_settings"),
         master ? supabase.from("User").select(userSelectFields).order("name").returns<Usuario[]>() : Promise.resolve({ data: [], error: null }),
@@ -1016,7 +1019,7 @@ export default function Page() {
   if (!sessionToken || !adminUser) return <LoginScreen onLogin={login} error={loginError} loading={authLoading} />;
   const visibleTabs = visibleTabsFor(adminUser.role);
   const canSeeTab = visibleTabs.some((item) => item.id === active);
-  const activeTab = canSeeTab ? active : "Dashboard";
+  const activeTab = canSeeTab ? active : visibleTabs[0]?.id || "Dashboard";
 
   return (
     <div className="admin-shell min-h-screen text-navy">
@@ -1077,7 +1080,7 @@ export default function Page() {
         <section className="mx-auto max-w-[1600px] p-4 lg:p-8">
           {activeTab === "Dashboard" && <Dashboard data={data} setActive={setActive} role={adminUser.role} newOrders={unseenOrders} />}
           {activeTab === "Análises" && <AnalyticsSection data={data} />}
-          {activeTab === "Produtos" && <Products data={data} query={query} reload={reloadSection} notify={notify} adminUser={adminUser} />}
+          {activeTab === "Produtos" && <Products data={data} query={query} reload={reloadSection} notify={notify} adminUser={adminUser} readOnly={isExpedition(adminUser.role)} />}
           {activeTab === "Manutenção de saldo" && <StockMaintenance products={data.produtos} categories={data.categorias} notify={notify} reloadProducts={reloadSection} />}
           {activeTab === "Categorias" && <CategoryHierarchySection data={data} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
           {activeTab === "Marcas" && <CategoryBrandSection title="Marcas" table="Marca" imageField="logo" items={data.marcas} query={query} reload={reloadSection} notify={notify} canDelete={isMaster(adminUser.role)} />}
@@ -1479,7 +1482,7 @@ function RankingPanel({ title, rows, empty }: { title: string; rows: Array<{ nam
   return <Panel title={title}><div className="space-y-4">{rows.slice(0, 15).map((row, index) => <div key={`${row.name}-${index}`}><div className="mb-2 flex items-start justify-between gap-4 text-sm"><span className="font-bold">{index + 1}. {row.name}</span><span className="font-black">{row.value}</span></div><div className="progress-track"><div className={`progress-fill progress-${index % 5}`} style={{ width: `${row.value / max * 100}%` }} /></div></div>)}{!rows.length && <div className="py-10 text-center text-sm text-muted">{empty}</div>}</div></Panel>;
 }
 
-function Products({ data, query, reload, notify, adminUser }: { data: AppData; query: string; reload: () => Promise<void>; notify: (message: string) => void; adminUser: Usuario }) {
+function Products({ data, query, reload, notify, adminUser, readOnly = false }: { data: AppData; query: string; reload: () => Promise<void>; notify: (message: string) => void; adminUser: Usuario; readOnly?: boolean }) {
   const [editing, setEditing] = useState<Produto | null>(null);
   const [importReport, setImportReport] = useState<{ fileName: string; imported: number; errors: string[] } | null>(null);
   const [importing, setImporting] = useState(false);
@@ -1679,14 +1682,15 @@ function Products({ data, query, reload, notify, adminUser }: { data: AppData; q
 
   return (
     <>
-      <div className="mb-5 flex flex-wrap gap-3">
+      {readOnly && <div className="mb-5 rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 text-sm font-bold text-blue-950">Perfil Expedição: consulta de produtos em modo somente leitura. Alterações cadastrais permanecem bloqueadas.</div>}
+      {!readOnly && <div className="mb-5 flex flex-wrap gap-3">
         <button onClick={() => setEditing(newProduct(data))} className="btn-yellow"><PackagePlus size={17} /> Criar produto</button>
         <label className={`btn-white cursor-pointer ${importing ? "pointer-events-none opacity-60" : ""}`}>{importing ? <Loader2 className="animate-spin" size={17} /> : <Upload size={17} />} {importing ? "Analisando planilha..." : "Importar CSV/XLSX"}<input type="file" accept=".csv,.xlsx" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importOfficialTemplate(file); event.target.value = ""; }} /></label>
         <BulkProductImages products={data.produtos} adminUser={adminUser} reload={reload} notify={notify} />
         <button onClick={() => void optimizeExistingImages()} disabled={optimizingImages} className="btn-white disabled:pointer-events-none disabled:opacity-60">{optimizingImages ? <Loader2 className="animate-spin" size={17} /> : <Sparkles size={17} />} {optimizingImages ? `Otimizando ${imageProgress.completed}/${imageProgress.total}` : "Otimizar imagens existentes"}</button>
         <button onClick={() => exportProducts("csv")} className="btn-white"><Download size={17} /> Exportar CSV</button>
         <button onClick={() => void exportProducts("xlsx")} className="btn-white"><FileSpreadsheet size={17} /> Exportar XLSX</button>
-      </div>
+      </div>}
       <div className="mb-5 rounded-[24px] border border-line bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><div className="font-black">Filtros do cadastro</div><div className="text-xs font-semibold text-muted">Combine os filtros para localizar produtos e pendências rapidamente.</div></div>{hasFilters && <button className="btn-white" onClick={clearFilters}><RefreshCw size={15} /> Limpar filtros</button>}</div>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -1700,7 +1704,7 @@ function Products({ data, query, reload, notify, adminUser }: { data: AppData; q
       </div>
       <Panel title={`${products.length} de ${data.produtos.length} produtos`}>
         <Table>
-          <thead><tr><Th>Imagem</Th><Th>Código</Th><Th>Nome</Th><Th>Completude</Th><Th>Categoria</Th><Th>Marca</Th><Th>Preço</Th><Th>Status</Th><Th /></tr></thead>
+          <thead><tr><Th>Imagem</Th><Th>Código</Th><Th>Nome</Th><Th>Completude</Th><Th>Categoria</Th><Th>Marca</Th><Th>Preço</Th><Th>Status</Th>{!readOnly && <Th />}</tr></thead>
           <tbody>
             {products.map((product) => (
               <tr key={product.id}>
@@ -1711,15 +1715,15 @@ function Products({ data, query, reload, notify, adminUser }: { data: AppData; q
                 <Td>{data.categorias.find((item) => item.id === product.categoriaId)?.nome || "-"}</Td>
                 <Td>{data.marcas.find((item) => item.id === product.marcaId)?.nome || "-"}</Td>
                 <Td>{money(product.preco)}</Td>
-                <Td><div className="flex min-w-28 flex-wrap items-center gap-1.5"><Toggle checked={product.ativo !== false} onChange={async (checked) => { await updateRow("Produto", product.id, { ativo: checked }, reload, notify); }} />{product.destaque && <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-black text-amber-800">DESTAQUE</span>}{product.lancamento && <span className="rounded-full bg-blue-100 px-2 py-1 text-[10px] font-black text-blue-800">LANÇAMENTO</span>}{product.promocao && <span className="rounded-full bg-red-100 px-2 py-1 text-[10px] font-black text-red-800">PROMOÇÃO</span>}</div></Td>
-                <Td><button onClick={() => setEditing(product)} className="icon-btn"><Pencil size={16} /></button></Td>
+                <Td><div className="flex min-w-28 flex-wrap items-center gap-1.5">{readOnly ? <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${product.ativo !== false ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-700"}`}>{product.ativo !== false ? "ATIVO" : "INATIVO"}</span> : <Toggle checked={product.ativo !== false} onChange={async (checked) => { await updateRow("Produto", product.id, { ativo: checked }, reload, notify); }} />}{product.destaque && <span className="rounded-full bg-amber-100 px-2 py-1 text-[10px] font-black text-amber-800">DESTAQUE</span>}{product.lancamento && <span className="rounded-full bg-blue-100 px-2 py-1 text-[10px] font-black text-blue-800">LANÇAMENTO</span>}{product.promocao && <span className="rounded-full bg-red-100 px-2 py-1 text-[10px] font-black text-red-800">PROMOÇÃO</span>}</div></Td>
+                {!readOnly && <Td><button onClick={() => setEditing(product)} className="icon-btn"><Pencil size={16} /></button></Td>}
               </tr>
             ))}
           </tbody>
         </Table>
         {products.length === 0 && <div className="py-12 text-center text-sm font-semibold text-muted">Nenhum produto corresponde aos filtros selecionados.</div>}
       </Panel>
-      {editing && <ProductModal product={editing} data={data} onClose={() => setEditing(null)} reload={reload} notify={notify} />}
+      {!readOnly && editing && <ProductModal product={editing} data={data} onClose={() => setEditing(null)} reload={reload} notify={notify} />}
       {importReport && <ImportReportModal report={importReport} onClose={() => setImportReport(null)} />}
     </>
   );
@@ -2344,6 +2348,7 @@ function UsersSection({ users, presence, telemetry, products, query, reload, not
               <option value="CLIENTE">Cliente</option>
               <option value="REPRESENTANTE">Representante</option>
               <option value="ADMIN_COLABORADOR">Admin colaborador</option>
+              <option value="ADMIN_EXPEDICAO">Admin expedição</option>
               <option value="ADMIN_MASTER">Admin master</option>
             </select>
           </Field>
@@ -2886,6 +2891,7 @@ function UserModal({ user, users, reload, notify, adminUser, onClose }: { user?:
           <select className="input" value={draft.role} onChange={(e) => changeRole(e.target.value as Role)}>
             <option>ADMIN_MASTER</option>
             <option>ADMIN_COLABORADOR</option>
+            <option>ADMIN_EXPEDICAO</option>
             <option>NAO_CLIENTE</option>
             <option>CLIENTE</option>
             <option>REPRESENTANTE</option>

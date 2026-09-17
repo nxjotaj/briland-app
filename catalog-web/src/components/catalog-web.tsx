@@ -82,6 +82,7 @@ const roleLabel: Record<Role, string> = {
   ADMIN: "Administrador",
   ADMIN_MASTER: "Administrador master",
   ADMIN_COLABORADOR: "Colaborador",
+  ADMIN_EXPEDICAO: "Expedição",
 };
 let catalogMemoryCache: {
   data: CatalogData;
