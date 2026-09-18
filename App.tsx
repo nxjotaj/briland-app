@@ -2452,6 +2452,16 @@ function AboutScreen({ settings }: { settings: AboutSettings }) {
 }
 
 const mobileOrderStatus:Record<string,string>={DRAFT:"Rascunho",SUBMITTED:"Enviado",RETURNED:"Devolvido",APPROVED:"Aprovado",PARTIALLY_INVOICED:"Faturado parcial",INVOICED:"Faturado",REJECTED:"Rejeitado",CANCELLED:"Cancelado"};
+const mobileOrderStatusTone: Record<string, { backgroundColor: string; color: string }> = {
+  DRAFT: { backgroundColor: "#F2F4F7", color: "#475467" },
+  SUBMITTED: { backgroundColor: "#DBEAFE", color: "#174EA6" },
+  RETURNED: { backgroundColor: "#FEF3C7", color: "#8A5C00" },
+  APPROVED: { backgroundColor: "#D1FAE5", color: "#08633C" },
+  PARTIALLY_INVOICED: { backgroundColor: "#E0F2FE", color: "#075985" },
+  INVOICED: { backgroundColor: "#FFF0BD", color: "#795700" },
+  REJECTED: { backgroundColor: "#FEE2E2", color: "#A11B16" },
+  CANCELLED: { backgroundColor: "#FEE2E2", color: "#A11B16" },
+};
 const mobileOrderNumber=(value:number)=>String(value).padStart(6,"0");
 
 type RepresentativeClientDraft = {
@@ -2575,7 +2585,7 @@ function RepresentativeClientsScreen({ token, representative }: { token: string;
 
 function RepresentativeOrdersScreen({token,onNew,onOpen}:{token:string;onNew:()=>void;onOpen:(order:SalesOrder)=>void}){
   const[orders,setOrders]=useState<SalesOrder[]>([]);const[loading,setLoading]=useState(true);const load=async()=>{setLoading(true);try{setOrders(await supabaseGet<SalesOrder>("SalesOrder","select=*,items:SalesOrderItem(*)&order=createdAt.desc",token));}catch(err){Alert.alert("Pedidos",err instanceof Error?err.message:"Não foi possível carregar.");}finally{setLoading(false);}};useEffect(()=>{void load();},[]);
-  return <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}><PageTitle title="Meus pedidos" subtitle="Consulte rapidamente rascunhos e pedidos já enviados."/><Pressable style={styles.yellowButton} onPress={onNew}><Ionicons name="add-circle-outline" size={21} color={colors.navy}/><Text style={styles.yellowButtonText}>Criar novo pedido</Text></Pressable>{loading?<ActivityIndicator style={{marginTop:30}} color={colors.navy}/>:orders.map(order=><Pressable key={order.id} style={styles.mobileOrderCard} onPress={()=>onOpen(order)}><View><Text style={styles.productCode}>PEDIDO {mobileOrderNumber(order.orderNumber)}</Text><Text style={styles.mobileOrderClient}>{String(order.clientSnapshot?.company||"Cliente ainda não selecionado")}</Text><Text style={styles.mutedSmall}>{new Date(order.updatedAt).toLocaleString("pt-BR")}</Text></View><View style={styles.mobileOrderRight}><Text style={styles.mobileOrderStatus}>{mobileOrderStatus[order.status]}</Text><Text style={styles.mobileOrderTotal}>{money(order.total)}</Text></View></Pressable>)}{!loading&&!orders.length&&<View style={styles.emptySearchCard}><Ionicons name="receipt-outline" size={42} color={colors.yellow}/><Text style={styles.emptySearchTitle}>Nenhum pedido</Text><Text style={styles.muted}>Crie o primeiro pedido pelo botão acima.</Text></View>}</ScrollView>;
+  return <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}><PageTitle title="Meus pedidos" subtitle="Consulte rapidamente rascunhos e pedidos já enviados."/><Pressable style={styles.yellowButton} onPress={onNew}><Ionicons name="add-circle-outline" size={21} color={colors.navy}/><Text style={styles.yellowButtonText}>Criar novo pedido</Text></Pressable>{loading?<ActivityIndicator style={{marginTop:30}} color={colors.navy}/>:orders.map(order=>{const tone=mobileOrderStatusTone[order.status]||mobileOrderStatusTone.DRAFT;return <Pressable key={order.id} style={styles.mobileOrderCard} onPress={()=>onOpen(order)}><View style={styles.mobileOrderInfo}><Text style={styles.productCode}>PEDIDO {mobileOrderNumber(order.orderNumber)}</Text><Text style={styles.mobileOrderClient} numberOfLines={2} ellipsizeMode="tail">{String(order.clientSnapshot?.company||"Cliente ainda não selecionado")}</Text><Text style={styles.mutedSmall} numberOfLines={1}>{new Date(order.updatedAt).toLocaleString("pt-BR")}</Text></View><View style={styles.mobileOrderRight}><Text style={[styles.mobileOrderStatus,tone]} numberOfLines={1}>{mobileOrderStatus[order.status]}</Text><Text style={styles.mobileOrderTotal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.78}>{money(order.total)}</Text></View></Pressable>})}{!loading&&!orders.length&&<View style={styles.emptySearchCard}><Ionicons name="receipt-outline" size={42} color={colors.yellow}/><Text style={styles.emptySearchTitle}>Nenhum pedido</Text><Text style={styles.muted}>Crie o primeiro pedido pelo botão acima.</Text></View>}</ScrollView>;
 }
 
 function MobileOrderScreen({
@@ -4117,11 +4127,12 @@ const styles = StyleSheet.create({
   brandedMediaTitle: { color: colors.white, fontWeight: "900", fontSize: 18, textAlign: "center" },
   brandedMediaSub: { color: "#D9E2F2", fontSize: 12, marginTop: 4, textAlign: "center" },
   adminThumbPlaceholder: { width: 62, height: 62, borderRadius: 10, backgroundColor: colors.navy, alignItems: "center", justifyContent: "center" },
-  mobileOrderCard:{minHeight:105,marginTop:12,padding:16,borderRadius:18,backgroundColor:colors.white,flexDirection:"row",alignItems:"center",justifyContent:"space-between",gap:12,...shadow},
-  mobileOrderClient:{maxWidth:235,marginVertical:6,color:colors.navy,fontSize:15,fontWeight:"800"},
-  mobileOrderRight:{alignItems:"flex-end",gap:8},
-  mobileOrderStatus:{overflow:"hidden",borderRadius:10,backgroundColor:"#E8F1FB",paddingHorizontal:9,paddingVertical:5,color:colors.navy,fontSize:10,fontWeight:"900"},
-  mobileOrderTotal:{color:colors.navy,fontSize:16,fontWeight:"900"},
+  mobileOrderCard:{width:"100%",minHeight:118,marginTop:12,padding:16,borderRadius:18,overflow:"hidden",backgroundColor:colors.white,flexDirection:"row",alignItems:"stretch",gap:12,...shadow},
+  mobileOrderInfo:{flex:1,minWidth:0,justifyContent:"center"},
+  mobileOrderClient:{width:"100%",marginVertical:6,color:colors.navy,fontSize:15,lineHeight:20,fontWeight:"800"},
+  mobileOrderRight:{width:116,minWidth:116,alignItems:"flex-end",justifyContent:"center",gap:10},
+  mobileOrderStatus:{maxWidth:"100%",overflow:"hidden",borderRadius:10,paddingHorizontal:9,paddingVertical:5,fontSize:10,fontWeight:"900",textAlign:"center"},
+  mobileOrderTotal:{width:"100%",color:colors.navy,fontSize:16,fontWeight:"900",textAlign:"right"},
   representativeClientSearch:{height:58,marginTop:14,marginBottom:4,borderRadius:16,backgroundColor:colors.white,borderWidth:1,borderColor:colors.line,paddingHorizontal:15,flexDirection:"row",alignItems:"center",gap:10,...shadow},
   representativeClientCard:{minHeight:132,marginTop:12,padding:15,borderRadius:18,backgroundColor:colors.white,flexDirection:"row",alignItems:"flex-start",gap:12,borderWidth:1,borderColor:colors.line,...shadow},
   representativeClientIcon:{width:46,height:46,borderRadius:14,backgroundColor:"#FFF6D8",alignItems:"center",justifyContent:"center"},
