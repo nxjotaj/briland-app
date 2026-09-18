@@ -264,6 +264,7 @@ export default function App() {
   const [mobileOrder, setMobileOrder] = useState<SalesOrder | null>(null);
   const [favoriteProductIds, setFavoriteProductIds] = useState<string[]>([]);
   const [catalogNotifications, setCatalogNotifications] = useState<CatalogNotification[]>([]);
+  const [notificationsReady, setNotificationsReady] = useState(false);
   const [pendingProductReference, setPendingProductReference] = useState(initialProductReference);
   const [loading, setLoading] = useState(true);
   const [imageRefreshVersion, setImageRefreshVersion] = useState(0);
@@ -739,7 +740,7 @@ export default function App() {
         success: true,
         metadata: { returning: previous > 0, daysSinceLastVisit: previous > 0 ? Math.round((now - previous) / 86400000) : null }
       }, authToken);
-    })();
+    })().finally(() => setNotificationsReady(true));
 
     if (Platform.OS !== "web") {
       void Linking.getInitialURL().then((url) => {
@@ -766,7 +767,7 @@ export default function App() {
   }, [data.produtos, pendingProductReference]);
 
   useEffect(() => {
-    if (!data.produtos.length) return;
+    if (!notificationsReady || !data.produtos.length) return;
     void (async () => {
       const previousRaw = await AsyncStorage.getItem(PRODUCT_SNAPSHOT_STORAGE_KEY);
       const snapshot = Object.fromEntries(data.produtos.map((product) => [product.id, {
@@ -784,20 +785,23 @@ export default function App() {
         const before = previous[product.id];
         if (!before && product.ativo !== false) {
           additions.push({ id: `launch-${product.id}-${product.updatedAt}`, type: "launch", title: "Novo produto no catálogo", message: `${product.codigoInterno || ""} — ${product.nome}`, productId: product.id, createdAt: new Date().toISOString() });
-        } else if (before && !before.promocao && product.promocao) {
+          if (Number(product.estoque || 0) > 0) additions.push({ id: `availability-${product.id}-${product.updatedAt}`, type: "availability", title: "Produto disponível", message: `${product.codigoInterno || ""} — ${product.nome} · Saldo: ${Number(product.estoque || 0)}`, productId: product.id, createdAt: new Date().toISOString() });
+        }
+        if (before && !before.promocao && product.promocao) {
           additions.push({ id: `promotion-${product.id}-${product.updatedAt}`, type: "promotion", title: "Produto em promoção", message: `${product.codigoInterno || ""} — ${product.nome}`, productId: product.id, createdAt: new Date().toISOString() });
-        } else if (before && before.estoque !== product.estoque) {
-          additions.push({ id: `availability-${product.id}-${product.updatedAt}`, type: "availability", title: "Disponibilidade atualizada", message: `${product.codigoInterno || ""} — ${product.nome}`, productId: product.id, createdAt: new Date().toISOString() });
+        }
+        if (before && before.estoque !== product.estoque) {
+          additions.push({ id: `availability-${product.id}-${product.updatedAt}`, type: "availability", title: "Disponibilidade atualizada", message: `${product.codigoInterno || ""} — ${product.nome} · Saldo: ${Number(product.estoque || 0)}`, productId: product.id, createdAt: new Date().toISOString() });
         }
       }
       if (!additions.length) return;
       setCatalogNotifications((current) => {
-        const next = [...additions, ...current].slice(0, 50);
+        const next = Array.from(new Map([...additions, ...current].map((item) => [item.id, item])).values()).slice(0, 50);
         void AsyncStorage.setItem(NOTIFICATION_STORAGE_KEY, JSON.stringify(next));
         return next;
       });
     })();
-  }, [data.produtos]);
+  }, [data.produtos, notificationsReady]);
 
   const saveAdminConfig = async (nextSocialLinks = socialLinks, nextMediaSettings = mediaSettings, nextAboutSettings = aboutSettings) => {
     setSocialLinks(nextSocialLinks);
@@ -1090,6 +1094,13 @@ export default function App() {
     if (product) openProduct(product);
   };
 
+  const openNotifications = () => {
+    const next = catalogNotifications.map((item) => item.read ? item : { ...item, read: true });
+    setCatalogNotifications(next);
+    void AsyncStorage.setItem(NOTIFICATION_STORAGE_KEY, JSON.stringify(next));
+    go("notifications");
+  };
+
   const requestRegistration = async (payload: RegistrationRequest) => {
     try {
       await signUpRegistration(payload);
@@ -1176,7 +1187,7 @@ export default function App() {
             <AdminScreen role={role} data={data} active={adminTab} setActive={setAdminTab} onBack={() => go("home")} onLogout={logout} reload={() => reload(role, authToken)} authToken={authToken} socialLinks={socialLinks} setSocialLinks={(links) => void saveAdminConfig(links, mediaSettings, aboutSettings)} mediaSettings={mediaSettings} setMediaSettings={(settings) => void saveAdminConfig(socialLinks, settings, aboutSettings)} aboutSettings={aboutSettings} setAboutSettings={(settings) => void saveAdminConfig(socialLinks, mediaSettings, settings)} onAction={(text) => notify("Painel admin", text)} />
           ) : (
             <>
-              <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} appearance={appearance} notificationCount={unreadNotificationCount} showCreateOrder={role === "REPRESENTANTE"} onCreateOrder={() => void openNewMobileOrder()} onNotifications={() => go("notifications")} />
+              <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} appearance={appearance} notificationCount={unreadNotificationCount} showCreateOrder={role === "REPRESENTANTE"} onCreateOrder={() => void openNewMobileOrder()} onNotifications={openNotifications} />
               {error && <ErrorBanner message={error} onRetry={reload} />}
               {route === "home" && <HomeScreen go={openDirectCatalogRoute} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""} imageVersion={imageRefreshVersion} />}
               {route === "categories" && <CategoriesScreen categories={data.categorias} products={activeProducts} imageVersion={imageRefreshVersion} onPick={(id) => {
@@ -1432,7 +1443,7 @@ function Header({ back, onBack, onMenu, appearance, notificationCount, showCreat
       </MotionPressable>
       <LogoPlate compact logoUrl={appearance.logoUrl} />
       <View style={styles.headerActions}>
-        <MotionPressable accessibilityRole="button" accessibilityLabel="Abrir notificações" style={styles.headerSmallButton} onPress={onNotifications}><Ionicons name="notifications-outline" size={23} color={colors.navy} />{notificationCount > 0 && <View style={styles.headerBadge}><Text style={styles.headerBadgeText}>{Math.min(notificationCount, 9)}</Text></View>}</MotionPressable>
+        <MotionPressable accessibilityRole="button" accessibilityLabel="Abrir notificações" style={styles.headerSmallButton} onPress={onNotifications}><Ionicons name="notifications-outline" size={23} color={colors.navy} />{notificationCount > 0 && <View style={styles.headerBadge}><Text style={styles.headerBadgeText}>{notificationCount > 9 ? "9+" : notificationCount}</Text></View>}</MotionPressable>
         {showCreateOrder && <MotionPressable accessibilityRole="button" accessibilityLabel="Criar novo pedido" style={styles.headerSmallButton} onPress={onCreateOrder}><Ionicons name="add-circle-outline" size={25} color={colors.navy} /></MotionPressable>}
       </View>
     </View>
@@ -2453,6 +2464,7 @@ function RepresentativeClientsScreen({ token, representative }: { token: string;
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<Usuario | null>(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<RepresentativeClientDraft>(emptyRepresentativeClient);
   const load = async () => {
@@ -2472,6 +2484,34 @@ function RepresentativeClientsScreen({ token, representative }: { token: string;
     ...current,
     [key]: key === "cnpj" ? maskCnpj(value) : key === "zipCode" ? maskCep(value) : key === "phone" ? maskPhone(value) : key === "state" ? value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2) : key === "stateRegistration" ? value.toUpperCase().slice(0, 30) : value,
   }));
+  const openCreate = () => {
+    setEditing(null);
+    setForm(emptyRepresentativeClient);
+    setCreating(true);
+  };
+  const openEdit = (client: Usuario) => {
+    setCreating(false);
+    setEditing(client);
+    setForm({
+      name: client.name || "",
+      company: client.company || "",
+      cnpj: maskCnpj(client.cnpj || ""),
+      stateRegistration: client.stateRegistration || "",
+      email: client.email || "",
+      phone: maskPhone(client.phone || ""),
+      address: client.address || "",
+      zipCode: maskCep(client.zipCode || ""),
+      neighborhood: client.neighborhood || "",
+      city: client.city || "",
+      state: client.state || "",
+    });
+  };
+  const closeEditor = () => {
+    if (saving) return;
+    setCreating(false);
+    setEditing(null);
+    setForm(emptyRepresentativeClient);
+  };
   const save = async () => {
     if (Object.values(form).some((value) => !value.trim())) {
       Alert.alert("Dados incompletos", "Preencha todos os campos obrigatórios do cliente.");
@@ -2482,13 +2522,16 @@ function RepresentativeClientsScreen({ token, representative }: { token: string;
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) { Alert.alert("E-mail inválido", "Informe um e-mail válido para o primeiro acesso do cliente."); return; }
     setSaving(true);
     try {
-      await supabaseRpc<Usuario>("create_representative_client", { p_payload: { ...form, email: form.email.trim().toLowerCase() } }, token);
+      const payload = { ...form, email: form.email.trim().toLowerCase() };
+      if (editing) await supabaseRpc<Usuario>("update_representative_client", { p_client_id: editing.id, p_payload: payload }, token);
+      else await supabaseRpc<Usuario>("create_representative_client", { p_payload: payload }, token);
       await load();
       setCreating(false);
+      setEditing(null);
       setForm(emptyRepresentativeClient);
-      Alert.alert("Cliente cadastrado", "O cliente foi vinculado ao seu acesso e já pode ser usado em novos pedidos.");
+      Alert.alert(editing ? "Cliente atualizado" : "Cliente cadastrado", editing ? "As informações do cliente foram atualizadas." : "O cliente foi vinculado ao seu acesso e já pode ser usado em novos pedidos.");
     } catch (error) {
-      Alert.alert("Não foi possível cadastrar", error instanceof Error ? error.message : "Revise os dados e tente novamente.");
+      Alert.alert(editing ? "Não foi possível atualizar" : "Não foi possível cadastrar", error instanceof Error ? error.message : "Revise os dados e tente novamente.");
     } finally {
       setSaving(false);
     }
@@ -2499,21 +2542,22 @@ function RepresentativeClientsScreen({ token, representative }: { token: string;
   return <>
     <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock} keyboardShouldPersistTaps="handled">
       <PageTitle title="Clientes" subtitle="Consulte seus clientes e faça novos cadastros diretamente pelo celular." />
-      <Pressable style={styles.yellowButton} onPress={() => setCreating(true)}><Ionicons name="person-add-outline" size={21} color={colors.navy}/><Text style={styles.yellowButtonText}>Cadastrar novo cliente</Text></Pressable>
+      <Pressable style={styles.yellowButton} onPress={openCreate}><Ionicons name="person-add-outline" size={21} color={colors.navy}/><Text style={styles.yellowButtonText}>Cadastrar novo cliente</Text></Pressable>
       <View style={styles.representativeClientSearch}><Ionicons name="search-outline" size={21} color={colors.navy}/><TextInput value={query} onChangeText={setQuery} placeholder="Buscar por empresa, CNPJ, cidade ou e-mail" placeholderTextColor="#8C94A0" style={styles.searchInput} autoCapitalize="none" returnKeyType="search"/></View>
-      {loading ? <ActivityIndicator style={{marginTop:30}} color={colors.navy}/> : filtered.map((client) => <View key={client.id} style={styles.representativeClientCard}>
+      {loading ? <ActivityIndicator style={{marginTop:30}} color={colors.navy}/> : filtered.map((client) => <Pressable key={client.id} style={styles.representativeClientCard} onPress={() => openEdit(client)} accessibilityRole="button" accessibilityLabel={`Editar cliente ${client.company || client.name}`}>
         <View style={styles.representativeClientIcon}><Ionicons name="business-outline" size={24} color={colors.navy}/></View>
         <View style={styles.flex}><Text style={styles.representativeClientCompany}>{client.company || client.name}</Text><Text style={styles.representativeClientDocument}>{maskCnpj(client.cnpj || "")}{client.stateRegistration ? `  •  IE ${client.stateRegistration}` : ""}</Text><Text style={styles.mutedSmall}>{client.name}  •  {client.city}/{client.state}</Text><Text style={styles.representativeClientContact}>{maskPhone(client.phone || "")}  •  {client.email}</Text></View>
-      </View>)}
+        <Ionicons name="chevron-forward" size={20} color={colors.muted}/>
+      </Pressable>)}
       {!loading && !filtered.length && <View style={styles.emptySearchCard}><Ionicons name="people-outline" size={42} color={colors.yellow}/><Text style={styles.emptySearchTitle}>{query ? "Nenhum cliente encontrado" : "Nenhum cliente vinculado"}</Text><Text style={styles.muted}>{query ? "Tente outro nome, CNPJ, cidade ou e-mail." : "Cadastre seu primeiro cliente pelo botão acima."}</Text></View>}
     </ScrollView>
-    <Modal visible={creating} transparent animationType="slide" onRequestClose={() => !saving && setCreating(false)}>
-      <Pressable style={styles.sheetOverlay} onPress={() => !saving && setCreating(false)} />
+    <Modal visible={creating || Boolean(editing)} transparent animationType="slide" onRequestClose={closeEditor}>
+      <Pressable style={styles.sheetOverlay} onPress={closeEditor} />
       <ScrollView style={styles.editorSheet} contentContainerStyle={styles.editorContent} keyboardShouldPersistTaps="handled">
-        <View style={styles.sheetHeader}><View><Text style={styles.sheetTitle}>Cadastrar cliente</Text><Text style={styles.mutedSmall}>Todos os campos são obrigatórios.</Text></View><Pressable style={styles.sideClose} disabled={saving} onPress={() => setCreating(false)}><Ionicons name="close" size={24} color={colors.navy}/></Pressable></View>
-        {fields.map(([key,label,keyboard]) => <View key={key} style={styles.inputGroup}><Text style={styles.label}>{label} <Text style={styles.required}>*</Text></Text><View style={styles.input}><TextInput value={form[key]} onChangeText={(value) => change(key,value)} keyboardType={keyboard} autoCapitalize={key === "email" ? "none" : key === "state" || key === "stateRegistration" ? "characters" : "sentences"} autoCorrect={false} maxLength={key === "cnpj" ? 18 : key === "phone" ? 15 : key === "zipCode" ? 9 : key === "state" ? 2 : undefined} placeholder={label} placeholderTextColor="#9BA0AA" style={styles.inputText}/></View></View>)}
+        <View style={styles.sheetHeader}><View><Text style={styles.sheetTitle}>{editing ? "Editar cliente" : "Cadastrar cliente"}</Text><Text style={styles.mutedSmall}>Todos os campos são obrigatórios.</Text></View><Pressable style={styles.sideClose} disabled={saving} onPress={closeEditor}><Ionicons name="close" size={24} color={colors.navy}/></Pressable></View>
+        {fields.map(([key,label,keyboard]) => <View key={key} style={styles.inputGroup}><Text style={styles.label}>{label} <Text style={styles.required}>*</Text></Text><View style={[styles.input, editing && key === "email" && styles.disabledInput]}><TextInput editable={!(editing && key === "email")} value={form[key]} onChangeText={(value) => change(key,value)} keyboardType={keyboard} autoCapitalize={key === "email" ? "none" : key === "state" || key === "stateRegistration" ? "characters" : "sentences"} autoCorrect={false} maxLength={key === "cnpj" ? 18 : key === "phone" ? 15 : key === "zipCode" ? 9 : key === "state" ? 2 : undefined} placeholder={label} placeholderTextColor="#9BA0AA" style={styles.inputText}/></View>{editing && key === "email" && <Text style={styles.fieldHint}>O e-mail de acesso não pode ser alterado.</Text>}</View>)}
         <View style={styles.securityBox}><Ionicons name="shield-checkmark-outline" size={25} color={colors.navy}/><Text style={[styles.mutedSmall,styles.flex]}>O cadastro será vinculado automaticamente a {representative.name}. O cliente usará o e-mail informado para criar a primeira senha.</Text></View>
-        <Pressable disabled={saving} style={[styles.yellowButton,saving && styles.disabledButton]} onPress={() => void save()}>{saving ? <ActivityIndicator color={colors.navy}/> : <><Ionicons name="save-outline" size={21} color={colors.navy}/><Text style={styles.yellowButtonText}>Salvar cliente</Text></>}</Pressable>
+        <Pressable disabled={saving} style={[styles.yellowButton,saving && styles.disabledButton]} onPress={() => void save()}>{saving ? <ActivityIndicator color={colors.navy}/> : <><Ionicons name="save-outline" size={21} color={colors.navy}/><Text style={styles.yellowButtonText}>{editing ? "Salvar alterações" : "Salvar cliente"}</Text></>}</Pressable>
       </ScrollView>
     </Modal>
   </>;
@@ -3824,6 +3868,8 @@ const styles = StyleSheet.create({
   choiceSub: { color: colors.muted, textAlign: "center", fontSize: 12, lineHeight: 17, marginTop: 4 },
   inputGroup: { width: "100%", marginBottom: 16 },
   input: { height: 58, borderWidth: 1, borderColor: colors.line, borderRadius: 11, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 10 },
+  disabledInput: { backgroundColor: colors.soft, borderStyle: "dashed" },
+  fieldHint: { marginTop: -10, marginBottom: 10, color: colors.muted, fontSize: 11, fontWeight: "700" },
   inputMultiline: { height: 132, alignItems: "flex-start", paddingVertical: 12, flexDirection: "column" },
   inputText: { flex: 1, color: colors.navy, fontSize: 15 },
   inputTextMultiline: { flex: 0, height: 104, width: "100%", lineHeight: 20 },
