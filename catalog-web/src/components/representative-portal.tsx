@@ -676,7 +676,7 @@ function ClientModal({
               <div className="rep-client-section-title"><span><Icon /></span><div><h3>{title}</h3><p>{description}</p></div></div>
               <div className="rep-form-grid">
                 {fields.map(([key, label]) => (
-                  <label key={key}>
+                  <label key={key} data-field={key}>
                     <span>{label}<b aria-hidden="true">*</b></span>
                     <input
                       disabled={!creating && key === "email"}
