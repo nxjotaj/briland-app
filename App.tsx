@@ -1189,7 +1189,7 @@ export default function App() {
             <>
               <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} appearance={appearance} notificationCount={unreadNotificationCount} showCreateOrder={role === "REPRESENTANTE"} onCreateOrder={() => void openNewMobileOrder()} onNotifications={openNotifications} />
               {error && <ErrorBanner message={error} onRetry={reload} />}
-              {route === "home" && <HomeScreen go={openDirectCatalogRoute} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""} imageVersion={imageRefreshVersion} />}
+              {route === "home" && <HomeScreen go={openDirectCatalogRoute} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} imageVersion={imageRefreshVersion} />}
               {route === "categories" && <CategoriesScreen categories={data.categorias} products={activeProducts} imageVersion={imageRefreshVersion} onPick={(id) => {
                 clearCatalogFilters();
                 setCategoryFilter(id);
@@ -1238,7 +1238,6 @@ export default function App() {
                   setListMode={setListMode}
                   onOpen={openProduct}
                   role={role}
-                  catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
                   imageVersion={imageRefreshVersion}
                   appearance={appearance}
                    savedScrollOffset={catalogScrollOffsets.current.products}
@@ -1285,7 +1284,6 @@ export default function App() {
                   setListMode={setListMode}
                   onOpen={openProduct}
                   role={role}
-                  catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
                   imageVersion={imageRefreshVersion}
                   appearance={appearance}
                    savedScrollOffset={catalogScrollOffsets.current.promotions}
@@ -1333,7 +1331,6 @@ export default function App() {
                   setListMode={setListMode}
                   onOpen={openProduct}
                   role={role}
-                  catalogPdfUrl={catalogPdfAllowed ? catalogPdfUrl : ""}
                   imageVersion={imageRefreshVersion}
                   appearance={appearance}
                    savedScrollOffset={catalogScrollOffsets.current.launches}
@@ -1349,6 +1346,7 @@ export default function App() {
               )}
               {route === "detail" && !retainedCatalogRoute && selectedProduct && <ProductDetail product={selectedProduct} role={role} category={categoryById.get(selectedProduct.categoriaId ?? "")} brand={brandById.get(selectedProduct.marcaId ?? "")} vehicleApplications={vehicleApplicationsByProduct.get(selectedProduct.id) || selectedProduct.aplicacoesVeiculo || []} whatsappUrl={socialLinks.whatsapp} imageVersion={imageRefreshVersion} selectedVehicle={selectedVehicleText} favorite={favoriteProductIds.includes(selectedProduct.id)} onFavorite={() => toggleFavorite(selectedProduct)} onTrack={trackProductEvent} />}
               {route === "contact" && <ContactScreen onSubmit={createLead} />}
+              {route === "catalogPdf" && <CatalogPdfScreen url={catalogPdfAllowed ? catalogPdfUrl : ""} />}
               {route === "representativeClients" && role === "REPRESENTANTE" && authToken && currentUser && <RepresentativeClientsScreen token={authToken} representative={currentUser} />}
               {route === "representativeOrders" && role === "REPRESENTANTE" && authToken && <RepresentativeOrdersScreen token={authToken} onNew={() => void openNewMobileOrder()} onOpen={(order) => { setMobileOrder(order); go("newOrder"); }} />}
               {route === "newOrder" && role === "REPRESENTANTE" && authToken && mobileOrder && <MobileOrderScreen order={mobileOrder} token={authToken} representative={currentUser} products={activeProducts} onSaved={(saved) => { setMobileOrder(saved); if (saved.status === "SUBMITTED") go("representativeOrders"); }} />}
@@ -1365,7 +1363,7 @@ export default function App() {
         </SafeAreaView>
         )}
       </PageTransition>
-      <SideMenu visible={menuOpen} role={role} user={currentUser} links={socialLinks} allowWhatsApp={generalWhatsAppAllowed} onClose={() => setMenuOpen(false)} go={openDirectCatalogRoute} onLogout={() => void logout()} />
+      <SideMenu visible={menuOpen} role={role} user={currentUser} links={socialLinks} allowWhatsApp={generalWhatsAppAllowed} showCatalogPdf={catalogPdfAllowed} onClose={() => setMenuOpen(false)} go={openDirectCatalogRoute} onLogout={() => void logout()} />
     </View>
   );
 }
@@ -1525,7 +1523,7 @@ function SlideToEnter({ onComplete }: { onComplete: () => void }) {
     </View>
   );
 }
-function HomeScreen({ go, products, categories, montadoras, media, catalogPdfUrl, imageVersion }: { go: (route: Route) => void; products: Produto[]; categories: Categoria[]; montadoras: Montadora[]; media: MediaSettings; catalogPdfUrl: string; imageVersion: number }) {
+function HomeScreen({ go, products, categories, montadoras, media, imageVersion }: { go: (route: Route) => void; products: Produto[]; categories: Categoria[]; montadoras: Montadora[]; media: MediaSettings; imageVersion: number }) {
   const items: [Route, string, string, IconName][] = [
     ["categories", "Categorias", `${categories.length} categorias ativas`, "grid-outline"],
     ["vehicleBrands", "Filtrar por montadora", `${montadoras.length} montadoras disponíveis`, "car-sport-outline"],
@@ -1544,7 +1542,6 @@ function HomeScreen({ go, products, categories, montadoras, media, catalogPdfUrl
         </Pressable>
       </View>
       <View style={styles.dots}><View style={styles.dotActive} /><View style={styles.dot} /><View style={styles.dot} /></View>
-      {catalogPdfUrl ? <CatalogPdfButton url={catalogPdfUrl} /> : null}
       {items.map(([target, title, subtitle, icon]) => (
         <Pressable key={title} style={styles.menuCard} onPress={() => go(target)}>
           <View style={styles.menuIcon}><Ionicons name={icon} size={29} color={colors.navy} /></View>
@@ -1665,7 +1662,6 @@ function ProductList({
   setListMode,
   onOpen,
   role,
-  catalogPdfUrl,
   imageVersion,
   appearance,
   savedScrollOffset,
@@ -1711,7 +1707,6 @@ function ProductList({
   setListMode: (mode: "grid" | "list") => void;
   onOpen: (product: Produto) => void;
   role: Role;
-  catalogPdfUrl: string;
   imageVersion: number;
   appearance: CatalogAppearance;
   savedScrollOffset: number;
@@ -1774,7 +1769,6 @@ function ProductList({
           ))}
         </View>
       )}
-      {catalogPdfUrl ? <CatalogPdfButton url={catalogPdfUrl} /> : null}
       <View style={styles.chips}>
         <Chip text={activeCategory ?? "Categorias"} onPress={() => setFilterOpen(true)} />
         {subcategoryFilter && <Chip text={activeSubcategory ?? "Subcategoria"} onPress={() => setFilterOpen(true)} />}
@@ -3504,7 +3498,7 @@ function AdminTextInput({ label, value, onChangeText, keyboard, multiline }: { l
   );
 }
 
-function SideMenu({ visible, onClose, go, onLogout, role, user, links, allowWhatsApp }: { visible: boolean; onClose: () => void; go: (route: Route) => void; onLogout: () => void; role: Role; user: Usuario | null; links: SocialLinks; allowWhatsApp: boolean }) {
+function SideMenu({ visible, onClose, go, onLogout, role, user, links, allowWhatsApp, showCatalogPdf }: { visible: boolean; onClose: () => void; go: (route: Route) => void; onLogout: () => void; role: Role; user: Usuario | null; links: SocialLinks; allowWhatsApp: boolean; showCatalogPdf: boolean }) {
   const sections: { title: string; items: [Route, string, IconName][] }[] = [
     { title: "Catálogo", items: [["home", "Início", "home-outline"], ["categories", "Categorias", "grid-outline"], ["vehicleBrands", "Montadoras", "car-sport-outline"], ["products", "Produtos", "cube-outline"], ["launches", "Lançamentos", "star-outline"], ["promotions", "Promoções", "pricetag-outline"]] },
     { title: "Atendimento", items: [["contact", "Contatos", "headset-outline"]] },
@@ -3539,6 +3533,7 @@ function SideMenu({ visible, onClose, go, onLogout, role, user, links, allowWhat
               })}
             </View>
           ))}
+          {showCatalogPdf && <View style={styles.sideSection}><Text style={styles.sideSectionTitle}>Downloads</Text><MotionPressable style={styles.sideItem} onPress={() => go("catalogPdf")}><Ionicons name="document-text-outline" size={23} color={colors.navy} /><Text style={styles.sideLabel}>Catálogo em PDF</Text><Ionicons name="chevron-forward" size={20} color={colors.navy} /></MotionPressable></View>}
           {isAdminRole(role) && <View style={styles.sideSection}><Text style={styles.sideSectionTitle}>Gestão</Text><Pressable style={styles.sideItem} onPress={() => go("admin")}><Ionicons name="speedometer-outline" size={23} color={colors.navy} /><Text style={styles.sideLabel}>Painel admin</Text><Ionicons name="chevron-forward" size={20} color={colors.navy} /></Pressable></View>}
           {role === "REPRESENTANTE" && <View style={styles.sideSection}><Text style={styles.sideSectionTitle}>Comercial</Text><Pressable style={styles.sideItem} onPress={() => go("representativeClients")}><Ionicons name="people-outline" size={23} color={colors.navy} /><Text style={styles.sideLabel}>Clientes</Text><Ionicons name="chevron-forward" size={20} color={colors.navy} /></Pressable><Pressable style={styles.sideItem} onPress={() => go("representativeOrders")}><Ionicons name="receipt-outline" size={23} color={colors.navy} /><Text style={styles.sideLabel}>Meus pedidos</Text><Ionicons name="chevron-forward" size={20} color={colors.navy} /></Pressable></View>}
           <View style={styles.sideSocialDock}>
@@ -3560,6 +3555,20 @@ function PageTitle({ title, subtitle, badge }: { title: string; subtitle: string
 
 function Chip({ text, onPress }: { text: string; onPress: () => void }) {
   return <Pressable style={styles.chip} onPress={onPress}><Text style={styles.chipText}>{text}</Text><Ionicons name="chevron-down" size={16} color={colors.navy} /></Pressable>;
+}
+
+function CatalogPdfScreen({ url }: { url: string }) {
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.contentWithDock}>
+      <PageTitle title="Catálogo em PDF" subtitle="Baixe a versão completa do catálogo Briland para consultar quando quiser." />
+      <View style={styles.catalogPdfPageCard}>
+        <View style={styles.catalogPdfPageIcon}><Ionicons name="document-text-outline" size={38} color={colors.yellow} /></View>
+        <Text style={styles.catalogPdfPageTitle}>Catálogo geral Briland</Text>
+        <Text style={styles.catalogPdfPageText}>Arquivo organizado com os produtos e informações comerciais disponíveis para o seu perfil.</Text>
+        {url ? <CatalogPdfButton url={url} /> : <View style={styles.catalogPdfUnavailable}><Ionicons name="time-outline" size={22} color={colors.muted} /><Text style={styles.muted}>O catálogo em PDF está sendo preparado.</Text></View>}
+      </View>
+    </ScrollView>
+  );
 }
 
 function CatalogPdfButton({ url }: { url: string }) {
@@ -3732,6 +3741,11 @@ const styles = StyleSheet.create({
   catalogPdfTrack: { height: 8, borderRadius: 5, borderWidth: 2, borderColor: "#111", backgroundColor: "#FFFDF7", overflow: "hidden" },
   catalogPdfFill: { height: "100%", backgroundColor: "#111" },
   catalogPdfTitle: { color: colors.navy, fontSize: 16, fontWeight: "900" },
+  catalogPdfPageCard: { padding: 22, borderRadius: 20, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, ...shadow },
+  catalogPdfPageIcon: { width: 66, height: 66, marginBottom: 18, borderRadius: 18, backgroundColor: colors.navy, alignItems: "center", justifyContent: "center" },
+  catalogPdfPageTitle: { color: colors.navy, fontSize: 23, fontWeight: "900", marginBottom: 7 },
+  catalogPdfPageText: { color: colors.muted, fontSize: 14, lineHeight: 21, marginBottom: 22 },
+  catalogPdfUnavailable: { minHeight: 70, borderRadius: 16, backgroundColor: colors.soft, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9, paddingHorizontal: 16 },
   muted: { color: colors.muted, fontSize: 15, lineHeight: 22 },
   titleBlock: { marginTop: 14, marginBottom: 20 },
   titleRow: { flexDirection: "row", alignItems: "center", gap: 10 },

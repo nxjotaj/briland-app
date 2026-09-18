@@ -13,6 +13,7 @@ export type Route =
   | "representativeOrders"
   | "newOrder"
   | "notifications"
+  | "catalogPdf"
   | "detail"
   | "login"
   | "forgotPassword"
