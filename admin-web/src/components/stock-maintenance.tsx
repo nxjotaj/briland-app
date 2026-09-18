@@ -139,6 +139,16 @@ const descendants = (element: Element, name: string) =>
   );
 const formatDate = (value?: string | null) =>
   value ? new Date(value).toLocaleString("pt-BR") : "-";
+const orderStatusLabel: Record<string, string> = {
+  DRAFT: "Rascunho",
+  SUBMITTED: "Enviado",
+  RETURNED: "Devolvido",
+  APPROVED: "Aprovado",
+  PARTIALLY_INVOICED: "Faturado parcialmente",
+  INVOICED: "Faturado",
+  REJECTED: "Rejeitado",
+  CANCELLED: "Cancelado",
+};
 function classifyNature(
   operation: string,
   cfops: string[],
@@ -426,7 +436,7 @@ function StockBalances({ notify }: { notify: Notify }) {
       <div className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-[26px] bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
         <header className="flex items-start justify-between gap-4 bg-[#061a34] p-5 text-white"><div><small className="font-black uppercase tracking-[.16em] text-yellow">Reservas de estoque</small><h2 className="mt-1 text-2xl font-black">Referência {selectedProduct.productCode}</h2><p className="mt-1 max-w-2xl truncate text-sm font-semibold text-slate-300" title={selectedProduct.productName}>{selectedProduct.productName}</p></div><button className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/20 text-white hover:bg-white/10" onClick={() => setSelectedProduct(null)} aria-label="Fechar"><X size={20}/></button></header>
         <div className="grid grid-cols-2 gap-3 border-b border-slate-200 bg-slate-50 p-4 sm:grid-cols-4"><Info label="Estoque físico" value={String(selectedProduct.physicalBalance)}/><Info label="Reservado" value={String(selectedProduct.reservedBalance)}/><Info label="Disponível" value={String(selectedProduct.availableBalance)}/><Info label="Pedidos" value={String(selectedReservations.length)}/></div>
-        <div className="overflow-auto p-4"><table className="admin-table min-w-[850px]"><thead><tr><th>Pedido</th><th>Status</th><th>Cliente</th><th>Representante</th><th className="text-center">Quantidade reservada</th><th>Data do envio</th></tr></thead><tbody>{selectedReservations.map((reservation) => <tr key={reservation.reservationId}><td className="whitespace-nowrap font-black">{String(reservation.orderNumber).padStart(6,"0")}</td><td><span className="inline-flex whitespace-nowrap rounded-full bg-blue-100 px-2.5 py-1 text-xs font-black text-blue-800">{reservation.orderStatus}</span></td><td>{reservation.clientName}</td><td>{reservation.representativeName}</td><td className="text-center font-black text-amber-700">{reservation.quantity}</td><td className="whitespace-nowrap">{formatDate(reservation.submittedAt || reservation.createdAt)}</td></tr>)}</tbody></table>
+        <div className="overflow-auto p-4"><table className="admin-table min-w-[1050px] table-fixed"><colgroup><col className="w-[11%]"/><col className="w-[14%]"/><col className="w-[25%]"/><col className="w-[20%]"/><col className="w-[14%]"/><col className="w-[16%]"/></colgroup><thead><tr><th className="px-5">Pedido</th><th className="px-5">Status</th><th className="px-5">Cliente</th><th className="px-5">Representante</th><th className="px-5 text-center">Qtd. reservada</th><th className="px-5">Data do envio</th></tr></thead><tbody>{selectedReservations.map((reservation) => <tr key={reservation.reservationId}><td className="whitespace-nowrap px-5 font-black">{String(reservation.orderNumber).padStart(6,"0")}</td><td className="px-5"><span className="inline-flex whitespace-nowrap rounded-full bg-blue-100 px-2.5 py-1 text-xs font-black text-blue-800">{orderStatusLabel[reservation.orderStatus] || "Em processamento"}</span></td><td className="px-5"><div className="truncate" title={reservation.clientName}>{reservation.clientName}</div></td><td className="px-5"><div className="truncate" title={reservation.representativeName}>{reservation.representativeName}</div></td><td className="px-5 text-center font-black text-amber-700">{reservation.quantity}</td><td className="whitespace-nowrap px-5">{formatDate(reservation.submittedAt || reservation.createdAt)}</td></tr>)}</tbody></table>
           {!selectedReservations.length && <div className="rounded-2xl bg-red-50 p-5 text-center font-bold text-red-800">Não existe reserva ativa vinculada a pedido para esta referência. Atualize os saldos; se o número reservado continuar diferente de zero, existe uma inconsistência que precisa ser investigada.</div>}
         </div>
         <footer className="flex justify-end border-t border-slate-200 bg-slate-50 p-4"><button className="btn-primary" onClick={() => setSelectedProduct(null)}>Fechar</button></footer>
