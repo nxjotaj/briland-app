@@ -7,6 +7,7 @@ import {
   ArrowUpRight,
   BarChart3,
   Bell,
+  Building2,
   CalendarDays,
   CircleDollarSign,
   Clock3,
@@ -14,6 +15,7 @@ import {
   FileSpreadsheet,
   LayoutDashboard,
   LogOut,
+  MapPin,
   PackageCheck,
   PackageOpen,
   Plus,
@@ -22,6 +24,7 @@ import {
   Send,
   Share2,
   ShoppingBag,
+  ContactRound,
   UserRound,
   Users,
   Warehouse,
@@ -626,19 +629,26 @@ function ClientModal({
       setBusy(false);
     }
   };
-  const list = [
-    ["company", "Razão social"],
-    ["cnpj", "CNPJ"],
-    ["stateRegistration", "Inscrição estadual"],
-    ["name", "Responsável"],
-    ["email", "E-mail"],
-    ["phone", "Telefone"],
-    ["address", "Endereço completo"],
-    ["zipCode", "CEP"],
-    ["neighborhood", "Bairro"],
-    ["city", "Cidade"],
-    ["state", "Estado"],
-  ] as Array<[keyof typeof blankClient, string]>;
+  const sections = [
+    {
+      title: "Dados empresariais",
+      description: "Identificação fiscal e comercial do cliente.",
+      icon: Building2,
+      fields: [["company", "Razão social"], ["cnpj", "CNPJ"], ["stateRegistration", "Inscrição estadual"]],
+    },
+    {
+      title: "Contato",
+      description: "Responsável e canais para comunicação.",
+      icon: ContactRound,
+      fields: [["name", "Responsável"], ["email", "E-mail"], ["phone", "Telefone"]],
+    },
+    {
+      title: "Endereço",
+      description: "Localização completa para atendimento e entrega.",
+      icon: MapPin,
+      fields: [["address", "Endereço completo"], ["zipCode", "CEP"], ["neighborhood", "Bairro"], ["city", "Cidade"], ["state", "Estado"]],
+    },
+  ] as Array<{ title: string; description: string; icon: typeof Building2; fields: Array<[keyof typeof blankClient, string]> }>;
   const change = (key: keyof typeof blankClient, value: string) =>
     setForm({
       ...form,
@@ -654,47 +664,37 @@ function ClientModal({
                 : value,
     });
   return createPortal(
-    <div className="rep-modal" role="dialog" aria-modal="true" aria-labelledby="client-modal-title">
+    <div className="rep-modal rep-client-modal" role="dialog" aria-modal="true" aria-labelledby="client-modal-title">
       <div className="rep-modal-card">
-        <button className="close" onClick={onClose}>
-          <X />
-        </button>
-        <h2 id="client-modal-title">{creating ? "Cadastrar cliente" : "Editar cliente"}</h2>
-        <div className="rep-form-grid">
-          {list.map(([key, label]) => (
-            <label key={key}>
-              {label}
-              <input
-                disabled={!creating && key === "email"}
-                inputMode={
-                  key === "phone"
-                    ? "tel"
-                    : ["cnpj", "zipCode"].includes(key)
-                      ? "numeric"
-                      : undefined
-                }
-                maxLength={
-                  key === "cnpj"
-                    ? 18
-                    : key === "phone"
-                      ? 15
-                      : key === "zipCode"
-                        ? 9
-                        : key === "state"
-                          ? 2
-                          : undefined
-                }
-                value={String(form[key] || "")}
-                onChange={(e) => change(key, e.target.value)}
-              />
-            </label>
+        <header className="rep-client-modal-head">
+          <div><small>CARTEIRA COMERCIAL</small><h2 id="client-modal-title">{creating ? "Cadastrar novo cliente" : "Editar cliente"}</h2><p>{creating ? "Inclua os dados para vincular o cliente à sua carteira." : "Mantenha os dados comerciais do cliente sempre atualizados."}</p></div>
+          <button className="close" onClick={onClose} aria-label="Fechar editor"><X /></button>
+        </header>
+        <div className="rep-client-modal-body">
+          {sections.map(({ title, description, icon: Icon, fields }) => (
+            <section className="rep-client-form-section" key={title}>
+              <div className="rep-client-section-title"><span><Icon /></span><div><h3>{title}</h3><p>{description}</p></div></div>
+              <div className="rep-form-grid">
+                {fields.map(([key, label]) => (
+                  <label key={key}>
+                    <span>{label}<b aria-hidden="true">*</b></span>
+                    <input
+                      disabled={!creating && key === "email"}
+                      aria-required="true"
+                      inputMode={key === "phone" ? "tel" : ["cnpj", "zipCode"].includes(key) ? "numeric" : undefined}
+                      maxLength={key === "cnpj" ? 18 : key === "phone" ? 15 : key === "zipCode" ? 9 : key === "state" ? 2 : undefined}
+                      value={String(form[key] || "")}
+                      onChange={(e) => change(key, e.target.value)}
+                    />
+                    {!creating && key === "email" && <small>O e-mail de acesso não pode ser alterado aqui.</small>}
+                  </label>
+                ))}
+              </div>
+            </section>
           ))}
         </div>
-        {msg && <p className="rep-error">{msg}</p>}
-        <button className="primary" disabled={busy} onClick={() => void save()}>
-          <Save />
-          {busy ? "Salvando..." : "Salvar cliente"}
-        </button>
+        {msg && <p className="rep-error rep-client-modal-error">{msg}</p>}
+        <footer className="rep-client-modal-actions"><span><b>*</b> Campos obrigatórios</span><div><button onClick={onClose}>Cancelar</button><button className="primary" disabled={busy} onClick={() => void save()}><Save />{busy ? "Salvando..." : "Salvar cliente"}</button></div></footer>
       </div>
     </div>,
     document.body,
