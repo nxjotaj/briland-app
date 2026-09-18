@@ -2,11 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import ExcelJS from "exceljs";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   Download,
   FileCode2,
+  FileText,
   Loader2,
   PackageCheck,
   Search,
@@ -85,6 +88,15 @@ type HistoryRow = {
   actorName?: string | null;
   actorEmail?: string | null;
 };
+type HistoryMovement = {
+  batchId: string;
+  createdAt: string;
+  kind: string;
+  reason: string;
+  actor: string;
+  accessKeys: string[];
+  rows: HistoryRow[];
+};
 type ReservationReview = {
   reviewId: string; orderId: string; orderNumber: number; orderCreatedAt: string; invoiceNumber: string; invoiceIssuedAt: string; accessKey: string; clientName: string; productId: string; productCode: string; productName: string; orderedQuantity: number; invoicedQuantity: number; remainingQuantity: number; status: "PENDING" | "KEPT_RESERVED" | "RELEASED"; createdAt: string; resolutionComment?: string | null;
 };
@@ -103,9 +115,6 @@ const descendants = (element: Element, name: string) =>
   );
 const formatDate = (value?: string | null) =>
   value ? new Date(value).toLocaleString("pt-BR") : "-";
-const csvEscape = (value: unknown) =>
-  `"${String(value ?? "").replace(/"/g, '""')}"`;
-
 function classifyNature(
   operation: string,
   cfops: string[],
@@ -1055,6 +1064,7 @@ function XmlMaintenance({
 
 function StockHistory({ notify }: { notify: Notify }) {
   const [rows, setRows] = useState<HistoryRow[]>([]);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -1096,46 +1106,28 @@ function StockHistory({ notify }: { notify: Notify }) {
       }
     })();
   }, []);
-  const exportCsv = () => {
-    const headers = [
-      "Data",
-      "Lote",
-      "Código",
-      "Produto",
-      "Tipo",
-      "Quantidade",
-      "Saldo anterior",
-      "Novo saldo",
-      "Chave NF-e",
-      "Natureza",
-      "Responsável",
-      "Motivo",
-    ];
-    const csv = [
-      headers,
-      ...rows.map((r) => [
-        r.createdAt,
-        r.batchId,
-        r.productCode,
-        r.productName,
-        r.kind,
-        r.quantity,
-        r.previousBalance,
-        r.newBalance,
-        r.accessKey,
-        r.documentNature,
-        r.actorEmail || r.actorName,
-        r.reason,
-      ]),
-    ]
-      .map((row) => row.map(csvEscape).join(";"))
-      .join("\r\n");
-    download(
-      new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }),
-      "historico-saldo.csv",
-    );
-  };
-  const exportXlsx = async () => {
+  const movements = useMemo<HistoryMovement[]>(() => {
+    const grouped = new Map<string, HistoryRow[]>();
+    rows.forEach((row) => grouped.set(row.batchId, [...(grouped.get(row.batchId) || []), row]));
+    return Array.from(grouped.entries()).map(([batchId, items]) => {
+      const kinds = Array.from(new Set(items.map((item) => item.kind)));
+      return {
+        batchId,
+        createdAt: items[0].createdAt,
+        kind: kinds.length === 1 ? kinds[0] : "MISTO",
+        reason: items[0].reason,
+        actor: items[0].actorEmail || items[0].actorName || "-",
+        accessKeys: Array.from(new Set(items.map((item) => item.accessKey).filter(Boolean) as string[])),
+        rows: items,
+      };
+    });
+  }, [rows]);
+  const toggleMovement = (batchId: string) => setExpanded((current) => {
+    const next = new Set(current);
+    if (next.has(batchId)) next.delete(batchId); else next.add(batchId);
+    return next;
+  });
+  const exportXlsx = async (items: HistoryRow[], filename: string) => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Movimentações");
     ws.addRow([
@@ -1152,7 +1144,7 @@ function StockHistory({ notify }: { notify: Notify }) {
       "Responsável",
       "Motivo",
     ]);
-    rows.forEach((r) =>
+    items.forEach((r) =>
       ws.addRow([
         r.createdAt,
         r.batchId,
@@ -1169,14 +1161,46 @@ function StockHistory({ notify }: { notify: Notify }) {
       ]),
     );
     ws.getRow(1).font = { bold: true };
+    ws.columns.forEach((column) => { column.width = 18; });
+    ws.getColumn(4).width = 42;
+    ws.getColumn(9).width = 48;
+    ws.getColumn(12).width = 42;
     const buffer = await wb.xlsx.writeBuffer();
     download(
       new Blob([buffer], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       }),
-      "historico-saldo.xlsx",
+      `${filename}.xlsx`,
     );
   };
+  const exportPdf = async (movement: HistoryMovement) => {
+    const pdf = await PDFDocument.create();
+    const regular = await pdf.embedFont(StandardFonts.Helvetica);
+    const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+    const pageSize: [number, number] = [841.89, 595.28];
+    const columns = [45, 125, 365, 445, 505, 575, 650, 735];
+    let page = pdf.addPage(pageSize);
+    let y = 535;
+    const header = () => {
+      page.drawRectangle({ x: 0, y: 522, width: pageSize[0], height: 74, color: rgb(0.01, 0.08, 0.16) });
+      page.drawText("BRILAND | MOVIMENTO DE ESTOQUE", { x: 40, y: 558, size: 17, font: bold, color: rgb(1, 1, 1) });
+      page.drawText(`${movement.kind}  |  ${formatDate(movement.createdAt)}  |  ${movement.rows.length} produto(s)`, { x: 40, y: 538, size: 10, font: regular, color: rgb(0.92, 0.95, 1) });
+      y = 500;
+      ["Codigo", "Produto", "Tipo", "Qtd.", "Anterior", "Novo", "NF-e", "Responsavel"].forEach((label, index) => page.drawText(label, { x: columns[index], y, size: 8, font: bold, color: rgb(0.08, 0.12, 0.18) }));
+      y -= 15;
+    };
+    header();
+    movement.rows.forEach((item) => {
+      if (y < 55) { page = pdf.addPage(pageSize); header(); }
+      const values = [item.productCode, item.productName.slice(0, 36), item.kind, String(item.quantity), String(item.previousBalance), String(item.newBalance), (item.accessKey || "-").slice(-12), (item.actorEmail || item.actorName || "-").slice(0, 20)];
+      values.forEach((value, index) => page.drawText(value, { x: columns[index], y, size: 7.5, font: regular, color: rgb(0.16, 0.2, 0.27) }));
+      page.drawLine({ start: { x: 40, y: y - 5 }, end: { x: 805, y: y - 5 }, thickness: 0.4, color: rgb(0.86, 0.88, 0.91) });
+      y -= 21;
+    });
+    const bytes = await pdf.save();
+    download(new Blob([new Uint8Array(bytes).buffer], { type: "application/pdf" }), `movimento-${movement.batchId.replace("stock_batch_", "").slice(0, 8)}.pdf`);
+  };
+  const movementTone = (kind: string) => kind === "ENTRADA" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : kind === "SAIDA" ? "border-red-200 bg-red-50 text-red-800" : "border-blue-200 bg-blue-50 text-blue-800";
   return (
     <>
       <Card title="Filtros do histórico">
@@ -1204,18 +1228,18 @@ function StockHistory({ notify }: { notify: Notify }) {
               onChange={(e) => setCode(e.target.value)}
             />
           </Label>
-          <Label text="Tipo">
+          <Label text="Movimento">
             <select
               className="input"
               value={direction}
               onChange={(e) => setDirection(e.target.value)}
             >
-              <option value="">Todos</option>
-              <option>ENTRADA</option>
-              <option>SAIDA</option>
-              <option>AJUSTE</option>
-              <option>INVENTARIO</option>
-              <option>REVERSAO</option>
+              <option value="">Todos os movimentos</option>
+              <option value="ENTRADA">Somente entradas</option>
+              <option value="SAIDA">Somente saídas</option>
+              <option value="AJUSTE">Ajustes</option>
+              <option value="INVENTARIO">Inventários</option>
+              <option value="REVERSAO">Reversões</option>
             </select>
           </Label>
           <Label text="Chave NF-e">
@@ -1235,62 +1259,30 @@ function StockHistory({ notify }: { notify: Notify }) {
             )}
             Consultar
           </button>
-          <button className="btn-white" onClick={exportCsv}>
+          <button className="btn-white" onClick={() => void exportXlsx(rows, "historico-saldo-filtrado")} disabled={!rows.length}>
             <Download size={17} />
-            CSV
-          </button>
-          <button className="btn-white" onClick={() => void exportXlsx()}>
-            <Download size={17} />
-            XLSX
+            Excel do resultado
           </button>
         </div>
       </Card>
-      <Card title={`${rows.length} movimentação(ões)`}>
-        <div className="max-h-[650px] overflow-auto">
-          <table className="admin-table">
-            <thead>
-              <tr>
-                <th>Data</th>
-                <th>Código / produto</th>
-                <th>Tipo</th>
-                <th>Quantidade</th>
-                <th>Saldo</th>
-                <th>NF-e</th>
-                <th>Responsável</th>
-                <th>Motivo</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.movementId}>
-                  <td>{formatDate(r.createdAt)}</td>
-                  <td>
-                    <b>{r.productCode}</b>
-                    <div className="text-xs text-slate-500">
-                      {r.productName}
-                    </div>
-                  </td>
-                  <td>{r.kind}</td>
-                  <td
-                    className={
-                      r.quantity < 0
-                        ? "font-black text-red-700"
-                        : "font-black text-emerald-700"
-                    }
-                  >
-                    {r.quantity > 0 ? "+" : ""}
-                    {r.quantity}
-                  </td>
-                  <td>
-                    {r.previousBalance} → <b>{r.newBalance}</b>
-                  </td>
-                  <td>{r.accessKey || "-"}</td>
-                  <td>{r.actorEmail || r.actorName || "-"}</td>
-                  <td>{r.reason}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <Card title={`${movements.length} movimento(s) · ${rows.length} produto(s) alterado(s)`}>
+        <div className="space-y-3">
+          {!loading && !movements.length && <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center font-bold text-slate-500">Nenhum movimento encontrado para os filtros informados.</div>}
+          {movements.map((movement) => {
+            const isOpen = expanded.has(movement.batchId);
+            return <section key={movement.batchId} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <div className="grid items-center gap-3 p-4 md:grid-cols-[minmax(150px,0.8fr)_minmax(180px,1fr)_minmax(120px,0.7fr)_auto]">
+                <button className="flex min-w-0 items-center gap-3 text-left" onClick={() => toggleMovement(movement.batchId)} aria-expanded={isOpen}>
+                  <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${movementTone(movement.kind)}`}><ChevronDown size={19} className={`transition-transform ${isOpen ? "rotate-180" : ""}`} /></span>
+                  <span><b className="block text-sm text-slate-950">{formatDate(movement.createdAt)}</b><small className="text-slate-500">{movement.rows.length} produto(s)</small></span>
+                </button>
+                <div className="min-w-0"><span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-black ${movementTone(movement.kind)}`}>{movement.kind}</span><div className="mt-1 truncate text-xs font-semibold text-slate-600" title={movement.reason}>{movement.reason}</div></div>
+                <div className="text-xs text-slate-600"><b className="block text-slate-900">{movement.actor}</b>{movement.accessKeys.length ? `${movement.accessKeys.length} NF-e(s)` : "Movimento manual"}</div>
+                <div className="flex flex-wrap justify-end gap-2"><button className="btn-white" onClick={() => void exportXlsx(movement.rows, `movimento-${movement.batchId.slice(-8)}`)}><Download size={15} /> Excel</button><button className="btn-white" onClick={() => void exportPdf(movement)}><FileText size={15} /> PDF</button><button className="btn-primary" onClick={() => toggleMovement(movement.batchId)}>{isOpen ? "Ocultar" : "Ver itens"}</button></div>
+              </div>
+              {isOpen && <div className="overflow-auto border-t border-slate-200 bg-slate-50 p-3"><table className="admin-table"><thead><tr><th>Código</th><th>Produto</th><th>Tipo</th><th>Quantidade</th><th>Saldo anterior</th><th>Novo saldo</th><th>NF-e</th></tr></thead><tbody>{movement.rows.map((item) => <tr key={item.movementId}><td className="font-black">{item.productCode}</td><td>{item.productName}</td><td>{item.kind}</td><td className={item.quantity < 0 ? "font-black text-red-700" : "font-black text-emerald-700"}>{item.quantity > 0 ? "+" : ""}{item.quantity}</td><td>{item.previousBalance}</td><td className="font-black">{item.newBalance}</td><td className="max-w-[260px] break-all text-xs">{item.accessKey || "-"}</td></tr>)}</tbody></table></div>}
+            </section>;
+          })}
         </div>
       </Card>
     </>
