@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -652,13 +653,13 @@ function ClientModal({
                 ? value.toUpperCase().slice(0, 2)
                 : value,
     });
-  return (
-    <div className="rep-modal">
-      <div>
+  return createPortal(
+    <div className="rep-modal" role="dialog" aria-modal="true" aria-labelledby="client-modal-title">
+      <div className="rep-modal-card">
         <button className="close" onClick={onClose}>
           <X />
         </button>
-        <h2>{creating ? "Cadastrar cliente" : "Editar cliente"}</h2>
+        <h2 id="client-modal-title">{creating ? "Cadastrar cliente" : "Editar cliente"}</h2>
         <div className="rep-form-grid">
           {list.map(([key, label]) => (
             <label key={key}>
@@ -695,7 +696,8 @@ function ClientModal({
           {busy ? "Salvando..." : "Salvar cliente"}
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
