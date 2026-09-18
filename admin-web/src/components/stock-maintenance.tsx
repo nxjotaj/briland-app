@@ -106,6 +106,20 @@ type StockBalance = {
   reservedBalance: number;
   availableBalance: number;
 };
+type StockReservationTrace = {
+  reservationId: string;
+  productId: string;
+  productCode: string;
+  productName: string;
+  orderId: string;
+  orderNumber: number;
+  orderStatus: string;
+  quantity: number;
+  clientName: string;
+  representativeName: string;
+  submittedAt?: string | null;
+  createdAt: string;
+};
 type ReservationReview = {
   reviewId: string; orderId: string; orderNumber: number; orderCreatedAt: string; invoiceNumber: string; invoiceIssuedAt: string; accessKey: string; clientName: string; productId: string; productCode: string; productName: string; orderedQuantity: number; invoicedQuantity: number; remainingQuantity: number; status: "PENDING" | "KEPT_RESERVED" | "RELEASED"; createdAt: string; resolutionComment?: string | null;
 };
@@ -363,13 +377,16 @@ export function StockMaintenance({
 
 function StockBalances({ notify }: { notify: Notify }) {
   const [rows, setRows] = useState<StockBalance[]>([]);
+  const [reservations, setReservations] = useState<StockReservationTrace[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [view, setView] = useState<"all" | "reserved" | "unavailable">("all");
+  const [selectedProduct, setSelectedProduct] = useState<StockBalance | null>(null);
   const load = async () => {
     setLoading(true);
-    const { data, error } = await supabase.rpc("get_admin_stock_balances");
-    if (error) notify(stockError(error)); else setRows((data || []) as StockBalance[]);
+    const [balancesResult, reservationsResult] = await Promise.all([supabase.rpc("get_admin_stock_balances"), supabase.rpc("get_admin_stock_reservations", { p_product_code: null })]);
+    if (balancesResult.error) notify(stockError(balancesResult.error)); else setRows((balancesResult.data || []) as StockBalance[]);
+    if (reservationsResult.error) notify(stockError(reservationsResult.error)); else setReservations((reservationsResult.data || []) as StockReservationTrace[]);
     setLoading(false);
   };
   useEffect(() => { void load(); }, []);
@@ -383,6 +400,7 @@ function StockBalances({ notify }: { notify: Notify }) {
     reserved: sum.reserved + row.reservedBalance,
     available: sum.available + row.availableBalance,
   }), { physical: 0, reserved: 0, available: 0 }), [rows]);
+  const selectedReservations = selectedProduct ? reservations.filter((row) => row.productId === selectedProduct.productId) : [];
   return <div className="space-y-4">
     <div className="grid gap-3 md:grid-cols-3">
       <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5"><span className="text-xs font-black uppercase tracking-wide text-blue-700">Estoque físico</span><strong className="mt-2 block text-3xl text-blue-950">{totals.physical.toLocaleString("pt-BR")}</strong><small className="font-semibold text-blue-700">Total atualmente armazenado</small></div>
@@ -396,13 +414,18 @@ function StockBalances({ notify }: { notify: Notify }) {
         <button className="btn-white" onClick={() => void load()} disabled={loading}>{loading ? <Loader2 className="animate-spin" size={17} /> : <RefreshCw size={17} />} Atualizar saldos</button>
       </div>
       <div className="max-h-[650px] overflow-auto rounded-2xl border border-slate-200">
-        <table className="admin-table"><thead><tr><th>Código</th><th>Produto</th><th className="text-right">Estoque físico</th><th className="text-right">Reservado</th><th className="text-right">Disponível</th><th>Situação</th></tr></thead><tbody>
-          {filtered.map((row) => <tr key={row.productId}><td className="font-black text-slate-950">{row.productCode || "-"}</td><td>{row.productName}</td><td className="text-right font-bold">{row.physicalBalance.toLocaleString("pt-BR")}</td><td className={`text-right font-black ${row.reservedBalance > 0 ? "text-amber-700" : "text-slate-400"}`}>{row.reservedBalance.toLocaleString("pt-BR")}</td><td className={`text-right font-black ${row.availableBalance <= 0 ? "text-red-700" : "text-emerald-700"}`}>{row.availableBalance.toLocaleString("pt-BR")}</td><td>{row.availableBalance <= 0 ? <span className="rounded-full bg-red-100 px-2.5 py-1 text-xs font-black text-red-800">Indisponível</span> : row.reservedBalance > 0 ? <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-black text-amber-800">Com reserva</span> : <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-black text-emerald-800">Disponível</span>}</td></tr>)}
+        <table className="admin-table min-w-[900px] table-fixed"><colgroup><col className="w-[14%]"/><col className="w-[30%]"/><col className="w-[12%]"/><col className="w-[12%]"/><col className="w-[12%]"/><col className="w-[12%]"/><col className="w-[8%]"/></colgroup><thead><tr><th>Código</th><th>Produto</th><th className="text-center">Estoque físico</th><th className="text-center">Reservado</th><th className="text-center">Disponível</th><th className="text-center">Situação</th><th/></tr></thead><tbody>
+          {filtered.map((row) => <tr key={row.productId}><td className="font-black text-slate-950">{row.productCode || "-"}</td><td><div className="truncate" title={row.productName}>{row.productName}</div></td><td className="text-center font-bold tabular-nums">{row.physicalBalance.toLocaleString("pt-BR")}</td><td className={`text-center font-black tabular-nums ${row.reservedBalance > 0 ? "text-amber-700" : "text-slate-400"}`}>{row.reservedBalance.toLocaleString("pt-BR")}</td><td className={`text-center font-black tabular-nums ${row.availableBalance <= 0 ? "text-red-700" : "text-emerald-700"}`}>{row.availableBalance.toLocaleString("pt-BR")}</td><td className="text-center">{row.availableBalance <= 0 ? <span className="inline-flex rounded-full bg-red-100 px-2.5 py-1 text-xs font-black text-red-800">Indisponível</span> : row.reservedBalance > 0 ? <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-xs font-black text-amber-800">Com reserva</span> : <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-black text-emerald-800">Disponível</span>}</td><td className="text-center">{row.reservedBalance > 0 && <button className="btn-white whitespace-nowrap px-3 py-2 text-xs" onClick={() => setSelectedProduct(row)}>Ver pedidos</button>}</td></tr>)}
         </tbody></table>
         {!loading && !filtered.length && <div className="p-8 text-center font-bold text-slate-500">Nenhum produto encontrado.</div>}
       </div>
-      <p className="mt-3 text-xs font-semibold text-slate-500">Disponível = estoque físico menos as reservas ativas. Ao aprovar um pedido, a reserva é consumida e a quantidade é baixada do estoque físico.</p>
+      <p className="mt-3 text-xs font-semibold text-slate-500">Disponível = estoque físico menos as reservas ativas. A aprovação mantém a reserva; a baixa física acontece na conciliação da NF-e de saída.</p>
     </Card>
+    {selectedProduct && <Card title={`Reservas da referência ${selectedProduct.productCode}`}>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><b className="text-slate-950">{selectedProduct.productName}</b><p className="text-sm font-semibold text-slate-500">{selectedProduct.reservedBalance} unidade(s) reservada(s) em {selectedReservations.length} pedido(s).</p></div><button className="btn-white" onClick={() => setSelectedProduct(null)}>Fechar consulta</button></div>
+      <div className="overflow-auto rounded-2xl border border-slate-200"><table className="admin-table min-w-[850px]"><thead><tr><th>Pedido</th><th>Status</th><th>Cliente</th><th>Representante</th><th className="text-center">Quantidade reservada</th><th>Data do envio</th></tr></thead><tbody>{selectedReservations.map((reservation) => <tr key={reservation.reservationId}><td className="font-black">{String(reservation.orderNumber).padStart(6,"0")}</td><td><span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-black text-blue-800">{reservation.orderStatus}</span></td><td>{reservation.clientName}</td><td>{reservation.representativeName}</td><td className="text-center font-black text-amber-700">{reservation.quantity}</td><td>{formatDate(reservation.submittedAt || reservation.createdAt)}</td></tr>)}</tbody></table></div>
+      {!selectedReservations.length && <div className="rounded-2xl bg-red-50 p-5 text-center font-bold text-red-800">Não existe reserva ativa vinculada a pedido para esta referência. Atualize os saldos; se o número reservado continuar diferente de zero, existe uma inconsistência que precisa ser investigada.</div>}
+    </Card>}
   </div>;
 }
 

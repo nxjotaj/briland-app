@@ -323,6 +323,7 @@ function OrderModal({
   onClose: () => void;
 }) {
   const editable = order.status === "SUBMITTED";
+  const cancellable = ["SUBMITTED", "APPROVED"].includes(order.status);
   const [clientId, setClientId] = useState(order.clientId || "");
   const [freight, setFreight] = useState(order.freightType || "CIF");
   const [redispatchName, setRedispatchName] = useState(
@@ -406,7 +407,9 @@ function OrderModal({
         ? "aprovar"
         : action === "RETURN"
           ? "devolver"
-          : "rejeitar";
+          : action === "CANCEL"
+            ? "cancelar"
+            : "rejeitar";
     const comment = window.prompt(
       `Informe a observação para ${verb} o pedido:`,
     );
@@ -736,6 +739,16 @@ function OrderModal({
                 Aprovar e baixar saldo
               </button>
             </>
+          )}
+          {cancellable && (
+            <button
+              className="btn-white border-red-300 bg-red-50 text-red-800 hover:bg-red-100"
+              disabled={busy}
+              onClick={() => void transition("CANCEL")}
+            >
+              <XCircle size={17} />
+              Cancelar pedido
+            </button>
           )}
         </div>
         <div className="mt-7 border-t pt-5">

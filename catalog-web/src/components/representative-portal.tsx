@@ -856,6 +856,7 @@ function OrderEditor({
   navigate: (p: string) => void;
 }) {
   const editable = ["DRAFT", "RETURNED"].includes(order.status);
+  const cancellable = ["DRAFT", "RETURNED", "SUBMITTED"].includes(order.status);
   const [clientId, setClientId] = useState(order.clientId || "");
   const [freight, setFreight] = useState(order.freightType || "CIF");
   const [redispatchName, setRedispatchName] = useState(
@@ -969,7 +970,7 @@ function OrderEditor({
   const action = async (type: string) => {
     const comment =
       type === "CANCEL"
-        ? "Cancelado pelo representante."
+        ? window.prompt("Informe o motivo do cancelamento do pedido:") || ""
         : window.prompt("Descreva a alteração necessária:") || "";
     if (!comment) return;
     const rpc =
@@ -1271,13 +1272,16 @@ function OrderEditor({
               <Send />
               Salvar e enviar
             </button>
-            <button
-              className="danger-button"
-              onClick={() => void action("CANCEL")}
-            >
-              Excluir pedido
-            </button>
           </>
+        )}
+        {cancellable && (
+          <button
+            className="danger-button"
+            disabled={busy}
+            onClick={() => void action("CANCEL")}
+          >
+            Cancelar pedido
+          </button>
         )}
         {order.status === "SUBMITTED" && (
           <button onClick={() => void action("CHANGE")}>
