@@ -60,6 +60,17 @@ const PRIVACY_POLICY_URL = "https://briland-catalogo.vercel.app/privacidade.html
 const ACCOUNT_DELETION_URL = "https://briland-catalogo.vercel.app/excluir-conta.html";
 const vehicleYears = () => Array.from({ length: new Date().getFullYear() + 2 - 1950 }, (_, index) => 1950 + index).reverse();
 const onlyDigits = (value: string) => value.replace(/\D/g, "");
+const normalizeSearchText = (value: unknown) => String(value ?? "")
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .toLocaleLowerCase("pt-BR")
+  .trim();
+const matchesAllSearchTerms = (query: string, ...values: unknown[]) => {
+  const terms = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+  if (!terms.length) return true;
+  const searchableText = normalizeSearchText(values.join(" "));
+  return terms.every((term) => searchableText.includes(term));
+};
 const maskCnpj = (value: string) => onlyDigits(value).slice(0, 14).replace(/^(\d{2})(\d)/, "$1.$2").replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3").replace(/\.(\d{3})(\d)/, ".$1/$2").replace(/(\d{4})(\d)/, "$1-$2");
 const maskCep = (value: string) => onlyDigits(value).slice(0, 8).replace(/(\d{5})(\d)/, "$1-$2");
 const maskPhone = (value: string) => {
@@ -305,7 +316,7 @@ export default function App() {
   roleRef.current = role;
   authTokenRef.current = authToken;
 
-  const reload = async (nextRole = role, token = authToken, options?: { silent?: boolean; refreshImages?: boolean }) => {
+  const reload = async (nextRole: Role = roleRef.current, token: string | undefined = authTokenRef.current, options?: { silent?: boolean; refreshImages?: boolean }) => {
     const startedAt = Date.now();
     if (!options?.silent) setLoading(true);
     setError(null);
@@ -377,7 +388,7 @@ export default function App() {
       return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Falha ao carregar dados do catálogo.";
-      setError(message);
+      if (!options?.silent) setError(message);
       void trackTelemetry({
         eventType: "api_error",
         screen: route,
@@ -685,7 +696,12 @@ export default function App() {
       }
       else void supabaseRpc<void>("end_app_presence", { p_session_id: presenceSessionId.current }, authToken).catch(() => undefined);
       if (wasInBackground && nextState === "active") {
-        void reload(role, authToken, { silent: true });
+        void (async () => {
+          const session = await getPersistedSession().catch(() => null);
+          const refreshedToken = session?.access_token || authTokenRef.current;
+          if (refreshedToken && refreshedToken !== authTokenRef.current) setAuthToken(refreshedToken);
+          await reload(roleRef.current, refreshedToken, { silent: true });
+        })();
       }
     });
     return () => {
@@ -1188,7 +1204,7 @@ export default function App() {
           ) : (
             <>
               <Header back={route !== "home"} onBack={goBack} onMenu={() => setMenuOpen(true)} appearance={appearance} notificationCount={unreadNotificationCount} showCreateOrder={role === "REPRESENTANTE"} onCreateOrder={() => void openNewMobileOrder()} onNotifications={openNotifications} />
-              {error && <ErrorBanner message={error} onRetry={reload} />}
+              {error && <ErrorBanner message={error} onRetry={() => void reload(roleRef.current, authTokenRef.current)} />}
               {route === "home" && <HomeScreen go={openDirectCatalogRoute} products={activeProducts} categories={data.categorias} montadoras={data.montadoras} media={mediaSettings} imageVersion={imageRefreshVersion} />}
               {route === "categories" && <CategoriesScreen categories={data.categorias} products={activeProducts} imageVersion={imageRefreshVersion} onPick={(id) => {
                 clearCatalogFilters();
@@ -2587,6 +2603,8 @@ function MobileOrderScreen({
   const [terms, setTerms] = useState(order.paymentTerms || "");
   const [notes, setNotes] = useState(order.notes || "");
   const [items, setItems] = useState<SalesOrderItem[]>(order.items || []);
+  const [clientQuery, setClientQuery] = useState("");
+  const [clientSuggestionsVisible, setClientSuggestionsVisible] = useState(false);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const editable = ["DRAFT", "RETURNED"].includes(order.status);
@@ -2603,6 +2621,8 @@ function MobileOrderScreen({
       .then(([c, s]) => {
         setClients(c);
         setStock(s);
+        const selected = c.find((client) => client.id === (order.clientId || clientId));
+        if (selected) setClientQuery(selected.company || selected.name);
       })
       .catch((err) =>
         Alert.alert(
@@ -2630,6 +2650,21 @@ function MobileOrderScreen({
     };
   });
   const total = calculated.reduce((sum, item) => sum + item.lineTotal, 0);
+  const selectedClient = clients.find((client) => client.id === clientId);
+  const clientSuggestions =
+    clientSuggestionsVisible && clientQuery.trim()
+      ? clients
+          .filter((client) => matchesAllSearchTerms(
+            clientQuery,
+            client.company,
+            client.name,
+            client.cnpj,
+            client.city,
+            client.state,
+            client.email,
+          ))
+          .slice(0, 8)
+      : [];
   const suggestions =
     query.trim().length > 1
       ? products
@@ -2637,9 +2672,17 @@ function MobileOrderScreen({
             (product) =>
               product.preco != null &&
               !items.some((item) => item.productId === product.id) &&
-              `${product.codigoInterno} ${product.nome}`
-                .toLowerCase()
-                .includes(query.toLowerCase()),
+              matchesAllSearchTerms(
+                query,
+                product.codigoInterno,
+                product.nome,
+                product.descricaoCurta,
+                product.descricaoCompleta,
+                product.ean,
+                product.ncm,
+                product.observacaoComercial,
+                ...(product.aplicacoesVeiculo || []).flatMap((application) => [application.montadoraNome, application.modeloNome]),
+              ),
           )
           .slice(0, 6)
       : [];
@@ -2730,31 +2773,58 @@ function MobileOrderScreen({
         }
       />
       <Text style={styles.sheetLabel}>Cliente</Text>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.mobileChoiceRow}
-      >
-        {clients.map((client) => (
+      <View style={styles.mobileClientSearchBox}>
+        <Ionicons name="search-outline" size={21} color={colors.navy} />
+        <TextInput
+          editable={editable}
+          style={styles.mobileClientSearchInput}
+          placeholder="Digite nome, CNPJ, cidade ou e-mail"
+          placeholderTextColor={colors.muted}
+          value={clientQuery}
+          onFocus={() => setClientSuggestionsVisible(true)}
+          onChangeText={(value) => {
+            setClientQuery(value);
+            setClientSuggestionsVisible(true);
+            if (selectedClient && normalizeSearchText(value) !== normalizeSearchText(selectedClient.company || selectedClient.name)) setClientId("");
+          }}
+          autoCorrect={false}
+        />
+        {clientQuery.length > 0 && editable && (
           <Pressable
-            key={client.id}
-            style={[
-              styles.mobileChoice,
-              clientId === client.id && styles.mobileChoiceActive,
-            ]}
-            onPress={() => editable && setClientId(client.id)}
+            accessibilityLabel="Limpar busca de cliente"
+            onPress={() => { setClientQuery(""); setClientId(""); setClientSuggestionsVisible(true); }}
           >
-            <Text
-              style={[
-                styles.mobileChoiceText,
-                clientId === client.id && styles.mobileChoiceTextActive,
-              ]}
-            >
-              {client.company || client.name}
-            </Text>
+            <Ionicons name="close-circle" size={21} color={colors.muted} />
           </Pressable>
-        ))}
-      </ScrollView>
+        )}
+      </View>
+      {clientSuggestions.map((client) => (
+        <Pressable
+          key={client.id}
+          style={styles.mobileClientSuggestion}
+          onPress={() => {
+            setClientId(client.id);
+            setClientQuery(client.company || client.name);
+            setClientSuggestionsVisible(false);
+          }}
+        >
+          <View style={styles.mobileClientSuggestionIcon}><Ionicons name="business-outline" size={19} color={colors.navy} /></View>
+          <View style={styles.flex}>
+            <Text style={styles.mobileClientSuggestionName}>{client.company || client.name}</Text>
+            <Text style={styles.mutedSmall}>{maskCnpj(client.cnpj || "")} • {client.city || "Cidade não informada"}/{client.state || "--"}</Text>
+          </View>
+          <Ionicons name="checkmark-circle-outline" size={22} color={colors.navy} />
+        </Pressable>
+      ))}
+      {clientSuggestionsVisible && clientQuery.trim() && clientSuggestions.length === 0 && (
+        <View style={styles.mobileClientNoResult}><Text style={styles.mutedSmall}>Nenhum cliente encontrado com esses termos.</Text></View>
+      )}
+      {selectedClient && !clientSuggestionsVisible && (
+        <View style={styles.mobileSelectedClient}>
+          <Ionicons name="checkmark-circle" size={22} color="#16845B" />
+          <View style={styles.flex}><Text style={styles.mobileClientSuggestionName}>{selectedClient.company || selectedClient.name}</Text><Text style={styles.mutedSmall}>{maskCnpj(selectedClient.cnpj || "")}</Text></View>
+        </View>
+      )}
       <View style={styles.mobileOrderOptions}>
         <Pressable
           style={[
@@ -2838,7 +2908,7 @@ function MobileOrderScreen({
           <Text style={styles.sheetLabel}>Adicionar produtos</Text>
           <TextInput
             style={styles.mobileOrderInput}
-            placeholder="Buscar por código ou descrição"
+            placeholder="Buscar por palavras, código ou aplicação"
             value={query}
             onChangeText={setQuery}
           />
@@ -4059,6 +4129,13 @@ const styles = StyleSheet.create({
   representativeClientDocument:{marginTop:5,color:colors.navy,fontSize:12,fontWeight:"800"},
   representativeClientContact:{marginTop:5,color:colors.muted,fontSize:12,lineHeight:17},
   mobileChoiceRow:{flexGrow:0,marginBottom:12},
+  mobileClientSearchBox:{minHeight:54,marginBottom:8,borderWidth:1,borderColor:colors.line,borderRadius:14,backgroundColor:colors.white,paddingHorizontal:14,flexDirection:"row",alignItems:"center",gap:10},
+  mobileClientSearchInput:{flex:1,minHeight:52,color:colors.navy,fontSize:14,fontWeight:"700"},
+  mobileClientSuggestion:{minHeight:66,marginBottom:7,borderWidth:1,borderColor:colors.line,borderRadius:14,backgroundColor:colors.white,paddingHorizontal:12,paddingVertical:9,flexDirection:"row",alignItems:"center",gap:10},
+  mobileClientSuggestionIcon:{width:38,height:38,borderRadius:11,backgroundColor:"#FFF4CC",alignItems:"center",justifyContent:"center"},
+  mobileClientSuggestionName:{color:colors.navy,fontSize:13,fontWeight:"900"},
+  mobileClientNoResult:{marginBottom:10,borderRadius:12,backgroundColor:"#FFF7DB",padding:12},
+  mobileSelectedClient:{minHeight:62,marginBottom:12,borderWidth:1,borderColor:"#BDE7D7",borderRadius:14,backgroundColor:"#F1FBF7",paddingHorizontal:13,flexDirection:"row",alignItems:"center",gap:10},
   mobileChoice:{minHeight:42,marginRight:8,borderWidth:1,borderColor:colors.line,borderRadius:21,backgroundColor:colors.white,paddingHorizontal:15,alignItems:"center",justifyContent:"center"},
   mobileChoiceActive:{borderColor:colors.navy,backgroundColor:colors.navy},
   mobileChoiceText:{color:colors.navy,fontSize:12,fontWeight:"800"},
