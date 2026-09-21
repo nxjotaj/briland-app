@@ -8,8 +8,10 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY src ./src
+COPY assets ./assets
 
 ENV NODE_ENV=production
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV HYPERFRAMES_BROWSER_PATH=/usr/bin/chromium
 ENV HYPERFRAMES_NO_TELEMETRY=1
 CMD ["npm", "start"]
