@@ -6,7 +6,6 @@ import brilandLogo from "../../../assets/briland-logo.png";
 import { BulkProductImages } from "@/components/bulk-product-images";
 import { StockMaintenance } from "@/components/stock-maintenance";
 import { SalesOrders } from "@/components/sales-orders";
-import { VideoStudio } from "@/components/video-studio";
 import { buildCatalogPdf, type CatalogImageWarning } from "@/lib/catalog-pdf";
 import { maskCep, maskCnpj, maskPhone } from "@/lib/input-masks";
 import {
@@ -20,7 +19,6 @@ import {
   ChevronDown,
   ChevronRight,
   CircleUserRound,
-  Clapperboard,
   Clock3,
   Download,
   Eye,
@@ -106,7 +104,6 @@ type Tab =
   | "Permissões"
   | "Diagnóstico"
   | "Catálogo PDF"
-  | "Estúdio de Vídeos"
   | "Mídia"
   | "Links"
   | "Conteúdo"
@@ -130,7 +127,6 @@ const tabs: { id: Tab; icon: React.ElementType }[] = [
   { id: "Permissões", icon: Lock },
   { id: "Diagnóstico", icon: Activity },
   { id: "Catálogo PDF", icon: Download },
-  { id: "Estúdio de Vídeos", icon: Clapperboard },
   { id: "Mídia", icon: ImageIcon },
   { id: "Links", icon: LinkIcon },
   { id: "Conteúdo", icon: Settings },
@@ -142,7 +138,7 @@ const menuGroups: Array<{ id: MenuGroupId; label: string; icon: React.ElementTyp
   { id: "overview", label: "Visão geral", icon: BarChart3, tabs: ["Dashboard", "Análises"] },
   { id: "operations", label: "Operação comercial", icon: PackagePlus, tabs: ["Produtos", "Manutenção de saldo", "Leads", "Pedidos"] },
   { id: "registrations", label: "Cadastros", icon: Tags, tabs: ["Categorias", "Marcas", "Montadoras", "Aplicações"] },
-  { id: "settings", label: "Configurações", icon: Settings, tabs: ["Usuários", "Permissões", "Diagnóstico", "Catálogo PDF", "Estúdio de Vídeos", "Mídia", "Links", "Conteúdo", "Aparência"] }
+  { id: "settings", label: "Configurações", icon: Settings, tabs: ["Usuários", "Permissões", "Diagnóstico", "Catálogo PDF", "Mídia", "Links", "Conteúdo", "Aparência"] }
 ];
 
 const emptyData: AppData = {
@@ -1096,7 +1092,6 @@ export default function Page() {
           {activeTab === "Permissões" && <PermissionsSectionV2 permissions={data.permissoes} query={query} reload={reloadSection} notify={notify} />}
           {activeTab === "Diagnóstico" && <Diagnostics data={data} />}
           {activeTab === "Catálogo PDF" && <CatalogPdfSection data={data} reload={reloadSection} notify={notify} />}
-          {activeTab === "Estúdio de Vídeos" && <VideoStudio products={data.produtos} notify={notify} />}
           {activeTab === "Mídia" && <MediaSettingsSection settings={data.settings.media} reload={reloadSection} notify={notify} />}
           {activeTab === "Links" && <LinksSection settings={data.settings.socialLinks} reload={reloadSection} notify={notify} />}
           {activeTab === "Conteúdo" && <ContentSection settings={data.settings.about} reload={reloadSection} notify={notify} />}

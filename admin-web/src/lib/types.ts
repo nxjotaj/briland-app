@@ -119,29 +119,6 @@ export type CatalogPdfSettings = Partial<Record<CatalogPdfRole, CatalogPdfEntry>
 };
 export type ProdutoAplicacao = { produtoId: string; aplicacaoId: string };
 
-export type VideoTemplateKey = "product-spotlight" | "commercial-offer" | "new-arrival";
-export type VideoRenderFormat = "vertical" | "square";
-export type VideoRenderJob = {
-  id: string;
-  createdBy: string;
-  productId: string;
-  templateKey: VideoTemplateKey;
-  format: VideoRenderFormat;
-  durationSeconds: 10 | 15 | 30;
-  headline: string;
-  subheadline?: string | null;
-  cta?: string | null;
-  status: "QUEUED" | "PREPARING" | "RENDERING" | "UPLOADING" | "COMPLETED" | "FAILED" | "CANCELLED";
-  progress: number;
-  inputPayload: { product?: { id?: string; name?: string; code?: string | null; price?: number | null; shortDescription?: string | null; imageUrl?: string | null } };
-  outputStorageKey?: string | null;
-  errorMessage?: string | null;
-  createdAt: string;
-  startedAt?: string | null;
-  finishedAt?: string | null;
-  updatedAt: string;
-};
-
 export type AppSettings = {
   media?: MediaSettings & { recommendations?: Record<string, string> };
   socialLinks?: SocialLinks;
