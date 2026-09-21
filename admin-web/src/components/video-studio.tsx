@@ -5,6 +5,7 @@ import { Clapperboard, Download, Loader2, Play, RefreshCw, Sparkles, X } from "l
 import { supabase } from "@/lib/supabase";
 import type { Produto, VideoRenderJob, VideoRenderFormat, VideoTemplateKey } from "@/lib/types";
 import brilandLogo from "../../../assets/briland-logo.png";
+import { DEFAULT_VIDEO_AI_MODEL, VIDEO_AI_MODELS } from "@/lib/video-ai-models";
 
 const templates: Array<{ key: VideoTemplateKey; name: string; description: string }> = [
   { key: "product-spotlight", name: "Destaque de produto", description: "Apresentação limpa com imagem, nome e chamada comercial." },
@@ -32,6 +33,11 @@ export function VideoStudio({ products, notify }: { products: Produto[]; notify:
   const [templateKey, setTemplateKey] = useState<VideoTemplateKey>("product-spotlight");
   const [format, setFormat] = useState<VideoRenderFormat>("vertical");
   const [duration, setDuration] = useState<10 | 15 | 30>(10);
+  const [generationMode, setGenerationMode] = useState<"catalog" | "ai">("catalog");
+  const [aiModel, setAiModel] = useState(DEFAULT_VIDEO_AI_MODEL.id);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiResolution, setAiResolution] = useState("1080p");
+  const [generateAiAudio, setGenerateAiAudio] = useState(true);
   const selectedProduct = availableProducts.find((product) => product.id === productId);
   const [headline, setHeadline] = useState("");
   const [subheadline, setSubheadline] = useState("");
@@ -75,7 +81,21 @@ export function VideoStudio({ products, notify }: { products: Produto[]; notify:
       cta: cta.trim()
     };
     setSubmitting(true);
-    const { data, error } = await supabase.rpc("create_video_render_job", {
+    if (generationMode === "ai" && !aiPrompt.trim()) return notify("Descreva a cena que a IA deve criar.");
+    const rpcName = generationMode === "ai" ? "create_ai_video_render_job" : "create_video_render_job";
+    const rpcPayload = generationMode === "ai" ? {
+      p_product_id: request.productId,
+      p_template_key: request.templateKey,
+      p_format: request.format,
+      p_duration_seconds: request.durationSeconds,
+      p_headline: request.headline,
+      p_subheadline: request.subheadline,
+      p_cta: request.cta,
+      p_ai_model: aiModel,
+      p_prompt: aiPrompt.trim(),
+      p_resolution: aiResolution,
+      p_generate_audio: generateAiAudio
+    } : {
       p_product_id: request.productId,
       p_template_key: request.templateKey,
       p_format: request.format,
@@ -83,7 +103,8 @@ export function VideoStudio({ products, notify }: { products: Produto[]; notify:
       p_headline: request.headline,
       p_subheadline: request.subheadline,
       p_cta: request.cta
-    });
+    };
+    const { data, error } = await supabase.rpc(rpcName, rpcPayload);
     setSubmitting(false);
     if (error) return notify(`Não foi possível solicitar o vídeo: ${error.message}`);
     const created = (Array.isArray(data) ? data[0] : data) as VideoRenderJob | null;
@@ -122,18 +143,31 @@ export function VideoStudio({ products, notify }: { products: Produto[]; notify:
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,.9fr)]">
       <section className="panel-card p-5 lg:p-6">
         <h3 className="text-lg font-black">Novo vídeo</h3>
+        <div className="mt-5 grid grid-cols-2 rounded-2xl bg-soft p-1">
+          <button type="button" onClick={() => setGenerationMode("catalog")} className={`rounded-xl px-4 py-3 text-sm font-black transition ${generationMode === "catalog" ? "bg-white text-navy shadow" : "text-muted"}`}>Composição Briland</button>
+          <button type="button" onClick={() => setGenerationMode("ai")} className={`rounded-xl px-4 py-3 text-sm font-black transition ${generationMode === "ai" ? "bg-navy text-white shadow" : "text-muted"}`}><Sparkles className="mr-2 inline" size={16} />Criativo com IA</button>
+        </div>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <label className="sm:col-span-2"><span className="mb-2 block text-xs font-black uppercase tracking-wider text-muted">Produto</span><select className="input" value={productId} onChange={(event) => { const next = availableProducts.find((item) => item.id === event.target.value); setProductId(event.target.value); setHeadline(next?.nome || ""); setSubheadline(next?.descricaoCurta || "Qualidade e confiança para o seu negócio."); }}><option value="">Selecione</option>{availableProducts.map((product) => <option key={product.id} value={product.id}>{product.codigoInterno ? `${product.codigoInterno} — ` : ""}{product.nome}</option>)}</select></label>
           <label><span className="mb-2 block text-xs font-black uppercase tracking-wider text-muted">Formato</span><select className="input" value={format} onChange={(event) => setFormat(event.target.value as VideoRenderFormat)}><option value="vertical">Vertical · Reels/Stories</option><option value="square">Quadrado · Feed</option></select></label>
           <label><span className="mb-2 block text-xs font-black uppercase tracking-wider text-muted">Duração</span><select className="input" value={duration} onChange={(event) => setDuration(Number(event.target.value) as 10 | 15 | 30)}><option value={10}>10 segundos</option><option value={15}>15 segundos</option><option value={30}>30 segundos</option></select></label>
         </div>
+        {generationMode === "ai" && <div className="mt-5 space-y-4 rounded-2xl border border-blue-100 bg-blue-50/70 p-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label><span className="mb-2 block text-xs font-black uppercase tracking-wider text-blue-900">Modelo de geração</span><select className="input" value={aiModel} onChange={(event) => setAiModel(event.target.value)}>{VIDEO_AI_MODELS.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select></label>
+            <label><span className="mb-2 block text-xs font-black uppercase tracking-wider text-blue-900">Resolução criativa</span><select className="input" value={aiResolution} onChange={(event) => setAiResolution(event.target.value)}><option value="720p">720p · mais rápido</option><option value="1080p">1080p · alta qualidade</option></select></label>
+          </div>
+          <label><span className="mb-2 block text-xs font-black uppercase tracking-wider text-blue-900">Direção criativa</span><textarea className="input min-h-28" maxLength={1200} value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} placeholder="Ex.: câmera orbitando lentamente o produto em um ambiente automotivo premium, luz azul e dourada, movimento suave..." /></label>
+          <label className="flex items-center gap-3 text-sm font-bold text-navy"><input type="checkbox" checked={generateAiAudio} onChange={(event) => setGenerateAiAudio(event.target.checked)} /> Solicitar áudio nativo quando o modelo oferecer suporte</label>
+          <p className="text-xs font-semibold text-blue-900/65">A cena da IA será usada como matéria-prima. Logo, produto, textos, CTA e volume final continuam sob controle da Briland.</p>
+        </div>}
         <div className="mt-5 grid gap-3 sm:grid-cols-3">{templates.map((template) => <button type="button" key={template.key} onClick={() => setTemplateKey(template.key)} className={`rounded-2xl border p-4 text-left transition ${templateKey === template.key ? "border-blue-700 bg-blue-50 ring-2 ring-blue-100" : "border-line bg-white hover:border-blue-300"}`}><div className="font-black">{template.name}</div><div className="mt-2 text-xs font-semibold text-muted">{template.description}</div></button>)}</div>
         <div className="mt-5 space-y-4">
           <label><span className="mb-2 block text-xs font-black uppercase tracking-wider text-muted">Título</span><input className="input" maxLength={100} value={headline} onChange={(event) => setHeadline(event.target.value)} /></label>
           <label><span className="mb-2 block text-xs font-black uppercase tracking-wider text-muted">Texto complementar</span><textarea className="input min-h-24" maxLength={180} value={subheadline} onChange={(event) => setSubheadline(event.target.value)} /></label>
           <label><span className="mb-2 block text-xs font-black uppercase tracking-wider text-muted">Chamada final</span><input className="input" maxLength={80} value={cta} onChange={(event) => setCta(event.target.value)} /></label>
         </div>
-        <button type="button" className="btn-primary mt-6" disabled={submitting || !selectedProduct} onClick={() => void submit()}>{submitting ? <Loader2 className="animate-spin" size={17} /> : <Play size={17} />} Gerar vídeo</button>
+        <button type="button" className="btn-primary mt-6" disabled={submitting || !selectedProduct} onClick={() => void submit()}>{submitting ? <Loader2 className="animate-spin" size={17} /> : generationMode === "ai" ? <Sparkles size={17} /> : <Play size={17} />} {generationMode === "ai" ? "Gerar cena e finalizar" : "Gerar vídeo"}</button>
       </section>
 
       <section className="panel-card p-5 lg:p-6"><div className="mb-4 flex items-center justify-between"><h3 className="text-lg font-black">Prévia do layout</h3><span className="rounded-full bg-soft px-3 py-1 text-xs font-black">{format === "vertical" ? "9:16" : "1:1"}</span></div>

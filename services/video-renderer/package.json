@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node src/index.mjs",
     "bootstrap": "node scripts/local-bootstrap.mjs",
-    "check": "node --check src/index.mjs && node --check src/template.mjs && node --check src/soundtrack.mjs && node --check scripts/smoke.mjs && node --check scripts/local-bootstrap.mjs",
+    "check": "node --check src/index.mjs && node --check src/template.mjs && node --check src/soundtrack.mjs && node --check src/ai-provider.mjs && node --check scripts/smoke.mjs && node --check scripts/local-bootstrap.mjs",
     "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
