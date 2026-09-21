@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 
 const host = "127.0.0.1";
 const port = 4317;
-const defaultSupabaseUrl = "https://jdxbxsufqjiinkfvvbda.supabase.co";
 const nonce = randomBytes(24).toString("hex");
 const workerEntry = fileURLToPath(new URL("../src/index.mjs", import.meta.url));
 const workerDirectory = fileURLToPath(new URL("..", import.meta.url));
@@ -49,7 +48,7 @@ const server = createServer((request, response) => {
     }
     const child = spawn(process.execPath, [workerEntry], {
       cwd: workerDirectory,
-      env: { ...process.env, SUPABASE_URL: process.env.SUPABASE_URL || defaultSupabaseUrl, SUPABASE_SERVICE_ROLE_KEY: secret },
+      env: { ...process.env, SUPABASE_SERVICE_ROLE_KEY: secret },
       stdio: "inherit"
     });
     child.on("exit", (code) => process.exitCode = code ?? 1);
