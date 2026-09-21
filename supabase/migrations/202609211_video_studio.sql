@@ -7,7 +7,7 @@ create table if not exists public."VideoRenderJob" (
   "templateKey" text not null check ("templateKey" in ('product-spotlight', 'commercial-offer', 'new-arrival')),
   format text not null check (format in ('vertical', 'square')),
   "durationSeconds" integer not null check ("durationSeconds" in (10, 15, 30)),
-  headline text not null check (char_length(headline) between 1 and 100),
+  headline text not null check (char_length(headline) <= 100),
   subheadline text check (char_length(coalesce(subheadline, '')) <= 180),
   cta text check (char_length(coalesce(cta, '')) <= 80),
   status text not null default 'QUEUED' check (status in ('QUEUED', 'PREPARING', 'RENDERING', 'UPLOADING', 'COMPLETED', 'FAILED', 'CANCELLED')),
@@ -65,8 +65,8 @@ begin
   if p_duration_seconds not in (10, 15, 30) then
     raise exception 'Duração de vídeo inválida.';
   end if;
-  if char_length(btrim(coalesce(p_headline, ''))) not between 1 and 100 then
-    raise exception 'O título deve ter entre 1 e 100 caracteres.';
+  if char_length(btrim(coalesce(p_headline, ''))) > 100 then
+    raise exception 'O título deve ter no máximo 100 caracteres.';
   end if;
 
   select * into product_row from public."Produto" where id = p_product_id;
@@ -77,7 +77,7 @@ begin
     headline, subheadline, cta, "inputPayload"
   ) values (
     actor.id, product_row.id, p_template_key, p_format, p_duration_seconds,
-    btrim(p_headline), nullif(btrim(coalesce(p_subheadline, '')), ''),
+    btrim(coalesce(p_headline, '')), nullif(btrim(coalesce(p_subheadline, '')), ''),
     nullif(btrim(coalesce(p_cta, '')), ''),
     jsonb_build_object(
       'product', jsonb_build_object(

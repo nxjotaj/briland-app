@@ -1,10 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { renderComposition } from "./template.mjs";
+import { addSoundtrack } from "./soundtrack.mjs";
 
 const required = (name) => {
   const value = process.env[name]?.trim();
@@ -23,6 +25,9 @@ const allowedHosts = new Set([
   ...String(process.env.VIDEO_ALLOWED_MEDIA_HOSTS || "").split(",").map((host) => host.trim()).filter(Boolean)
 ]);
 const cliPath = fileURLToPath(new URL("../node_modules/hyperframes/bin/hyperframes.mjs", import.meta.url));
+const logoPath = fileURLToPath(new URL("../assets/briland-logo.png", import.meta.url));
+const windowsChromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+const browserPath = process.env.HYPERFRAMES_BROWSER_PATH || (process.platform === "win32" && existsSync(windowsChromePath) ? windowsChromePath : "");
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -51,7 +56,7 @@ async function runRender(directory, outputPath) {
   await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [cliPath, "render", "-c", "./index.html", "-o", outputPath], {
       cwd: directory,
-      env: { ...process.env, CI: "1", HYPERFRAMES_NO_TELEMETRY: "1" },
+      env: { ...process.env, CI: "1", HYPERFRAMES_NO_TELEMETRY: "1", ...(browserPath ? { HYPERFRAMES_BROWSER_PATH: browserPath } : {}) },
       stdio: ["ignore", "pipe", "pipe"]
     });
     let stderr = "";
@@ -65,10 +70,14 @@ async function processJob(job) {
   const directory = await mkdtemp(join(tmpdir(), "briland-video-"));
   try {
     const imageFileName = await downloadProductImage(job.inputPayload?.product?.imageUrl, directory);
-    await writeFile(join(directory, "index.html"), renderComposition(job, imageFileName), "utf8");
+    const logoFileName = "briland-logo.png";
+    await copyFile(logoPath, join(directory, logoFileName));
+    await writeFile(join(directory, "index.html"), renderComposition(job, imageFileName, logoFileName), "utf8");
     await updateJob(job.id, { status: "RENDERING", progress: 25 });
+    const silentOutputPath = join(directory, "silent.mp4");
     const outputPath = join(directory, "output.mp4");
-    await runRender(directory, outputPath);
+    await runRender(directory, silentOutputPath);
+    await addSoundtrack(silentOutputPath, outputPath, job.durationSeconds);
     await updateJob(job.id, { status: "UPLOADING", progress: 90 });
     const video = await readFile(outputPath);
     const storageKey = `products/${job.productId}/${job.id}.mp4`;
