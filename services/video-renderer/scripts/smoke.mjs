@@ -58,9 +58,21 @@ try {
     child.on("close", (code) => code === 0 ? resolve(stdout.trim()) : reject(new Error(stderr.trim())));
   });
   if (probe !== "aac") throw new Error(`Faixa de áudio AAC não encontrada (resultado: ${probe || "vazio"}).`);
+  const meanVolume = await new Promise((resolve, reject) => {
+    const child = spawn("ffmpeg", ["-i", output, "-map", "0:a:0", "-af", "volumedetect", "-f", "null", process.platform === "win32" ? "NUL" : "/dev/null"]);
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) return reject(new Error(stderr.trim()));
+      const match = stderr.match(/mean_volume:\s*(-?[\d.]+) dB/);
+      return match ? resolve(Number(match[1])) : reject(new Error("Não foi possível medir o volume médio do áudio."));
+    });
+  });
+  if (meanVolume < -22) throw new Error(`Áudio praticamente inaudível: ${meanVolume} dB de volume médio.`);
   const result = await stat(output);
   if (result.size < 1000) throw new Error("O MP4 de teste foi criado vazio ou incompleto.");
-  console.log(`Smoke test concluído: ${result.size} bytes, vídeo com áudio AAC.`);
+  console.log(`Smoke test concluído: ${result.size} bytes, áudio AAC audível (${meanVolume} dB).`);
 } finally {
   await rm(directory, { recursive: true, force: true });
 }

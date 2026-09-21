@@ -6,7 +6,7 @@ export async function addSoundtrack(inputPath, outputPath, duration) {
     "sine=frequency=196:sample_rate=48000[a0]",
     "sine=frequency=246.94:sample_rate=48000[a1]",
     "sine=frequency=293.66:sample_rate=48000[a2]",
-    `[a0][a1][a2]amix=inputs=3:weights='0.50 0.32 0.22':normalize=0,tremolo=f=2:d=0.18,volume=0.10,afade=t=in:st=0:d=0.8,afade=t=out:st=${fadeOutStart}:d=1.2`
+    `[a0][a1][a2]amix=inputs=3:weights='0.50 0.32 0.22':normalize=0,tremolo=f=2:d=0.18,volume=0.75,afade=t=in:st=0:d=0.8,afade=t=out:st=${fadeOutStart}:d=1.2,loudnorm=I=-16:LRA=7:TP=-1.5`
   ].join(";");
 
   await new Promise((resolve, reject) => {
