@@ -1879,19 +1879,28 @@ function ProductDetail({
             </button>
           </div>
           {showManual && product.manualPdf && (
-            <a
-              className="manual"
-              href={product.manualPdf}
-              target="_blank"
-              onClick={() =>
-                void telemetry("download_started", location.pathname, profile, {
-                  fileType: "product_manual",
-                  productId: product.id,
-                })
-              }
-            >
-              <Download /> Baixar manual do produto
-            </a>
+            <section className="manual-resource" aria-labelledby="product-manual-title">
+              <div>
+                <span>DOCUMENTAÇÃO</span>
+                <h2 id="product-manual-title">Manual do produto</h2>
+                <p>Consulte as instruções de instalação, utilização e segurança deste produto.</p>
+              </div>
+              <a
+                className="download"
+                href={product.manualPdf.trim()}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() =>
+                  void telemetry("download_started", location.pathname, profile, {
+                    fileType: "product_manual",
+                    productId: product.id,
+                    destination: "original_url",
+                  })
+                }
+              >
+                <Download /> Baixar ou abrir manual
+              </a>
+            </section>
           )}{" "}
           {(technicalFields.length > 0 ||
             compactDescription ||

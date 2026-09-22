@@ -1840,7 +1840,7 @@ function ProductModal({ product, data, onClose, reload, notify }: { product: Pro
         condicaoComercial: draft.condicaoComercial || null,
         prazoEntrega: draft.prazoEntrega || null,
         fichaTecnica: draft.fichaTecnica || null,
-        manualPdf: draft.manualPdf || null,
+        manualPdf: draft.manualPdf?.trim() || null,
         observacaoComercial: draft.observacaoComercial || null,
         margem: draft.margem ?? null,
         ca: draft.ca || null,

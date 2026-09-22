@@ -140,6 +140,8 @@ async function trackedDownload(url: string, metadata: Record<string, unknown> = 
     if (Platform.OS === "web" && typeof document !== "undefined") {
       const response = await fetch(url);
       if (!response.ok) throw new Error("O arquivo não está disponível.");
+      const contentType = response.headers.get("content-type")?.toLowerCase() || "";
+      if (contentType.includes("text/html")) throw new Error("O endereço informado abre uma página em vez de um arquivo.");
       const total = Number(response.headers.get("content-length")) || 0;
       let blob: Blob;
       if (response.body && total) {
@@ -174,6 +176,12 @@ async function trackedDownload(url: string, metadata: Record<string, unknown> = 
       const result = await download.downloadAsync();
       if (!result) throw new Error("A transferência não foi concluída.");
       if (result.status < 200 || result.status >= 300) throw new Error("A transferência não foi concluída.");
+      const resultHeaders = result.headers as Record<string, string> | undefined;
+      const contentType = String(resultHeaders?.["content-type"] || resultHeaders?.["Content-Type"] || "").toLowerCase();
+      if (contentType.includes("text/html")) {
+        await FileSystem.deleteAsync(result.uri, { idempotent: true });
+        throw new Error("O endereço informado abre uma página em vez de um arquivo.");
+      }
       if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(result.uri);
       else await Linking.openURL(result.uri);
     }
@@ -183,6 +191,14 @@ async function trackedDownload(url: string, metadata: Record<string, unknown> = 
     return true;
   } catch (error) {
     void trackTelemetry({ eventType: "download_failed", screen: "download", route: "download", success: false, message: error instanceof Error ? error.message : "Falha no download.", metadata }, token);
+    if (metadata.fallbackToOriginalUrl === true) {
+      try {
+        await Linking.openURL(url);
+        void trackTelemetry({ eventType: "download_opened", screen: "download", route: "download", success: true, metadata: { ...metadata, fallback: "original_url" } }, token);
+        onProgress?.(100);
+        return true;
+      } catch { /* exibe o erro padrao abaixo */ }
+    }
     notify("Download não concluído", "Não foi possível transferir o arquivo. Verifique sua internet e tente novamente.");
     return false;
   }
@@ -1991,7 +2007,7 @@ function ProductDetail({ product, role, category, subcategory, productGroup, bra
       {showCompleteDescription && <Accordion title="Descrição completa" open={Boolean(product.descricaoCompleta)}>
         <Text style={styles.detailText}>{product.descricaoCompleta}</Text>
       </Accordion>}
-      {(showTechnicalSheet || showVehicleApplications || showManual) && <Accordion title="Ficha técnica" open={Boolean(product.fichaTecnica) || showVehicleApplications || showManual}>
+      {(showTechnicalSheet || showVehicleApplications) && <Accordion title="Ficha técnica" open={Boolean(product.fichaTecnica) || showVehicleApplications}>
         {showTechnicalSheet && product.fichaTecnica ? <Text style={styles.detailText}>{product.fichaTecnica}</Text> : null}
         {showVehicleApplications && <View style={styles.vehicleApplicationBox}>
           <Text style={styles.sheetLabel}>Montadora / Modelo</Text>
@@ -2004,7 +2020,10 @@ function ProductDetail({ product, role, category, subcategory, productGroup, bra
             </View>
           ))}
         </View>}
-        {showManual && <Pressable style={styles.downloadButton} onPress={() => void trackedDownload(product.manualPdf || "", { fileType: "product_manual", productId: product.id, productCode: product.codigoInterno, fileName: `${product.codigoInterno || product.id}-manual.pdf` })}><Ionicons name="download-outline" size={18} color={colors.navy} /><Text style={styles.downloadText}>download</Text></Pressable>}
+      </Accordion>}
+      {showManual && <Accordion title="Manual do produto" open>
+        <Text style={styles.detailText}>Consulte as instruções de instalação, utilização e segurança deste produto.</Text>
+        <Pressable accessibilityRole="link" accessibilityLabel="Baixar ou abrir o manual do produto" style={styles.downloadButton} onPress={() => void trackedDownload(product.manualPdf || "", { fileType: "product_manual", productId: product.id, productCode: product.codigoInterno, fileName: `${product.codigoInterno || product.id}-manual.pdf`, fallbackToOriginalUrl: true })}><Ionicons name="download-outline" size={18} color={colors.navy} /><Text style={styles.downloadText}>Baixar ou abrir manual</Text></Pressable>
       </Accordion>}
       {showCommercialNote && <Accordion title="Observação comercial" open={Boolean(product.observacaoComercial)}>
         <Text style={styles.detailText}>{product.observacaoComercial}</Text>
@@ -3227,7 +3246,7 @@ function ProductEditor({ product, categories, brands, authToken, onClose, onSave
     condicaoComercial: draft.condicaoComercial || null,
     prazoEntrega: draft.prazoEntrega || null,
     fichaTecnica: draft.fichaTecnica || null,
-    manualPdf: draft.manualPdf || null,
+    manualPdf: draft.manualPdf?.trim() || null,
     observacaoComercial: draft.observacaoComercial || null,
     observacaoInterna: draft.observacaoInterna || null,
     margem: typeof draft.margem === "number" && !Number.isNaN(draft.margem) ? draft.margem : null,
