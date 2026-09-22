@@ -1728,16 +1728,14 @@ function ProductDetail({
     ([, value, key]) =>
       Boolean(value) && productPermission(product, data.settings, String(key)),
   );
-  const compactDescription =
-    showComplete &&
-    Boolean(product.descricaoCompleta) &&
-    String(product.descricaoCompleta).length <= 360;
-  const compactApplications = showApplications && apps.length <= 3;
   return (
     <section className="detail-page">
-      <button className="back" onClick={() => history.back()}>
-        <ChevronLeft /> Voltar
-      </button>
+      <div className="product-breadcrumb">
+        <button className="back" onClick={() => history.back()}>
+          <ChevronLeft /> Voltar
+        </button>
+        {hierarchyPath && <span>{hierarchyPath}</span>}
+      </div>
       <div className="detail-grid">
         <div className="gallery">
           <div className="main-image">
@@ -1802,10 +1800,12 @@ function ProductDetail({
           )}
         </div>
         <div className="product-info">
-          {showCategory && (
-            <div className="eyebrow">{category?.nome || "Produto Briland"}</div>
-          )}
-          {showCode && <div className="code">{product.codigoInterno}</div>}
+          <div className="product-kicker">
+            {showCategory && (
+              <div className="eyebrow">{category?.nome || "Produto Briland"}</div>
+            )}
+            {showCode && <div className="code">Cód. {product.codigoInterno}</div>}
+          </div>
           {showName && <h1>{product.nome}</h1>}
           {showShort && product.descricaoCurta && (
             <p className="lead">{product.descricaoCurta}</p>
@@ -1878,92 +1878,40 @@ function ProductDetail({
               <Share2 />
             </button>
           </div>
-          {showManual && product.manualPdf && (
-            <section className="manual-resource" aria-labelledby="product-manual-title">
-              <div>
-                <span>DOCUMENTAÇÃO</span>
-                <h2 id="product-manual-title">Manual do produto</h2>
-                <p>Consulte as instruções de instalação, utilização e segurança deste produto.</p>
-              </div>
-              <a
-                className="download"
-                href={product.manualPdf.trim()}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() =>
-                  void telemetry("download_started", location.pathname, profile, {
-                    fileType: "product_manual",
-                    productId: product.id,
-                    destination: "original_url",
-                  })
-                }
-              >
-                <Download /> Baixar ou abrir manual
-              </a>
-            </section>
-          )}{" "}
-          {(technicalFields.length > 0 ||
-            compactDescription ||
-            compactApplications) && (
-            <div className="inline-product-details">
-              {(technicalFields.length > 0 || compactDescription) && (
-                <section>
-                  <h2>Informações do produto</h2>
-                  {compactDescription && <p>{product.descricaoCompleta}</p>}
-                  {technicalFields.length > 0 && (
-                    <dl>
-                      {technicalFields.map(([label, value]) => (
-                        <div key={String(label)}>
-                          <dt>{label}</dt>
-                          <dd>{value}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  )}
-                </section>
-              )}
-              {compactApplications && (
-                <section>
-                  <h2>Aplicações por veículo</h2>
-                  {apps.length ? (
-                    <div className="applications">
-                      {apps.map((app) => (
-                        <div key={app.id}>
-                          <b>
-                            {app.montadoraNome} {app.modeloNome}
-                          </b>
-                          <span>{vehicleYearLabel(app)}</span>
-                          {app.observacaoComercial && (
-                            <small>{app.observacaoComercial}</small>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p>
-                      Consulte nossa equipe para confirmar a aplicação correta.
-                    </p>
-                  )}
-                </section>
-              )}
-            </div>
-          )}
         </div>
       </div>
-      <div className="detail-panels">
-        {showComplete && !compactDescription && (
-          <article>
-            <h2>Descrição completa</h2>
+      <div className="product-detail-sections">
+        {(showComplete || technicalFields.length > 0) && (
+          <article className="product-overview-card">
+            <div className="product-section-heading">
+              <span>DETALHES</span>
+              <h2>Sobre este produto</h2>
+            </div>
+            {showComplete && (
             <p>
               {product.descricaoCompleta ||
                 "Informações comerciais sob consulta."}
             </p>
+            )}
+            {technicalFields.length > 0 && (
+              <dl>
+                {technicalFields.map(([label, value]) => (
+                  <div key={String(label)}>
+                    <dt>{label}</dt>
+                    <dd>{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
           </article>
         )}
-        {showApplications && !compactApplications && (
-          <article>
-            <h2>Aplicações por veículo</h2>
-            <div className="applications">
+        {showApplications && (
+          <article className="product-applications-card">
+            <div className="product-section-heading">
+              <span>COMPATIBILIDADE</span>
+              <h2>Aplicações por veículo</h2>
+            </div>
+            {apps.length ? <div className="applications">
               {apps.map((app) => (
                 <div key={app.id}>
                   <b>
@@ -1975,13 +1923,40 @@ function ProductDetail({
                   )}
                 </div>
               ))}
-            </div>
+            </div> : <p>Consulte nossa equipe para confirmar a aplicação correta.</p>}
           </article>
         )}
         {showTechnical && (
-          <article>
-            <h2>Ficha técnica</h2>
+          <article className="product-technical-card">
+            <div className="product-section-heading">
+              <span>ESPECIFICAÇÕES</span>
+              <h2>Ficha técnica</h2>
+            </div>
             <p>{product.fichaTecnica}</p>
+          </article>
+        )}
+        {showManual && product.manualPdf && (
+          <article className="manual-resource" aria-labelledby="product-manual-title">
+            <div>
+              <span>DOCUMENTAÇÃO</span>
+              <h2 id="product-manual-title">Manual do produto</h2>
+              <p>Consulte as instruções de instalação, utilização e segurança deste produto.</p>
+            </div>
+            <a
+              className="download"
+              href={product.manualPdf.trim()}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() =>
+                void telemetry("download_started", location.pathname, profile, {
+                  fileType: "product_manual",
+                  productId: product.id,
+                  destination: "original_url",
+                })
+              }
+            >
+              <Download /> Baixar ou abrir manual
+            </a>
           </article>
         )}
       </div>
