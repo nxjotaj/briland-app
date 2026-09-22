@@ -121,7 +121,6 @@ export type ProdutoAplicacao = { produtoId: string; aplicacaoId: string };
 
 export type VideoTemplateKey = "product-spotlight" | "commercial-offer" | "new-arrival";
 export type VideoRenderFormat = "vertical" | "square";
-export type VideoGenerationMode = "catalog" | "ai";
 export type VideoRenderJob = {
   id: string;
   createdBy: string;
@@ -129,16 +128,12 @@ export type VideoRenderJob = {
   templateKey: VideoTemplateKey;
   format: VideoRenderFormat;
   durationSeconds: 10 | 15 | 30;
-  generationMode?: VideoGenerationMode;
-  aiModel?: string | null;
-  prompt?: string | null;
-  generationSettings?: Record<string, unknown> | null;
   headline: string;
   subheadline?: string | null;
   cta?: string | null;
   status: "QUEUED" | "PREPARING" | "RENDERING" | "UPLOADING" | "COMPLETED" | "FAILED" | "CANCELLED";
   progress: number;
-  inputPayload: { product?: { id?: string; name?: string; code?: string | null; price?: number | null; shortDescription?: string | null; imageUrl?: string | null }; ai?: { model?: string; prompt?: string; resolution?: string; generateAudio?: boolean; providerRequestId?: string; sourceUrl?: string } };
+  inputPayload: { product?: { id?: string; name?: string; code?: string | null; price?: number | null; shortDescription?: string | null; imageUrl?: string | null } };
   outputStorageKey?: string | null;
   errorMessage?: string | null;
   createdAt: string;

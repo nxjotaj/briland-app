@@ -10,18 +10,12 @@ import { addSoundtrack } from "../src/soundtrack.mjs";
 const directory = await mkdtemp(join(tmpdir(), "briland-video-smoke-"));
 const silentOutput = join(directory, "silent.mp4");
 const output = join(directory, "smoke.mp4");
-const scene = join(directory, "ai-scene.mp4");
 const cli = fileURLToPath(new URL("../node_modules/hyperframes/bin/hyperframes.mjs", import.meta.url));
 const windowsChromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const browserPath = process.env.HYPERFRAMES_BROWSER_PATH || (process.platform === "win32" && existsSync(windowsChromePath) ? windowsChromePath : "");
 const renderEnvironment = { ...process.env, HYPERFRAMES_NO_TELEMETRY: "1", ...(browserPath ? { HYPERFRAMES_BROWSER_PATH: browserPath } : {}) };
 
 try {
-  await new Promise((resolve, reject) => {
-    const child = spawn("ffmpeg", ["-y", "-f", "lavfi", "-i", "color=c=0x175a9f:s=1080x1080:d=1:r=30", "-c:v", "libx264", "-pix_fmt", "yuv420p", scene], { stdio: "ignore" });
-    child.on("error", reject);
-    child.on("close", (code) => code === 0 ? resolve() : reject(new Error(`Cena sintética encerrou com código ${code}.`)));
-  });
   await copyFile(fileURLToPath(new URL("../assets/briland-logo.png", import.meta.url)), join(directory, "briland-logo.png"));
   await writeFile(join(directory, "index.html"), renderComposition({
     id: "smoke",
@@ -32,7 +26,7 @@ try {
     subheadline: "Qualidade e confiança para o seu negócio.",
     cta: "Solicite uma cotação",
     inputPayload: { product: { name: "Produto Briland", code: "BRI-001", price: 199.9 } }
-  }, null, "briland-logo.png", "ai-scene.mp4"), "utf8");
+  }, null, "briland-logo.png"), "utf8");
 
   await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [cli, "lint", ".", "--verbose"], {

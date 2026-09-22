@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Clapperboard, Download, Loader2, Play, RefreshCw, Sparkles, X } from "lucide-react";
+import { Clapperboard, Download, Loader2, Play, RefreshCw, Sparkles, Trash2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { Produto, VideoRenderJob, VideoRenderFormat, VideoTemplateKey } from "@/lib/types";
 import brilandLogo from "../../../assets/briland-logo.png";
-import { DEFAULT_VIDEO_AI_MODEL, VIDEO_AI_MODELS } from "@/lib/video-ai-models";
 
 const templates: Array<{ key: VideoTemplateKey; name: string; description: string }> = [
   { key: "product-spotlight", name: "Destaque de produto", description: "Apresentação limpa com imagem, nome e chamada comercial." },
@@ -29,15 +28,11 @@ export function VideoStudio({ products, notify }: { products: Produto[]; notify:
   const [jobs, setJobs] = useState<VideoRenderJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [productId, setProductId] = useState(availableProducts[0]?.id || "");
   const [templateKey, setTemplateKey] = useState<VideoTemplateKey>("product-spotlight");
   const [format, setFormat] = useState<VideoRenderFormat>("vertical");
   const [duration, setDuration] = useState<10 | 15 | 30>(10);
-  const [generationMode, setGenerationMode] = useState<"catalog" | "ai">("catalog");
-  const [aiModel, setAiModel] = useState(DEFAULT_VIDEO_AI_MODEL.id);
-  const [aiPrompt, setAiPrompt] = useState("");
-  const [aiResolution, setAiResolution] = useState("1080p");
-  const [generateAiAudio, setGenerateAiAudio] = useState(true);
   const selectedProduct = availableProducts.find((product) => product.id === productId);
   const [headline, setHeadline] = useState("");
   const [subheadline, setSubheadline] = useState("");
@@ -81,21 +76,7 @@ export function VideoStudio({ products, notify }: { products: Produto[]; notify:
       cta: cta.trim()
     };
     setSubmitting(true);
-    if (generationMode === "ai" && !aiPrompt.trim()) return notify("Descreva a cena que a IA deve criar.");
-    const rpcName = generationMode === "ai" ? "create_ai_video_render_job" : "create_video_render_job";
-    const rpcPayload = generationMode === "ai" ? {
-      p_product_id: request.productId,
-      p_template_key: request.templateKey,
-      p_format: request.format,
-      p_duration_seconds: request.durationSeconds,
-      p_headline: request.headline,
-      p_subheadline: request.subheadline,
-      p_cta: request.cta,
-      p_ai_model: aiModel,
-      p_prompt: aiPrompt.trim(),
-      p_resolution: aiResolution,
-      p_generate_audio: generateAiAudio
-    } : {
+    const { data, error } = await supabase.rpc("create_video_render_job", {
       p_product_id: request.productId,
       p_template_key: request.templateKey,
       p_format: request.format,
@@ -103,8 +84,7 @@ export function VideoStudio({ products, notify }: { products: Produto[]; notify:
       p_headline: request.headline,
       p_subheadline: request.subheadline,
       p_cta: request.cta
-    };
-    const { data, error } = await supabase.rpc(rpcName, rpcPayload);
+    });
     setSubmitting(false);
     if (error) return notify(`Não foi possível solicitar o vídeo: ${error.message}`);
     const created = (Array.isArray(data) ? data[0] : data) as VideoRenderJob | null;
@@ -129,6 +109,24 @@ export function VideoStudio({ products, notify }: { products: Produto[]; notify:
     window.open(data.signedUrl, "_blank", "noopener,noreferrer");
   };
 
+  const remove = async (job: VideoRenderJob) => {
+    if (!["COMPLETED", "FAILED", "CANCELLED"].includes(job.status)) return notify("Cancele ou aguarde a renderização antes de excluir.");
+    if (!window.confirm("Excluir permanentemente este vídeo e seu arquivo?")) return;
+    setDeletingId(job.id);
+    try {
+      if (job.outputStorageKey) {
+        const { error: storageError } = await supabase.storage.from("marketing-videos").remove([job.outputStorageKey]);
+        if (storageError) return notify(`Não foi possível excluir o arquivo: ${storageError.message}`);
+      }
+      const { error } = await supabase.rpc("delete_video_render_job", { p_job_id: job.id });
+      if (error) return notify(`Não foi possível excluir o vídeo: ${error.message}`);
+      notify("Vídeo excluído permanentemente.");
+      await loadJobs();
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const imageUrl = selectedProduct?.imagemDetalhe || selectedProduct?.imagemPrincipal || selectedProduct?.imagemOriginal || "";
   const price = selectedProduct?.preco != null ? Number(selectedProduct.preco).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "Consulte";
 
@@ -143,31 +141,18 @@ export function VideoStudio({ products, notify }: { products: Produto[]; notify:
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,.9fr)]">
       <section className="panel-card p-5 lg:p-6">
         <h3 className="text-lg font-black">Novo vídeo</h3>
-        <div className="mt-5 grid grid-cols-2 rounded-2xl bg-soft p-1">
-          <button type="button" onClick={() => setGenerationMode("catalog")} className={`rounded-xl px-4 py-3 text-sm font-black transition ${generationMode === "catalog" ? "bg-white text-navy shadow" : "text-muted"}`}>Composição Briland</button>
-          <button type="button" onClick={() => setGenerationMode("ai")} className={`rounded-xl px-4 py-3 text-sm font-black transition ${generationMode === "ai" ? "bg-navy text-white shadow" : "text-muted"}`}><Sparkles className="mr-2 inline" size={16} />Criativo com IA</button>
-        </div>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <label className="sm:col-span-2"><span className="mb-2 block text-xs font-black uppercase tracking-wider text-muted">Produto</span><select className="input" value={productId} onChange={(event) => { const next = availableProducts.find((item) => item.id === event.target.value); setProductId(event.target.value); setHeadline(next?.nome || ""); setSubheadline(next?.descricaoCurta || "Qualidade e confiança para o seu negócio."); }}><option value="">Selecione</option>{availableProducts.map((product) => <option key={product.id} value={product.id}>{product.codigoInterno ? `${product.codigoInterno} — ` : ""}{product.nome}</option>)}</select></label>
           <label><span className="mb-2 block text-xs font-black uppercase tracking-wider text-muted">Formato</span><select className="input" value={format} onChange={(event) => setFormat(event.target.value as VideoRenderFormat)}><option value="vertical">Vertical · Reels/Stories</option><option value="square">Quadrado · Feed</option></select></label>
           <label><span className="mb-2 block text-xs font-black uppercase tracking-wider text-muted">Duração</span><select className="input" value={duration} onChange={(event) => setDuration(Number(event.target.value) as 10 | 15 | 30)}><option value={10}>10 segundos</option><option value={15}>15 segundos</option><option value={30}>30 segundos</option></select></label>
         </div>
-        {generationMode === "ai" && <div className="mt-5 space-y-4 rounded-2xl border border-blue-100 bg-blue-50/70 p-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label><span className="mb-2 block text-xs font-black uppercase tracking-wider text-blue-900">Modelo de geração</span><select className="input" value={aiModel} onChange={(event) => setAiModel(event.target.value)}>{VIDEO_AI_MODELS.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select></label>
-            <label><span className="mb-2 block text-xs font-black uppercase tracking-wider text-blue-900">Resolução criativa</span><select className="input" value={aiResolution} onChange={(event) => setAiResolution(event.target.value)}><option value="720p">720p · mais rápido</option><option value="1080p">1080p · alta qualidade</option></select></label>
-          </div>
-          <label><span className="mb-2 block text-xs font-black uppercase tracking-wider text-blue-900">Direção criativa</span><textarea className="input min-h-28" maxLength={1200} value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} placeholder="Ex.: câmera orbitando lentamente o produto em um ambiente automotivo premium, luz azul e dourada, movimento suave..." /></label>
-          <label className="flex items-center gap-3 text-sm font-bold text-navy"><input type="checkbox" checked={generateAiAudio} onChange={(event) => setGenerateAiAudio(event.target.checked)} /> Solicitar áudio nativo quando o modelo oferecer suporte</label>
-          <p className="text-xs font-semibold text-blue-900/65">A cena da IA será usada como matéria-prima. Logo, produto, textos, CTA e volume final continuam sob controle da Briland.</p>
-        </div>}
         <div className="mt-5 grid gap-3 sm:grid-cols-3">{templates.map((template) => <button type="button" key={template.key} onClick={() => setTemplateKey(template.key)} className={`rounded-2xl border p-4 text-left transition ${templateKey === template.key ? "border-blue-700 bg-blue-50 ring-2 ring-blue-100" : "border-line bg-white hover:border-blue-300"}`}><div className="font-black">{template.name}</div><div className="mt-2 text-xs font-semibold text-muted">{template.description}</div></button>)}</div>
         <div className="mt-5 space-y-4">
           <label><span className="mb-2 block text-xs font-black uppercase tracking-wider text-muted">Título</span><input className="input" maxLength={100} value={headline} onChange={(event) => setHeadline(event.target.value)} /></label>
           <label><span className="mb-2 block text-xs font-black uppercase tracking-wider text-muted">Texto complementar</span><textarea className="input min-h-24" maxLength={180} value={subheadline} onChange={(event) => setSubheadline(event.target.value)} /></label>
           <label><span className="mb-2 block text-xs font-black uppercase tracking-wider text-muted">Chamada final</span><input className="input" maxLength={80} value={cta} onChange={(event) => setCta(event.target.value)} /></label>
         </div>
-        <button type="button" className="btn-primary mt-6" disabled={submitting || !selectedProduct} onClick={() => void submit()}>{submitting ? <Loader2 className="animate-spin" size={17} /> : generationMode === "ai" ? <Sparkles size={17} /> : <Play size={17} />} {generationMode === "ai" ? "Gerar cena e finalizar" : "Gerar vídeo"}</button>
+        <button type="button" className="btn-primary mt-6" disabled={submitting || !selectedProduct} onClick={() => void submit()}>{submitting ? <Loader2 className="animate-spin" size={17} /> : <Play size={17} />} Gerar vídeo</button>
       </section>
 
       <section className="panel-card p-5 lg:p-6"><div className="mb-4 flex items-center justify-between"><h3 className="text-lg font-black">Prévia do layout</h3><span className="rounded-full bg-soft px-3 py-1 text-xs font-black">{format === "vertical" ? "9:16" : "1:1"}</span></div>
@@ -181,7 +166,7 @@ export function VideoStudio({ products, notify }: { products: Produto[]; notify:
     </div>
 
     <section className="panel-card overflow-hidden"><div className="flex items-center justify-between border-b border-line p-5 lg:p-6"><div><h3 className="text-lg font-black">Histórico de renderizações</h3><p className="mt-1 text-xs font-semibold text-muted">Os arquivos concluídos são privados e baixados por link temporário.</p></div><button className="btn-white" onClick={() => void loadJobs()} disabled={loading}>{loading ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />} Atualizar</button></div>
-      <div className="overflow-x-auto"><table className="w-full min-w-[840px] text-left"><thead className="bg-soft text-xs uppercase tracking-wider text-muted"><tr><th className="p-4">Solicitação</th><th className="p-4">Produto</th><th className="p-4">Formato</th><th className="p-4">Status</th><th className="p-4">Progresso</th><th className="p-4 text-right">Ações</th></tr></thead><tbody className="divide-y divide-line">{jobs.map((job) => { const product = products.find((item) => item.id === job.productId); return <tr key={job.id}><td className="p-4"><div className="font-black">{job.headline || "Sem título"}</div><div className="mt-1 max-w-xs text-xs font-semibold text-slate-600">{job.subheadline || "Sem texto complementar"} · {job.cta || "Sem chamada final"}</div><div className="mt-1 text-xs text-muted">{new Date(job.createdAt).toLocaleString("pt-BR")}</div></td><td className="p-4 text-sm font-bold">{product?.nome || String(job.inputPayload?.product?.name || "Produto")}</td><td className="p-4 text-sm font-bold">{job.format === "vertical" ? "9:16 · Story/Reels" : "1:1 · Feed"} · {job.durationSeconds}s</td><td className="p-4"><span className={`rounded-full px-3 py-1 text-xs font-black ${statusTone[job.status]}`}>{statusLabel[job.status]}</span>{job.errorMessage && <div className="mt-2 max-w-sm text-xs font-semibold text-red-700">{job.errorMessage}</div>}</td><td className="p-4"><div className="h-2 w-32 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-blue-700 transition-all" style={{ width: `${job.progress}%` }} /></div><div className="mt-1 text-xs font-bold text-muted">{job.progress}%</div></td><td className="p-4"><div className="flex justify-end gap-2">{job.status === "COMPLETED" && job.outputStorageKey && <button className="btn-white" onClick={() => void download(job)}><Download size={16} /> Baixar</button>}{job.status === "QUEUED" && <button className="icon-btn" aria-label="Cancelar renderização" onClick={() => void cancel(job.id)}><X size={16} /></button>}</div></td></tr>; })}{!jobs.length && !loading && <tr><td colSpan={6} className="p-10 text-center text-sm font-semibold text-muted">Nenhum vídeo solicitado.</td></tr>}</tbody></table></div>
+      <div className="overflow-x-auto"><table className="w-full min-w-[840px] text-left"><thead className="bg-soft text-xs uppercase tracking-wider text-muted"><tr><th className="p-4">Solicitação</th><th className="p-4">Produto</th><th className="p-4">Formato</th><th className="p-4">Status</th><th className="p-4">Progresso</th><th className="p-4 text-right">Ações</th></tr></thead><tbody className="divide-y divide-line">{jobs.map((job) => { const product = products.find((item) => item.id === job.productId); const canDelete = ["COMPLETED", "FAILED", "CANCELLED"].includes(job.status); return <tr key={job.id}><td className="p-4"><div className="font-black">{job.headline || "Sem título"}</div><div className="mt-1 max-w-xs text-xs font-semibold text-slate-600">{job.subheadline || "Sem texto complementar"} · {job.cta || "Sem chamada final"}</div><div className="mt-1 text-xs text-muted">{new Date(job.createdAt).toLocaleString("pt-BR")}</div></td><td className="p-4 text-sm font-bold">{product?.nome || String(job.inputPayload?.product?.name || "Produto")}</td><td className="p-4 text-sm font-bold">{job.format === "vertical" ? "9:16 · Story/Reels" : "1:1 · Feed"} · {job.durationSeconds}s</td><td className="p-4"><span className={`rounded-full px-3 py-1 text-xs font-black ${statusTone[job.status]}`}>{statusLabel[job.status]}</span>{job.errorMessage && <div className="mt-2 max-w-sm text-xs font-semibold text-red-700">{job.errorMessage}</div>}</td><td className="p-4"><div className="h-2 w-32 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-blue-700 transition-all" style={{ width: `${job.progress}%` }} /></div><div className="mt-1 text-xs font-bold text-muted">{job.progress}%</div></td><td className="p-4"><div className="flex justify-end gap-2">{job.status === "COMPLETED" && job.outputStorageKey && <button className="btn-white" onClick={() => void download(job)}><Download size={16} /> Baixar</button>}{job.status === "QUEUED" && <button className="icon-btn" aria-label="Cancelar renderização" onClick={() => void cancel(job.id)}><X size={16} /></button>}{canDelete && <button className="icon-btn text-red-700" aria-label="Excluir vídeo" title="Excluir vídeo" disabled={deletingId === job.id} onClick={() => void remove(job)}>{deletingId === job.id ? <Loader2 className="animate-spin" size={16} /> : <Trash2 size={16} />}</button>}</div></td></tr>; })}{!jobs.length && !loading && <tr><td colSpan={6} className="p-10 text-center text-sm font-semibold text-muted">Nenhum vídeo solicitado.</td></tr>}</tbody></table></div>
     </section>
   </div>;
 }

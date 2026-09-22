@@ -15,5 +15,8 @@ yarn-error.log*
 .vercel
 .idea/
 tmp/
+.codex-tmp-export/
+output/
+supabase/.temp/
 *.tsbuildinfo
 .codexignore.txt

@@ -20,6 +20,7 @@ import { supabase } from "@/lib/supabase";
 import type { Produto, SalesOrder, SalesOrderItem, Usuario } from "@/lib/types";
 import { orderPdfFile } from "@/lib/order-pdf";
 import { AnimatedPdfDownload } from "@/components/animated-pdf-download";
+import { CommercialOrderDashboard } from "@/components/commercial-order-dashboard";
 
 const statusLabel: Record<string, string> = {
   DRAFT: "Rascunho",
@@ -213,6 +214,7 @@ export function SalesOrders({
       <div className="orders-hero mb-6 overflow-hidden rounded-[28px] p-6 lg:p-8">
         <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between"><div className="border-l-4 border-[#dca900] pl-5"><div className="text-xs font-black uppercase tracking-[.2em] text-[#8a6800]">Central comercial</div><h2 className="mt-2 text-3xl font-black tracking-tight text-[#07162d]">Gestão de pedidos</h2><p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-slate-600">Acompanhe os pedidos recebidos, priorize os novos e tome decisões comerciais com todas as informações organizadas.</p></div><div className="min-w-[255px] rounded-2xl border border-[#15395f] bg-[#071f3d] px-5 py-4 shadow-lg"><div className="text-xs font-bold text-white/75">Volume aguardando decisão</div><div className="mt-1 text-2xl font-black text-[#ffd24a]">{money(orders.filter((o) => o.status === "SUBMITTED").reduce((a, o) => a + Number(o.total), 0))}</div></div></div>
       </div>
+      <CommercialOrderDashboard orders={orders} />
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <button onClick={() => setStatus("SUBMITTED")} className="rounded-[22px] border border-red-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex items-center justify-between"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-100 text-red-700"><Eye size={19} /></div><span className="rounded-full bg-red-600 px-2.5 py-1 text-[10px] font-black text-white">URGENTE</span></div><div className="mt-5 text-3xl font-black text-slate-950">{newOrderIds.length}</div><div className="mt-1 text-sm font-black text-slate-900">Novos pedidos</div><div className="mt-1 text-xs font-semibold text-slate-600">Ainda não visualizados</div></button>
         <button onClick={() => setStatus("SUBMITTED")} className="rounded-[22px] border border-blue-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100 text-blue-700"><RefreshCw size={19} /></div><div className="mt-5 text-3xl font-black text-slate-950">{orders.filter((o) => o.status === "SUBMITTED").length}</div><div className="mt-1 text-sm font-black text-slate-900">Aguardando análise</div><div className="mt-1 text-xs font-semibold text-slate-600">Fila comercial ativa</div></button>
@@ -736,7 +738,7 @@ function OrderModal({
                 onClick={() => void transition("APPROVE")}
               >
                 <CheckCircle2 size={17} />
-                Aprovar e baixar saldo
+                Aprovar pedido
               </button>
             </>
           )}

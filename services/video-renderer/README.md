@@ -3,16 +3,6 @@
 Worker isolado que consome a fila `VideoRenderJob`, cria uma composição HTML controlada,
 renderiza com HyperFrames e envia o MP4 ao bucket privado `marketing-videos`.
 
-O Estúdio unificado aceita dois tipos de job:
-
-- `catalog`: composição determinística com produto, textos e identidade Briland;
-- `ai`: solicita uma cena a um provedor compatível com a API adotada pelo OpenHiggsfield e,
-  depois, usa essa cena apenas como matéria-prima da composição final controlada.
-
-No modo IA, configure `AI_VIDEO_API_BASE_URL` e `AI_VIDEO_API_KEY`. A chave fica somente no
-worker. O Admin nunca recebe credenciais do provedor. O worker aceita apenas modelos presentes
-na allow-list, limita downloads e normaliza a trilha do MP4 final.
-
 ## Execução local
 
 1. Copie `.env.example` para `.env` e preencha as variáveis.

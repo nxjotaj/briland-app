@@ -7,7 +7,6 @@ import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { renderComposition } from "./template.mjs";
 import { addSoundtrack } from "./soundtrack.mjs";
-import { generateAiScene } from "./ai-provider.mjs";
 
 const required = (name) => {
   const value = process.env[name]?.trim();
@@ -53,20 +52,6 @@ async function downloadProductImage(urlValue, directory) {
   return fileName;
 }
 
-async function downloadGeneratedVideo(urlValue, directory) {
-  const url = new URL(urlValue);
-  if (url.protocol !== "https:") throw new Error("O provedor retornou uma URL de vídeo insegura.");
-  const response = await fetch(url, { signal: AbortSignal.timeout(120000) });
-  if (!response.ok) throw new Error(`Não foi possível baixar a cena gerada (${response.status}).`);
-  const contentType = response.headers.get("content-type") || "";
-  if (!contentType.startsWith("video/") && !url.pathname.toLowerCase().endsWith(".mp4")) throw new Error("O provedor não retornou um vídeo válido.");
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > 300 * 1024 * 1024) throw new Error("A cena gerada ultrapassa 300 MB.");
-  const fileName = "ai-scene.mp4";
-  await writeFile(join(directory, fileName), bytes);
-  return fileName;
-}
-
 async function runRender(directory, outputPath) {
   await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [cliPath, "render", "-c", "./index.html", "-o", outputPath], {
@@ -85,18 +70,9 @@ async function processJob(job) {
   const directory = await mkdtemp(join(tmpdir(), "briland-video-"));
   try {
     const imageFileName = await downloadProductImage(job.inputPayload?.product?.imageUrl, directory);
-    let sceneVideoFileName = null;
-    if (job.generationMode === "ai" || job.inputPayload?.ai) {
-      await updateJob(job.id, { status: "PREPARING", progress: 10 });
-      const generated = await generateAiScene(job, async (requestId) => {
-        await updateJob(job.id, { providerRequestId: requestId, progress: 15 });
-      });
-      sceneVideoFileName = await downloadGeneratedVideo(generated.videoUrl, directory);
-      await updateJob(job.id, { progress: 22 });
-    }
     const logoFileName = "briland-logo.png";
     await copyFile(logoPath, join(directory, logoFileName));
-    await writeFile(join(directory, "index.html"), renderComposition(job, imageFileName, logoFileName, sceneVideoFileName), "utf8");
+    await writeFile(join(directory, "index.html"), renderComposition(job, imageFileName, logoFileName), "utf8");
     await updateJob(job.id, { status: "RENDERING", progress: 25 });
     const silentOutputPath = join(directory, "silent.mp4");
     const outputPath = join(directory, "output.mp4");
