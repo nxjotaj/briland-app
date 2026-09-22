@@ -615,7 +615,9 @@ export default function Page() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [unseenOrders, setUnseenOrders] = useState<SalesOrder[]>([]);
   const [newOrderAlertOpen, setNewOrderAlertOpen] = useState(false);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | "unsupported">("unsupported");
   const unseenOrderIdsRef = useRef<Set<string>>(new Set());
+  const ordersNotificationReadyRef = useRef(false);
   const adminPresenceSession = useRef(`admin_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`);
   const adminVisitorId = useRef(`admin_visitor_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`);
   const adminLocation = useRef<{ city: string | null; state: string | null; country: string | null; fetchedAt: number }>({ city: null, state: null, country: null, fetchedAt: 0 });
@@ -625,10 +627,46 @@ export default function Page() {
     window.setTimeout(() => setToast(""), 3500);
   };
 
+  const enableDesktopNotifications = async () => {
+    if (!("Notification" in window)) {
+      setNotificationPermission("unsupported");
+      notify("Este navegador não oferece notificações nativas.");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setNotificationPermission(permission);
+    if (permission === "granted") {
+      const notification = new Notification("Notificações Briland ativadas", {
+        body: "Você será avisado quando um novo pedido chegar.",
+        icon: "/catalog-assets/briland-logo.png",
+        tag: "briland-notifications-enabled",
+      });
+      window.setTimeout(() => notification.close(), 4500);
+      notify("Notificações do navegador ativadas.");
+    } else {
+      notify("Permissão de notificações não concedida. Libere-a nas configurações do navegador.");
+    }
+  };
+
+  useEffect(() => {
+    if (!("Notification" in window)) return;
+    setNotificationPermission(Notification.permission);
+  }, []);
+
+  useEffect(() => {
+    const baseTitle = "Briland Admin";
+    document.title = unseenOrders.length > 0 ? `(${unseenOrders.length}) Novos pedidos | ${baseTitle}` : baseTitle;
+    const badgeNavigator = navigator as Navigator & { setAppBadge?: (contents?: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
+    if (unseenOrders.length > 0) void badgeNavigator.setAppBadge?.(unseenOrders.length).catch(() => undefined);
+    else void badgeNavigator.clearAppBadge?.().catch(() => undefined);
+    return () => { document.title = baseTitle; };
+  }, [unseenOrders.length]);
+
   useEffect(() => {
     if (!sessionToken || !isMaster(adminUser?.role)) {
       setUnseenOrders([]);
       unseenOrderIdsRef.current = new Set();
+      ordersNotificationReadyRef.current = false;
       return;
     }
     let mounted = true;
@@ -646,10 +684,29 @@ export default function Page() {
         return;
       }
       const next = incoming || [];
-      const hasUnannounced = next.some((order) => !unseenOrderIdsRef.current.has(order.id));
+      const newOrders = ordersNotificationReadyRef.current ? next.filter((order) => !unseenOrderIdsRef.current.has(order.id)) : [];
+      const hasUnannounced = newOrders.length > 0 || (!ordersNotificationReadyRef.current && next.length > 0);
       unseenOrderIdsRef.current = new Set(next.map((order) => order.id));
+      ordersNotificationReadyRef.current = true;
       setUnseenOrders(next);
       if (next.length > 0 && hasUnannounced) setNewOrderAlertOpen(true);
+      if (newOrders.length > 0 && "Notification" in window && Notification.permission === "granted") {
+        newOrders.forEach((order) => {
+          const client = String(order.clientSnapshot?.company || order.clientSnapshot?.name || "Cliente não identificado");
+          const notification = new Notification(`Novo pedido ${String(order.orderNumber).padStart(6, "0")}`, {
+            body: `${client} · ${money(order.total)}`,
+            icon: "/catalog-assets/briland-logo.png",
+            tag: `briland-order-${order.id}`,
+            requireInteraction: true,
+          });
+          notification.onclick = () => {
+            window.focus();
+            setNewOrderAlertOpen(false);
+            setActive("Pedidos");
+            notification.close();
+          };
+        });
+      }
     };
     void refreshUnseenOrders();
     const channel = supabase
@@ -1075,7 +1132,8 @@ export default function Page() {
                 <Search size={17} className="text-muted" />
                 <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar no painel..." className="w-full bg-transparent outline-none" />
               </label>
-              <button aria-label="Notificações" onClick={() => setActive("Pedidos")} className="icon-btn relative"><Bell size={17} />{unseenOrders.length > 0 && <span className="absolute -right-2 -top-2 flex min-h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-black text-white">{unseenOrders.length}</span>}</button>
+              {notificationPermission === "default" && <button onClick={() => void enableDesktopNotifications()} className="hidden h-11 items-center gap-2 rounded-full border border-amber-300 bg-amber-50 px-4 text-xs font-black text-amber-900 lg:flex"><Bell size={16} /> Ativar alertas</button>}
+              <button aria-label={notificationPermission === "default" ? "Ativar notificações do navegador" : "Abrir pedidos"} title={notificationPermission === "denied" ? "Notificações bloqueadas no navegador" : notificationPermission === "granted" ? "Notificações do navegador ativas" : "Notificações"} onClick={() => notificationPermission === "default" ? void enableDesktopNotifications() : setActive("Pedidos")} className={`icon-btn relative ${notificationPermission === "granted" ? "border-emerald-300 bg-emerald-50 text-emerald-700" : notificationPermission === "denied" ? "border-red-200 bg-red-50 text-red-700" : ""}`}><Bell size={17} />{unseenOrders.length > 0 && <span className="absolute -right-2 -top-2 flex min-h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-black text-white">{unseenOrders.length}</span>}</button>
               <button onClick={() => void reloadAll()} className="btn-primary h-11 px-4">{loading ? <Loader2 className="animate-spin" size={17} /> : <RefreshCw size={17} />}<span className="hidden sm:inline">Atualizar</span></button>
             </div>
           </div>
