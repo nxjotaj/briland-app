@@ -79,7 +79,7 @@ export function SalesOrders({
   const [representativeFilter, setRepresentativeFilter] = useState("ALL");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [sort, setSort] = useState("OLDEST");
+  const [sort, setSort] = useState("NEWEST");
   const load = async () => {
     setLoading(true);
     const [o, s] = await Promise.all([
@@ -208,7 +208,7 @@ export function SalesOrders({
     setRepresentativeFilter("ALL");
     setDateFrom("");
     setDateTo("");
-    setSort("OLDEST");
+    setSort("NEWEST");
   };
   return (
     <>
@@ -240,7 +240,7 @@ export function SalesOrders({
           <label className="relative"><span className="mb-1 block text-[10px] font-black uppercase text-slate-500">Representante</span><select className="input appearance-none pr-10" value={representativeFilter} onChange={(e) => setRepresentativeFilter(e.target.value)}><option value="ALL">Todos os representantes</option>{representativeOptions.map((representative) => <option key={representative.id} value={representative.id}>{representative.name}</option>)}</select><ChevronDown className="pointer-events-none absolute bottom-4 right-3 text-slate-400" size={16} /></label>
           <label><span className="mb-1 block text-[10px] font-black uppercase text-slate-500">De</span><input className="input" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
           <label><span className="mb-1 block text-[10px] font-black uppercase text-slate-500">Até</span><input className="input" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
-          <label className="relative"><span className="mb-1 block text-[10px] font-black uppercase text-slate-500">Ordenação</span><select className="input appearance-none pr-10" value={sort} onChange={(e) => setSort(e.target.value)}><option value="OLDEST">Mais antigos primeiro</option><option value="NEWEST">Mais recentes primeiro</option><option value="HIGHEST">Maior valor primeiro</option><option value="LOWEST">Menor valor primeiro</option></select><ChevronDown className="pointer-events-none absolute bottom-4 right-3 text-slate-400" size={16} /></label>
+          <label className="relative"><span className="mb-1 block text-[10px] font-black uppercase text-slate-500">Ordenação</span><select className="input appearance-none pr-10" value={sort} onChange={(e) => setSort(e.target.value)}><option value="NEWEST">Mais recentes primeiro</option><option value="OLDEST">Mais antigos primeiro</option><option value="HIGHEST">Maior valor primeiro</option><option value="LOWEST">Menor valor primeiro</option></select><ChevronDown className="pointer-events-none absolute bottom-4 right-3 text-slate-400" size={16} /></label>
           <button className="btn-white mt-[15px]" onClick={() => void load()}>
             {loading ? (
               <Loader2 className="animate-spin" size={17} />

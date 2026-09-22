@@ -69,6 +69,7 @@ input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-o
 
 .table-wrap { margin:0 -5px -5px; border-radius:18px; }
 tbody tr { transition:.15s ease; } tbody tr:hover { background:#fafbfc; }
+.admin-table{width:100%;border-collapse:separate;border-spacing:0;color:#334155;font-size:13px}.admin-table th,.admin-table td{border-bottom:1px solid #e9eef4;padding:12px 16px;text-align:left;vertical-align:middle}.admin-table th{background:#f4f7fa;color:#475569;font-size:10px;font-weight:950;letter-spacing:.045em;text-transform:uppercase}.admin-table tbody tr:last-child td{border-bottom:0}.stock-balance-table thead{position:sticky;top:0;z-index:10}.stock-balance-table thead th{position:sticky;top:0;z-index:10;background:#eaf0f6;box-shadow:0 1px 0 #cfd9e4,0 5px 12px rgba(2,17,38,.06)}.stock-balance-table th:nth-child(n+3),.stock-balance-table td:nth-child(n+3){border-left:1px solid #e2e8f0}.stock-balance-table th:nth-child(n+3){padding-left:14px;padding-right:14px}.stock-balance-table td{height:47px}.stock-history-table th,.stock-history-table td{padding:13px 18px}.stock-history-table th:nth-child(n+3),.stock-history-table td:nth-child(n+3){border-left:1px solid #e2e8f0}.stock-history-table tbody tr:nth-child(even){background:#fff}.stock-history-table tbody tr:nth-child(odd){background:#f8fafc}
 .toast { border-radius:18px; background:#021126; box-shadow:0 18px 50px rgba(2,17,38,.25); }
 .bg-navy .text-yellow { color:#fff; }
 
