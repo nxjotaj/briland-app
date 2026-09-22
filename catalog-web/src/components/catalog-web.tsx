@@ -22,6 +22,8 @@ import {
   SlidersHorizontal,
   UserRound,
   X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import {
   cardImage,
@@ -1658,6 +1660,8 @@ function ProductDetail({
   navigate: (path: string) => void;
   rememberProduct: (id: string) => void;
 }) {
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
+  const [zoomScale, setZoomScale] = useState(1);
   useEffect(() => {
     setGalleryIndex(0);
     if (product) {
@@ -1740,12 +1744,22 @@ function ProductDetail({
         <div className="gallery">
           <div className="main-image">
             {images[galleryIndex] ? (
-              <img
-                src={largeProductImage(images[galleryIndex], product)}
-                alt={product.nome}
-                decoding="async"
-                fetchPriority="high"
-              />
+              <button
+                className="image-zoom-trigger"
+                aria-label="Ampliar imagem do produto"
+                onClick={() => {
+                  setZoomScale(1);
+                  setZoomedImage(largeProductImage(images[galleryIndex], product));
+                }}
+              >
+                <img
+                  src={largeProductImage(images[galleryIndex], product)}
+                  alt={product.nome}
+                  decoding="async"
+                  fetchPriority="high"
+                />
+                <span><ZoomIn /> Ampliar imagem</span>
+              </button>
             ) : (
               <Package />
             )}
@@ -1979,6 +1993,19 @@ function ProductDetail({
             ))}
           </div>
         </section>
+      )}
+      {zoomedImage && (
+        <div className="product-zoom-modal" role="dialog" aria-modal="true" aria-label="Imagem ampliada do produto" onClick={() => setZoomedImage(null)}>
+          <button className="product-zoom-close" aria-label="Fechar imagem ampliada" onClick={() => setZoomedImage(null)}><X /></button>
+          <div className="product-zoom-stage" onClick={(event) => event.stopPropagation()}>
+            <img src={zoomedImage} alt={product.nome} style={{ transform: `scale(${zoomScale})` }} />
+          </div>
+          <div className="product-zoom-controls" onClick={(event) => event.stopPropagation()}>
+            <button aria-label="Diminuir zoom" disabled={zoomScale <= 1} onClick={() => setZoomScale((value) => Math.max(1, value - 0.25))}><ZoomOut /></button>
+            <span>{Math.round(zoomScale * 100)}%</span>
+            <button aria-label="Aumentar zoom" disabled={zoomScale >= 2.5} onClick={() => setZoomScale((value) => Math.min(2.5, value + 0.25))}><ZoomIn /></button>
+          </div>
+        </div>
       )}
     </section>
   );
