@@ -245,6 +245,10 @@ export function RepresentativePortal({
               <OrdersPage
                 orders={orders}
                 clients={clients}
+                stock={stock}
+                profile={profile}
+                lastUpdated={lastUpdated}
+                realtimeConnected={realtimeConnected}
                 openOrder={openOrder}
                 navigate={navigate}
               />
@@ -704,14 +708,23 @@ function ClientModal({
 function OrdersPage({
   orders,
   clients,
+  stock,
+  profile,
+  lastUpdated,
+  realtimeConnected,
   openOrder,
   navigate,
 }: {
   orders: SalesOrder[];
   clients: UserProfile[];
+  stock: SalesStock[];
+  profile: UserProfile;
+  lastUpdated: Date | null;
+  realtimeConnected: boolean;
   openOrder: () => Promise<void>;
   navigate: (p: string) => void;
 }) {
+  const [workspace, setWorkspace] = useState<"orders" | "analytics">("orders");
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("ALL");
   const [client, setClient] = useState("ALL");
@@ -739,7 +752,15 @@ function OrdersPage({
             : String(b.createdAt).localeCompare(String(a.createdAt)),
     );
   return (
-    <section className="rep-panel rep-orders-page">
+    <div className="rep-order-workspace">
+      <div className="rep-order-tabs" role="tablist" aria-label="Áreas da gestão comercial">
+        <button role="tab" aria-selected={workspace === "orders"} className={workspace === "orders" ? "active" : ""} onClick={() => setWorkspace("orders")}><ShoppingBag /> Gestão de pedidos</button>
+        <button role="tab" aria-selected={workspace === "analytics"} className={workspace === "analytics" ? "active" : ""} onClick={() => setWorkspace("analytics")}><BarChart3 /> Visão comercial</button>
+      </div>
+      {workspace === "analytics" ? (
+        <Dashboard clients={clients} orders={orders} stock={stock} profile={profile} lastUpdated={lastUpdated} realtimeConnected={realtimeConnected} openOrder={openOrder} navigate={navigate} />
+      ) : (
+      <section className="rep-panel rep-orders-page">
       <div className="rep-page-intro">
         <div>
           <small>CENTRAL DE NEGÓCIOS</small>
@@ -834,7 +855,9 @@ function OrdersPage({
         </table>
       </div>
       {!filtered.length && <p>Nenhum pedido encontrado com esses filtros.</p>}
-    </section>
+      </section>
+      )}
+    </div>
   );
 }
 
