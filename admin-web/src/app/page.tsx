@@ -1276,19 +1276,19 @@ function Dashboard({ data, setActive, role, newOrders }: { data: AppData; setAct
     { label: "Catálogo completo", value: `${completion}%`, helper: `${completeProducts} produtos com 100%`, tab: "Produtos", icon: CheckCircle2, tone: "green" }
   ].filter((item) => !item.masterOnly || isMaster(role));
   return (
-    <div className="space-y-6">
-      {isMaster(role) && newOrders.length > 0 && <button onClick={() => setActive("Pedidos")} className="flex w-full items-center justify-between gap-4 rounded-[24px] border border-red-200 bg-red-50 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-red-600 text-white"><Bell size={22} /></div><div><div className="text-xs font-black uppercase tracking-[.18em] text-red-600">Pedidos aguardando visualização</div><div className="mt-1 text-xl font-black">{newOrders.length === 1 ? "1 novo pedido recebido" : `${newOrders.length} novos pedidos recebidos`}</div><div className="mt-1 text-xs font-semibold text-slate-600">Clique para abrir a fila prioritária e iniciar a análise.</div></div></div><ArrowUpRight className="shrink-0 text-red-600" size={22} /></button>}
-      <section className="hero-dashboard relative overflow-hidden p-6 lg:p-8">
+    <div className="admin-bento-dashboard">
+      {isMaster(role) && newOrders.length > 0 && <button onClick={() => setActive("Pedidos")} className="bento-alert flex w-full items-center justify-between gap-4 rounded-[24px] border border-red-200 bg-red-50 p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"><div className="flex items-center gap-4"><div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-red-600 text-white"><Bell size={22} /></div><div><div className="text-xs font-black uppercase tracking-[.18em] text-red-600">Pedidos aguardando visualização</div><div className="mt-1 text-xl font-black">{newOrders.length === 1 ? "1 novo pedido recebido" : `${newOrders.length} novos pedidos recebidos`}</div><div className="mt-1 text-xs font-semibold text-slate-600">Clique para abrir a fila prioritária e iniciar a análise.</div></div></div><ArrowUpRight className="shrink-0 text-red-600" size={22} /></button>}
+      <section className="hero-dashboard bento-hero relative overflow-hidden p-6 lg:p-8">
         <div className="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between"><div><div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white/75 px-3 py-1.5 text-xs font-black text-navy"><Sparkles size={14} className="text-blue-800" /> Visão geral em tempo real</div><h2 className="max-w-2xl text-3xl font-black leading-tight lg:text-4xl">Tudo que importa para o catálogo, em um só lugar.</h2><p className="mt-3 max-w-xl text-sm font-semibold text-slate-600 lg:text-base">Acompanhe produtos, oportunidades e a saúde operacional da plataforma Briland.</p></div><div className="flex flex-wrap gap-3"><button onClick={() => setActive("Produtos")} className="btn-primary"><Plus size={17} /> Novo produto</button><button onClick={() => setActive("Leads")} className="btn-glass">Ver oportunidades <ArrowUpRight size={16} /></button></div></div>
       </section>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="bento-metrics">
         {cards.map(({ label, value, helper, tab, icon: Icon, tone }) => (
           <button key={label} onClick={() => setActive(tab as Tab)} className="metric-card group text-left">
             <div className={`metric-icon metric-${tone}`}><Icon size={19} /></div><div className="mt-6 flex items-end justify-between"><div><div className="text-3xl font-black tracking-tight">{value}</div><div className="mt-1 text-sm font-black">{label}</div><div className="mt-1 text-xs font-semibold text-muted">{helper}</div></div><ArrowUpRight size={18} className="mb-1 text-slate-300 transition group-hover:-translate-y-1 group-hover:translate-x-1 group-hover:text-navy" /></div>
           </button>
         ))}
       </div>
-      {isMaster(role) && <section className="space-y-6">
+      {isMaster(role) && <section className="bento-master space-y-6">
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <Summary label="Online agora" value={data.presenceSummary.onlineTotal} />
           <Summary label="Visitantes online" value={data.presenceSummary.onlineVisitors} />
@@ -1307,11 +1307,11 @@ function Dashboard({ data, setActive, role, newOrders }: { data: AppData; setAct
           </Panel>
         </div>
       </section>}
-      <div className="grid gap-6 xl:grid-cols-[1.45fr_1fr]">
+      <div className="bento-panel-grid bento-panel-grid-wide">
         <Panel title="Entrada de leads — últimos 7 dias"><div className="chart-bars">{lastSevenDays.map((item) => <div key={item.label} className="chart-column"><div className="chart-value">{item.value}</div><div className="chart-track"><div className="chart-fill" style={{ height: `${Math.max(8, (item.value / maxLeads) * 100)}%` }} /></div><div className="chart-label">{item.label}</div></div>)}</div></Panel>
         <Panel title="Distribuição do catálogo"><div className="space-y-4">{topCategories.length ? topCategories.map((item, index) => <div key={item.name}><div className="mb-2 flex items-center justify-between text-sm"><span className="font-bold">{item.name}</span><span className="font-black">{item.value}</span></div><div className="progress-track"><div className={`progress-fill progress-${index}`} style={{ width: `${(item.value / maxCategory) * 100}%` }} /></div></div>) : <div className="py-10 text-center text-sm text-muted">Sem categorias para exibir.</div>}</div></Panel>
       </div>
-      <div className="grid gap-6 xl:grid-cols-[1.15fr_1fr]">
+      <div className="bento-panel-grid bento-panel-grid-balanced">
         <Panel title="Oportunidades recentes"><div className="divide-y divide-line">{data.leads.slice(0, 5).map((lead) => <button key={lead.id} onClick={() => setActive("Leads")} className="flex w-full items-center gap-3 py-3 text-left"><div className="lead-avatar">{lead.nome.slice(0, 1).toUpperCase()}</div><div className="min-w-0 flex-1"><div className="truncate text-sm font-black">{lead.nome}</div><div className="truncate text-xs text-muted">{lead.empresa || lead.email || "Contato pelo catálogo"}</div></div><span className={`status-pill status-${String(lead.status).toLowerCase()}`}>{lead.status}</span></button>)}{!data.leads.length && <div className="py-10 text-center text-sm text-muted">Nenhum lead recebido.</div>}</div></Panel>
         <Panel title="Pulso operacional"><div className="grid gap-3 sm:grid-cols-2"><Summary label="Categorias" value={data.categorias.length} /><Summary label="Marcas" value={data.marcas.length} /><Summary label="Aplicações" value={data.aplicacoes.length} /><Summary label="Montadoras" value={data.montadoras.length} /></div><div className="mt-5 rounded-2xl bg-navy p-4 text-white"><div className="flex items-center gap-2 text-sm font-black"><Clock3 size={17} className="text-yellow" /> Dados sincronizados</div><p className="mt-2 text-xs text-white/60">As métricas refletem os registros atuais do Supabase.</p></div></Panel>
       </div>

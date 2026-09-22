@@ -335,7 +335,7 @@ function Dashboard({
   const maxMonth = Math.max(1, ...months.map((month) => month.value));
   const clientRanking = clients.map((clientItem) => ({ client: clientItem, value: activeOrders.filter((order) => order.clientId === clientItem.id).reduce((sum, order) => sum + Number(order.total), 0) })).filter((item) => item.value > 0).sort((a, b) => b.value - a.value).slice(0, 4);
   return (
-    <div className="rep-dashboard">
+    <div className="rep-dashboard rep-bento-dashboard">
       <section className="rep-welcome">
         <div className="rep-welcome-copy"><div className="rep-eyebrow"><span>BRILAND PERFORMANCE</span><i className={realtimeConnected ? "online" : ""}>{realtimeConnected ? "Tempo real" : "Sincronizando"}</i></div><h2>{greeting}, {firstName}.</h2><p>Sua operação comercial inteira, clara e pronta para a próxima decisão.</p><div className="rep-welcome-actions"><button className="primary" onClick={() => void openOrder()}><Plus /> Novo pedido</button><button onClick={() => navigate("/representante/clientes")}><Users /> Novo cliente</button></div></div>
         <div className="rep-performance"><small>Volume comercial filtrado</small><strong>{cash(totalValue)}</strong><span><ArrowUpRight /> {activeOrders.length} pedido(s) no período</span><div className="rep-performance-line"><i style={{ width: `${Math.min(100, totalValue ? approvedValue / totalValue * 100 : 0)}%` }} /></div><em>{totalValue ? Math.round(approvedValue / totalValue * 100) : 0}% convertido em aprovado/faturado</em></div>
