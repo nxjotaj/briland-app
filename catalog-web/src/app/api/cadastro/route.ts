@@ -11,6 +11,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const email = String(body.email || "").trim().toLowerCase();
+    const privacyAccepted = body.privacyAccepted === true;
     const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
     if (String(body.website || "") || !Number(body.startedAt) || Date.now() - Number(body.startedAt) < 1800) {
       return NextResponse.json({ accepted: true });
@@ -22,6 +23,8 @@ export async function POST(request: NextRequest) {
     });
     if (rateError || !allowed) return NextResponse.json({ error: "Muitas tentativas. Aguarde antes de tentar novamente." }, { status: 429 });
     if (!email || String(body.senha || "").length < 8) return NextResponse.json({ error: "Confira o e-mail e use uma senha com pelo menos 8 caracteres." }, { status: 400 });
+    if (!privacyAccepted) return NextResponse.json({ error: "É necessário aceitar a Política de Privacidade." }, { status: 400 });
+    const privacyAcceptedAt = new Date().toISOString();
     const { data, error } = await supabase.auth.signUp({
       email,
       password: String(body.senha),
@@ -33,7 +36,10 @@ export async function POST(request: NextRequest) {
           company: String(body.empresa || "").trim(),
           phone: String(body.telefone || "").trim(),
           cnpj: String(body.cnpj || "").trim(),
-          observacoes: String(body.observacoes || "").trim()
+          observacoes: String(body.observacoes || "").trim(),
+          privacy_accepted_at: privacyAcceptedAt,
+          privacy_policy_version: "2026-07-28",
+          privacy_consent_source: "catalog_web"
         }
       }
     });

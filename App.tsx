@@ -41,7 +41,7 @@ import { createId, csvEscape, leadDepartment, leadMessageBody, loginErrorMessage
 import { MotionDrawer, MotionPage, MotionPressable } from "./src/components/motion";
 
 type IconName = keyof typeof Ionicons.glyphMap;
-type RegistrationRequest = { nome: string; empresa: string; telefone: string; email: string; cnpj: string; observacoes: string; senha: string; confirmarSenha: string };
+type RegistrationRequest = { nome: string; empresa: string; telefone: string; email: string; cnpj: string; observacoes: string; senha: string; confirmarSenha: string; privacyAcceptedAt?: string; privacyPolicyVersion?: string; privacyConsentSource?: string };
 type CachedImageProps = ImageProps & { resizeMode?: ImageProps["contentFit"] };
 type CatalogNotification = { id: string; type: "launch" | "promotion" | "availability"; title: string; message: string; productId: string; createdAt: string; read?: boolean };
 
@@ -2372,7 +2372,7 @@ function SignupScreen({ onSubmit, onLogin, onPrivacy, onDelete }: { onSubmit: (r
   const submit = async () => {
     setSubmitting(true);
     try {
-      setSubmitted(await onSubmit(form));
+      setSubmitted(await onSubmit({ ...form, privacyAcceptedAt: new Date().toISOString(), privacyPolicyVersion: "2026-07-28", privacyConsentSource: Platform.OS === "android" ? "android_app" : Platform.OS === "ios" ? "ios_app" : "web_app" }));
     } finally {
       setSubmitting(false);
     }
@@ -2390,7 +2390,7 @@ function SignupScreen({ onSubmit, onLogin, onPrivacy, onDelete }: { onSubmit: (r
         <Input label="Senha" secure value={form.senha} onChangeText={(senha) => setForm({ ...form, senha })} />
         <Input label="Confirmar senha" secure value={form.confirmarSenha} onChangeText={(confirmarSenha) => setForm({ ...form, confirmarSenha })} />
         <Text style={[styles.mutedSmall, form.confirmarSenha.length > 0 && !passwordsMatch && { color: colors.red }]}>Use no mínimo 8 caracteres{form.confirmarSenha.length > 0 && !passwordsMatch ? ". As senhas não coincidem." : "."}</Text>
-        <Pressable style={styles.checkRow} onPress={() => setPrivacyAccepted((value) => !value)}><View style={[styles.emptyCheck, privacyAccepted && styles.checkedBox]}>{privacyAccepted && <Ionicons name="checkmark" size={20} color={colors.navy} />}</View><Text style={styles.checkText}>Li a Política de Privacidade e concordo com o tratamento dos dados para análise do cadastro.</Text></Pressable>
+        <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: privacyAccepted }} accessibilityLabel="Aceitar a Política de Privacidade" style={styles.checkRow} onPress={() => setPrivacyAccepted((value) => !value)}><View style={[styles.emptyCheck, privacyAccepted && styles.checkedBox]}>{privacyAccepted && <Ionicons name="checkmark" size={20} color={colors.navy} />}</View><Text style={styles.checkText}>Li e aceito a Política de Privacidade e concordo com o tratamento dos dados para criar e administrar meu cadastro Briland.</Text></Pressable>
         <Pressable onPress={onPrivacy}><Text style={styles.inlineLegalLink}>Ler a Política de Privacidade</Text></Pressable>
         <Pressable disabled={!privacyAccepted || !requiredFieldsReady || submitting} style={[styles.yellowButton, (!privacyAccepted || !requiredFieldsReady || submitting) && styles.disabledButton]} onPress={() => void submit()}>{submitting ? <ActivityIndicator color={colors.navy} /> : <Text style={styles.yellowButtonText}>Cadastrar</Text>}</Pressable>
       </>}

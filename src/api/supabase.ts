@@ -182,7 +182,13 @@ export async function signUpRegistration(payload: {
   cnpj: string;
   observacoes?: string;
   senha: string;
+  privacyAcceptedAt?: string;
+  privacyPolicyVersion?: string;
+  privacyConsentSource?: string;
 }) {
+  if (!payload.privacyAcceptedAt || !payload.privacyPolicyVersion || !payload.privacyConsentSource) {
+    throw new Error("É necessário aceitar a Política de Privacidade para concluir o cadastro.");
+  }
   const { data, error } = await supabaseRealtime.auth.signUp({
     email: payload.email.trim().toLowerCase(),
     password: payload.senha,
@@ -194,7 +200,10 @@ export async function signUpRegistration(payload: {
         company: payload.empresa.trim(),
         phone: payload.telefone.trim(),
         cnpj: payload.cnpj.trim(),
-        observacoes: payload.observacoes?.trim() || ""
+        observacoes: payload.observacoes?.trim() || "",
+        privacy_accepted_at: payload.privacyAcceptedAt,
+        privacy_policy_version: payload.privacyPolicyVersion,
+        privacy_consent_source: payload.privacyConsentSource
       }
     }
   });

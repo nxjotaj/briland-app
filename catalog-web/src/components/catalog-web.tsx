@@ -2741,6 +2741,7 @@ function LoginRequired({ navigate }: { navigate: (p: string) => void }) {
   );
 }
 function Signup({ navigate }: { navigate: (p: string) => void }) {
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [form, setForm] = useState({
     nome: "",
     empresa: "",
@@ -2762,7 +2763,7 @@ function Signup({ navigate }: { navigate: (p: string) => void }) {
       const response = await fetch("/api/cadastro", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, startedAt }),
+        body: JSON.stringify({ ...form, startedAt, privacyAccepted }),
       });
       const result = await response.json();
       if (!response.ok)
@@ -2847,8 +2848,23 @@ function Signup({ navigate }: { navigate: (p: string) => void }) {
             onChange={(e) => setForm({ ...form, observacoes: e.target.value })}
           />
         </label>
+        <label className="full consent-field">
+          <input
+            type="checkbox"
+            checked={privacyAccepted}
+            onChange={(event) => setPrivacyAccepted(event.target.checked)}
+            required
+          />
+          <span>
+            Li e aceito a{" "}
+            <button type="button" className="link-button" onClick={() => navigate("/privacidade")}>
+              Política de Privacidade
+            </button>
+            .
+          </span>
+        </label>
         {msg && <span className="form-message full">{msg}</span>}
-        <button className="primary full" disabled={busy}>
+        <button className="primary full" disabled={busy || !privacyAccepted}>
           {busy ? "Enviando..." : "Enviar cadastro"}
         </button>
         <button
