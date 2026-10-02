@@ -60,6 +60,13 @@ const cash = (value: number) =>
 const orderNo = (value: number) => String(value).padStart(6, "0");
 const date = (value?: string | null) =>
   value ? new Date(value).toLocaleString("pt-BR") : "-";
+const masterBox = (value?: string | null) => {
+  const normalized = value?.trim();
+  if (!normalized) return "Não informado";
+  return /(peça|unid|caixa|\bcx\b)/i.test(normalized)
+    ? normalized
+    : `${normalized} peças`;
+};
 type Props = {
   segments: string[];
   profile: UserProfile;
@@ -899,6 +906,7 @@ function OrderEditor({
   const [busy, setBusy] = useState(false);
   const limit = profile.orderDiscountLimit ?? 15;
   const stockMap = new Map(stock.map((s) => [s.productId, s]));
+  const productMap = new Map(products.map((product) => [product.id, product]));
   const calculate = (item: SalesOrderItem) => {
     const extra = payment === "UPFRONT" ? 5 : 0;
     const manual = Number(item.manualDiscountPercent || 0);
@@ -1170,7 +1178,10 @@ function OrderEditor({
             <div>
               {suggestions.map((p) => (
                 <button key={p.id} onClick={() => add(p)}>
-                  <b>{p.codigoInterno}</b> {p.nome}{" "}
+                  <span className="product-picker-copy">
+                    <b>{p.codigoInterno}</b> {p.nome}
+                    <small>Caixa master: {masterBox(p.caixaMaster)}</small>
+                  </span>
                   <span>{cash(Number(p.preco))}</span>
                 </button>
               ))}
@@ -1184,6 +1195,7 @@ function OrderEditor({
             <tr>
               <th>Produto</th>
               <th>Disponível</th>
+              <th>Caixa master</th>
               <th>Quantidade</th>
               <th>Tabela</th>
               <th>Desconto</th>
@@ -1201,6 +1213,9 @@ function OrderEditor({
                   {item.productName}
                 </td>
                 <td>{stockMap.get(item.productId)?.availableBalance ?? 0}</td>
+                <td className="master-box-cell">
+                  {masterBox(productMap.get(item.productId)?.caixaMaster)}
+                </td>
                 <td>
                   <input
                     disabled={!editable}
