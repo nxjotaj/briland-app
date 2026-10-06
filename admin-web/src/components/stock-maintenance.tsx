@@ -99,6 +99,10 @@ type HistoryMovement = {
   accessKeys: string[];
   rows: HistoryRow[];
 };
+type HistoryDocumentGroup = {
+  accessKey: string | null;
+  rows: HistoryRow[];
+};
 type StockBalance = {
   productId: string;
   productCode: string;
@@ -1217,6 +1221,17 @@ function StockHistory({ notify }: { notify: Notify }) {
       };
     });
   }, [rows]);
+  const groupMovementDocuments = (items: HistoryRow[]): HistoryDocumentGroup[] => {
+    const grouped = new Map<string, HistoryDocumentGroup>();
+    items.forEach((item) => {
+      const groupKey = item.accessKey || "__manual__";
+      const current = grouped.get(groupKey);
+      if (current) current.rows.push(item);
+      else grouped.set(groupKey, { accessKey: item.accessKey || null, rows: [item] });
+    });
+    return Array.from(grouped.values());
+  };
+  const formatAccessKey = (accessKey: string) => accessKey.match(/.{1,4}/g)?.join(" ") || accessKey;
   const toggleMovement = (batchId: string) => setExpanded((current) => {
     const next = new Set(current);
     if (next.has(batchId)) next.delete(batchId); else next.add(batchId);
@@ -1285,12 +1300,22 @@ function StockHistory({ notify }: { notify: Notify }) {
       y -= 15;
     };
     header();
-    movement.rows.forEach((item) => {
+    groupMovementDocuments(movement.rows).forEach((document, documentIndex, documents) => {
+      if (y < 75) { page = pdf.addPage(pageSize); header(); }
+      const documentLabel = document.accessKey
+        ? `NF-e ${documentIndex + 1} de ${documents.length} | Chave: ${document.accessKey}`
+        : "Movimento manual";
+      page.drawRectangle({ x: 40, y: y - 4, width: 765, height: 18, color: rgb(0.92, 0.95, 0.98) });
+      page.drawText(`${documentLabel} | ${document.rows.length} produto(s)`, { x: 45, y, size: 8, font: bold, color: rgb(0.05, 0.16, 0.28) });
+      y -= 24;
+      document.rows.forEach((item) => {
       if (y < 55) { page = pdf.addPage(pageSize); header(); }
       const values = [item.productCode, item.productName.slice(0, 36), item.kind, String(item.quantity), String(item.previousBalance), String(item.newBalance), (item.accessKey || "-").slice(-12), (item.actorEmail || item.actorName || "-").slice(0, 20)];
       values.forEach((value, index) => page.drawText(value, { x: columns[index], y, size: 7.5, font: regular, color: rgb(0.16, 0.2, 0.27) }));
       page.drawLine({ start: { x: 40, y: y - 5 }, end: { x: 805, y: y - 5 }, thickness: 0.4, color: rgb(0.86, 0.88, 0.91) });
       y -= 21;
+      });
+      y -= 6;
     });
     const bytes = await pdf.save();
     download(new Blob([new Uint8Array(bytes).buffer], { type: "application/pdf" }), `movimento-${movement.batchId.replace("stock_batch_", "").slice(0, 8)}.pdf`);
@@ -1365,6 +1390,7 @@ function StockHistory({ notify }: { notify: Notify }) {
           {!loading && !movements.length && <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center font-bold text-slate-500">Nenhum movimento encontrado para os filtros informados.</div>}
           {movements.map((movement) => {
             const isOpen = expanded.has(movement.batchId);
+            const documents = groupMovementDocuments(movement.rows);
             return <section key={movement.batchId} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="grid items-center gap-3 p-4 md:grid-cols-[minmax(150px,0.8fr)_minmax(180px,1fr)_minmax(120px,0.7fr)_auto]">
                 <button className="flex min-w-0 items-center gap-3 text-left" onClick={() => toggleMovement(movement.batchId)} aria-expanded={isOpen}>
@@ -1375,7 +1401,18 @@ function StockHistory({ notify }: { notify: Notify }) {
                 <div className="text-xs text-slate-600"><b className="block text-slate-900">{movement.actor}</b>{movement.accessKeys.length ? `${movement.accessKeys.length} NF-e(s)` : "Movimento manual"}</div>
                 <div className="flex flex-wrap justify-end gap-2"><button className="btn-white" onClick={() => void exportXlsx(movement.rows, `movimento-${movement.batchId.slice(-8)}`)}><Download size={15} /> Excel</button><button className="btn-white" onClick={() => void exportPdf(movement)}><FileText size={15} /> PDF</button><button className="btn-primary" onClick={() => toggleMovement(movement.batchId)}>{isOpen ? "Ocultar" : "Ver itens"}</button></div>
               </div>
-              {isOpen && <div className="overflow-auto border-t border-slate-200 bg-slate-50 p-3"><table className="admin-table stock-history-table min-w-[1100px] table-fixed"><colgroup><col className="w-[15%]"/><col className="w-[32%]"/><col className="w-[10%]"/><col className="w-[11%]"/><col className="w-[11%]"/><col className="w-[10%]"/><col className="w-[11%]"/></colgroup><thead><tr><th>Código</th><th>Produto</th><th>Tipo</th><th>Quantidade</th><th>Saldo anterior</th><th>Novo saldo</th><th>NF-e</th></tr></thead><tbody>{movement.rows.map((item) => <tr key={item.movementId}><td className="font-black">{item.productCode}</td><td>{item.productName}</td><td>{item.kind}</td><td className={item.quantity < 0 ? "font-black text-red-700" : "font-black text-emerald-700"}>{item.quantity > 0 ? "+" : ""}{item.quantity}</td><td>{item.previousBalance}</td><td className="font-black">{item.newBalance}</td><td className="break-all text-xs">{item.accessKey || "-"}</td></tr>)}</tbody></table></div>}
+              {isOpen && <div className="space-y-3 border-t border-slate-200 bg-slate-50 p-3">
+                {documents.map((document, documentIndex) => <div key={document.accessKey || "manual"} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-100 px-4 py-3">
+                    <div>
+                      <b className="block text-sm text-slate-950">{document.accessKey ? `NF-e ${documentIndex + 1} de ${documents.length}` : "Movimento manual"}</b>
+                      {document.accessKey && <span className="mt-1 block break-all font-mono text-xs text-slate-600">Chave: {formatAccessKey(document.accessKey)}</span>}
+                    </div>
+                    <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-black text-slate-700">{document.rows.length} produto(s)</span>
+                  </div>
+                  <div className="overflow-auto"><table className="admin-table stock-history-table min-w-[960px] table-fixed"><colgroup><col className="w-[16%]"/><col className="w-[38%]"/><col className="w-[11%]"/><col className="w-[12%]"/><col className="w-[12%]"/><col className="w-[11%]"/></colgroup><thead><tr><th>Código</th><th>Produto</th><th>Tipo</th><th>Quantidade</th><th>Saldo anterior</th><th>Novo saldo</th></tr></thead><tbody>{document.rows.map((item) => <tr key={item.movementId}><td className="font-black">{item.productCode}</td><td>{item.productName}</td><td>{item.kind}</td><td className={item.quantity < 0 ? "font-black text-red-700" : "font-black text-emerald-700"}>{item.quantity > 0 ? "+" : ""}{item.quantity}</td><td>{item.previousBalance}</td><td className="font-black">{item.newBalance}</td></tr>)}</tbody></table></div>
+                </div>)}
+              </div>}
             </section>;
           })}
         </div>
